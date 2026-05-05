@@ -1,0 +1,8 @@
+station_id: STATION-A
+proc_type: SCE_2
+content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000aaa
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station A — produces a small JSON artifact for a 15-minute window.
+scripts:
+  run: ./scripts/run.sh

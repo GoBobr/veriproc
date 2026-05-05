@@ -39,6 +39,9 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 	if err != nil {
 		return nil, mapStoreErr(err)
 	}
+	if run.ReconciliationStartedAt.Valid {
+		return nil, ErrReconciliationInProgress
+	}
 	switch run.State {
 	case "complete", "failed", "cancelled":
 		return &CancelOutcome{Run: run, AlreadyTerminal: true, CancellationComplete: true}, nil

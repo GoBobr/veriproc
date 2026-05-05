@@ -31,6 +31,7 @@ type submitRequest struct {
 	Force          bool                   `json:"force,omitempty"`
 	Priority       string                 `json:"priority,omitempty"`
 	Parent         *tasks.Parent          `json:"parent,omitempty"`
+	SplitGroupID   string                 `json:"split_group_id,omitempty"`
 	ClientMetadata map[string]any         `json:"client_metadata,omitempty"`
 }
 
@@ -44,6 +45,7 @@ type taskWire struct {
 	LatestRunID    *string           `json:"latest_run_id"`
 	CanonicalRunID *string           `json:"canonical_run_id"`
 	Parent         *tasks.Parent     `json:"parent,omitempty"`
+	SplitGroupID   string            `json:"split_group_id,omitempty"`
 }
 
 type submitResponse struct {
@@ -88,6 +90,7 @@ func (h *taskHandler) submit(w http.ResponseWriter, r *http.Request) {
 		Force:          req.Force,
 		Priority:       req.Priority,
 		Parent:         req.Parent,
+		SplitGroupID:   req.SplitGroupID,
 		ClientMetadata: req.ClientMetadata,
 	}
 	res, err := h.svc.Submit(r.Context(), in)
@@ -204,6 +207,9 @@ func toWire(t *store.TaskRecord) taskWire {
 	}
 	if t.ParentTaskID != "" || t.ParentRunID != "" {
 		w.Parent = &tasks.Parent{TaskID: t.ParentTaskID, RunID: t.ParentRunID}
+	}
+	if t.SplitGroupID != "" {
+		w.SplitGroupID = t.SplitGroupID
 	}
 	return w
 }

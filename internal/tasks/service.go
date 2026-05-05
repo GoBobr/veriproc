@@ -48,6 +48,7 @@ type SubmitInput struct {
 	Force          bool
 	Priority       string
 	Parent         *Parent
+	SplitGroupID   string
 	ClientMetadata map[string]any
 }
 
@@ -176,6 +177,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 	if in.Parent != nil {
 		task.ParentTaskID = in.Parent.TaskID
 		task.ParentRunID = in.Parent.RunID
+	}
+	if in.SplitGroupID != "" {
+		task.SplitGroupID = in.SplitGroupID
 	}
 
 	// Persist task + idempotency record atomically.

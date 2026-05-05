@@ -1,0 +1,9 @@
+station_id: STATION-B
+proc_type: TRACK_L1
+content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000bbb
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station B — second processing type for cross-station tests and
+  split-group experiments.
+scripts:
+  run: ./scripts/run.sh

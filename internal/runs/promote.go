@@ -35,6 +35,9 @@ func (s *Service) PromoteCanonical(ctx context.Context, runID, reason, actor str
 	if err != nil {
 		return nil, mapStoreErr(err)
 	}
+	if run.ReconciliationStartedAt.Valid {
+		return nil, ErrReconciliationInProgress
+	}
 	if run.State != "complete" {
 		return nil, fmt.Errorf("%w: run state is %q (must be complete)", ErrPromoteIneligible, run.State)
 	}

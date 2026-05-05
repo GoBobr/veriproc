@@ -125,6 +125,22 @@ func (r *PublicationRepo) ListByRun(ctx context.Context, runID string) ([]*Publi
 	return scanPublications(rows)
 }
 
+// ListByArtifact returns all publications referencing artifactID.
+func (r *PublicationRepo) ListByArtifact(ctx context.Context, artifactID string) ([]*PublicationRecord, error) {
+	rows, err := r.q.QueryContext(ctx, `
+		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
+		       target_path, publication_mode, publication_state,
+		       COALESCE(failure_reason, ''), created_at, published_at
+		FROM rolling_archive_publications
+		WHERE artifact_id = ?
+		ORDER BY created_at ASC`, artifactID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPublications(rows)
+}
+
 // Get returns a single publication by id.
 func (r *PublicationRepo) Get(ctx context.Context, id string) (*PublicationRecord, error) {
 	row := r.q.QueryRowContext(ctx, `

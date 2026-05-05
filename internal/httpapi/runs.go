@@ -63,17 +63,38 @@ type jobWire struct {
 }
 
 type artifactWire struct {
-	ArtifactID       string    `json:"artifact_id"`
-	ProducingRunID   string    `json:"producing_run_id"`
-	LogicalType      string    `json:"logical_type"`
-	FileType         string    `json:"file_type,omitempty"`
-	Path             string    `json:"path,omitempty"`
-	Size             int64     `json:"size,omitempty"`
-	Checksum         string    `json:"checksum,omitempty"`
-	ChecksumAlgo     string    `json:"checksum_algorithm,omitempty"`
-	ValidationStatus string    `json:"validation_status,omitempty"`
-	Availability     string    `json:"availability"`
-	CreatedAt        time.Time `json:"created_at"`
+	ArtifactID         string                `json:"artifact_id"`
+	ProducingRunID     string                `json:"producing_run_id"`
+	LogicalType        string                `json:"logical_type"`
+	FileType           string                `json:"file_type,omitempty"`
+	Path               string                `json:"path,omitempty"`
+	Size               int64                 `json:"size,omitempty"`
+	Checksum           string                `json:"checksum,omitempty"`
+	ChecksumAlgo       string                `json:"checksum_algorithm,omitempty"`
+	ValidationStatus   string                `json:"validation_status,omitempty"`
+	Availability       string                `json:"availability"`
+	CreatedAt          time.Time             `json:"created_at"`
+	PublicationSummary *publicationSummary   `json:"publication_summary,omitempty"`
+}
+
+// publicationSummary surfaces rolling-archive publication state on artifacts
+// (Spec §5.5.6).
+type publicationSummary struct {
+	Publications  []publicationWire `json:"publications"`
+	PublishedCount int              `json:"published_count"`
+	PendingCount   int              `json:"pending_count"`
+	FailedCount    int              `json:"failed_count"`
+}
+
+type publicationWire struct {
+	PublicationID    string     `json:"publication_id"`
+	ArchiveID        string     `json:"archive_id"`
+	TargetPath       string     `json:"target_path"`
+	PublicationMode  string     `json:"publication_mode"`
+	PublicationState string     `json:"publication_state"`
+	FailureReason    string     `json:"failure_reason,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	PublishedAt      *time.Time `json:"published_at,omitempty"`
 }
 
 type runListResponse struct {
@@ -227,9 +248,39 @@ func (h *runHandler) listArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]artifactWire, 0, len(arts))
 	for _, a := range arts {
-		out = append(out, toArtifactWire(a))
+		w := toArtifactWire(a)
+		if pubs, perr := h.svc.ListPublicationsByArtifact(r.Context(), a.ArtifactID); perr == nil && len(pubs) > 0 {
+			w.PublicationSummary = buildPublicationSummary(pubs)
+		}
+		out = append(out, w)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func buildPublicationSummary(pubs []*store.PublicationRecord) *publicationSummary {
+	sum := &publicationSummary{Publications: make([]publicationWire, 0, len(pubs))}
+	for _, p := range pubs {
+		pw := publicationWire{
+			PublicationID:    p.PublicationID,
+			ArchiveID:        p.ArchiveID,
+			TargetPath:       p.TargetPath,
+			PublicationMode:  p.PublicationMode,
+			PublicationState: p.PublicationState,
+			FailureReason:    p.FailureReason,
+			CreatedAt:        p.CreatedAt.UTC(),
+			PublishedAt:      nullableTime(p.PublishedAt),
+		}
+		sum.Publications = append(sum.Publications, pw)
+		switch p.PublicationState {
+		case store.PublicationStatePublished:
+			sum.PublishedCount++
+		case store.PublicationStatePending:
+			sum.PendingCount++
+		case store.PublicationStateFailed:
+			sum.FailedCount++
+		}
+	}
+	return sum
 }
 
 func (h *runHandler) listLogs(w http.ResponseWriter, r *http.Request) {
@@ -422,6 +473,8 @@ func writeRunErr(w http.ResponseWriter, r *http.Request, err error) {
 		apierr.Write(w, r, http.StatusConflict, apierr.CodeCancellationUnsupported, err.Error())
 	case errors.Is(err, runs.ErrPromoteIneligible):
 		apierr.Write(w, r, http.StatusConflict, apierr.CodeInvalidStateTransition, err.Error())
+	case errors.Is(err, runs.ErrReconciliationInProgress):
+		apierr.Write(w, r, http.StatusConflict, apierr.CodeReconciliationInProgress, err.Error())
 	case errors.Is(err, runs.ErrUnknownStation):
 		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeUnknownStation, err.Error())
 	case errors.Is(err, runs.ErrTaskNotFound):

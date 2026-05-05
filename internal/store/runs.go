@@ -25,6 +25,7 @@ type RunRecord struct {
 	StartedAt               sql.NullTime
 	TerminalAt              sql.NullTime
 	CancellationRequestedAt sql.NullTime
+	ReconciliationStartedAt sql.NullTime
 }
 
 // RunRepo persists runs.
@@ -72,7 +73,7 @@ func (r *RunRepo) Get(ctx context.Context, runID string) (*RunRecord, error) {
 		       COALESCE(processing_fingerprint, ''),
 		       COALESCE(failure_reason, ''),
 		       created_at, prepared_at, dispatched_at, started_at, terminal_at,
-		       cancellation_requested_at
+		       cancellation_requested_at, reconciliation_started_at
 		FROM runs WHERE run_id = ?`, runID)
 
 	var rec RunRecord
@@ -81,7 +82,7 @@ func (r *RunRepo) Get(ctx context.Context, runID string) (*RunRecord, error) {
 		&rec.State, &rec.Canonicality,
 		&rec.ProcessingFingerprint, &rec.FailureReason,
 		&rec.CreatedAt, &rec.PreparedAt, &rec.DispatchedAt, &rec.StartedAt, &rec.TerminalAt,
-		&rec.CancellationRequestedAt,
+		&rec.CancellationRequestedAt, &rec.ReconciliationStartedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

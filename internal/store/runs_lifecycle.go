@@ -15,7 +15,7 @@ const runScanCols = `run_id, task_id, station_revision_id, retry_index, working_
 		       COALESCE(processing_fingerprint, ''),
 		       COALESCE(failure_reason, ''),
 		       created_at, prepared_at, dispatched_at, started_at, terminal_at,
-		       cancellation_requested_at`
+		       cancellation_requested_at, reconciliation_started_at`
 
 func scanRun(s scanner) (*RunRecord, error) {
 	var r RunRecord
@@ -24,7 +24,7 @@ func scanRun(s scanner) (*RunRecord, error) {
 		&r.State, &r.Canonicality,
 		&r.ProcessingFingerprint, &r.FailureReason,
 		&r.CreatedAt, &r.PreparedAt, &r.DispatchedAt, &r.StartedAt, &r.TerminalAt,
-		&r.CancellationRequestedAt,
+		&r.CancellationRequestedAt, &r.ReconciliationStartedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -149,6 +149,31 @@ func (r *RunRepo) MarkCancelled(ctx context.Context, runID string, at time.Time)
 		return err
 	}
 	return mustAffect(res, runID, "MarkCancelled")
+}
+
+// MarkReconciliationStarted stamps reconciliation_started_at on the run if
+// it is not already set, asserting the reconciler has acquired soft ownership
+// of the run. Idempotent. Spec §3.13 / §7.8.
+func (r *RunRepo) MarkReconciliationStarted(ctx context.Context, runID string, at time.Time) error {
+	res, err := r.q.ExecContext(ctx, `
+		UPDATE runs SET reconciliation_started_at = COALESCE(reconciliation_started_at, ?)
+		WHERE run_id = ?`, at.UTC(), runID)
+	if err != nil {
+		return err
+	}
+	return mustAffect(res, runID, "MarkReconciliationStarted")
+}
+
+// ClearReconciliation removes the reconciliation_started_at marker once a
+// reconciler pass has converged successfully or the run has reached a
+// terminal state.
+func (r *RunRepo) ClearReconciliation(ctx context.Context, runID string) error {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE runs SET reconciliation_started_at = NULL WHERE run_id = ?`, runID)
+	if err != nil {
+		return err
+	}
+	return mustAffect(res, runID, "ClearReconciliation")
 }
 
 // ListByStates returns runs whose state is in any of the supplied values,

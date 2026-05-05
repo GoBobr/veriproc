@@ -36,6 +36,10 @@ var (
 	ErrTaskNotFound         = errors.New("runs: task not found")
 	ErrUnknownStation       = errors.New("runs: unknown station")
 	ErrJobNotFound          = errors.New("runs: job not found")
+	// ErrReconciliationInProgress is returned by Cancel/PromoteCanonical when
+	// the reconciler currently holds soft ownership of the run (Spec §3.13 /
+	// §7.8). The HTTP layer maps this to 409 reconciliation_in_progress.
+	ErrReconciliationInProgress = errors.New("runs: reconciliation in progress")
 )
 
 // Service drives the run lifecycle. It is safe for concurrent use; per-run
@@ -48,7 +52,13 @@ type Service struct {
 	workingRootBase string
 	clock           func() time.Time
 	idFactory       func() string
+	registerGroup   GroupRegistrar
 }
+
+// GroupRegistrar is the optional callback invoked after PrepareRun when a
+// task carries a non-empty SplitGroupID (Spec §3.11). The runs package does
+// not import the groups package directly to keep the dependency one-way.
+type GroupRegistrar func(ctx context.Context, splitGroupID, runID, taskID string) error
 
 // Config configures a Service.
 type Config struct {
@@ -58,6 +68,7 @@ type Config struct {
 	WorkingRootBase string
 	Clock           func() time.Time
 	IDFactory       func() string
+	RegisterGroup   GroupRegistrar
 }
 
 // NewService constructs a Service. WorkingRootBase defaults to "/var/lib/veriproc/runs"
@@ -79,6 +90,7 @@ func NewService(cfg Config) *Service {
 		workingRootBase: cfg.WorkingRootBase,
 		clock:           cfg.Clock,
 		idFactory:       cfg.IDFactory,
+		registerGroup:   cfg.RegisterGroup,
 	}
 }
 
@@ -160,6 +172,11 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	})
 	if err != nil {
 		return nil, err
+	}
+	if s.registerGroup != nil && task.SplitGroupID != "" {
+		if err := s.registerGroup(ctx, task.SplitGroupID, runID, taskID); err != nil {
+			return nil, fmt.Errorf("register split group: %w", err)
+		}
 	}
 	return s.store.Runs().Get(ctx, runID)
 }
@@ -319,6 +336,13 @@ func (s *Service) GetArtifact(ctx context.Context, artifactID string) (*store.Ar
 		return nil, mapStoreErr(err)
 	}
 	return a, nil
+}
+
+// ListPublicationsByArtifact returns all rolling-archive publications for an
+// artifact (Spec §5.5.6). Returns nil on missing artifact rather than an
+// error so the caller can simply omit the publication summary.
+func (s *Service) ListPublicationsByArtifact(ctx context.Context, artifactID string) ([]*store.PublicationRecord, error) {
+	return s.store.Publications().ListByArtifact(ctx, artifactID)
 }
 
 // ----- helpers --------------------------------------------------------------

@@ -15,10 +15,12 @@ import (
 	"github.com/eum/veriproc/internal/auth"
 	"github.com/eum/veriproc/internal/config"
 	"github.com/eum/veriproc/internal/executor"
+	"github.com/eum/veriproc/internal/groups"
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi"
 	"github.com/eum/veriproc/internal/logging"
 	"github.com/eum/veriproc/internal/publisher"
+	"github.com/eum/veriproc/internal/reconciler"
 	"github.com/eum/veriproc/internal/runs"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
@@ -68,16 +70,49 @@ func run(args []string) error {
 
 	registry := stations.NewRegistry()
 	// M2 ships with no built-in stations; deployments / tests seed them.
+	// VERIPROC_SEED_STATIONS=station_id:proc_type:content_hash:schema_version[;...]
+	if seed := os.Getenv("VERIPROC_SEED_STATIONS"); seed != "" {
+		var specs []stations.Spec
+		for _, entry := range strings.Split(seed, ";") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			parts := strings.Split(entry, ":")
+			if len(parts) < 4 {
+				return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: want station:proc:hash:schema", entry)
+			}
+			specs = append(specs, stations.Spec{
+				StationID: parts[0], ProcType: parts[1],
+				ContentHash: parts[2], SchemaVersion: parts[3],
+			})
+		}
+		if err := registry.Seed(context.Background(), st, specs...); err != nil {
+			return fmt.Errorf("seed stations: %w", err)
+		}
+		logger.Info().Int("count", len(specs)).Msg("seeded stations")
+	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 
 	stubExec := executor.NewStubExecutor(nil)
+	groupSvc := groups.NewService(st, nil)
 	runsSvc := runs.NewService(runs.Config{
 		Store:           st,
 		Executor:        stubExec,
 		Resolver:        registry,
 		WorkingRootBase: cfg.Paths.WorkingRootBase,
+		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {
+			return groupSvc.RegisterRun(ctx, splitGroupID, runID, taskID, "")
+		},
 	})
 	dispatcher := runs.NewDispatcher(runsSvc, 250*time.Millisecond, logger)
+	reconcilerSvc := reconciler.New(reconciler.Config{
+		Store:          st,
+		Runs:           runsSvc,
+		StaleThreshold: 60 * time.Second,
+		Interval:       15 * time.Second,
+		Logger:         logger,
+	})
 
 	// M6: parse VERIPROC_AUTH_TOKENS=subject:role:token[:quotaPerMin][;...]
 	authn, quota := loadAuth(os.Getenv("VERIPROC_AUTH_TOKENS"))
@@ -99,6 +134,7 @@ func run(args []string) error {
 		Logger: logger,
 		Tasks:  taskSvc,
 		Runs:   runsSvc,
+		Groups: groupSvc,
 		Authn:  authn,
 		Quota:  quota,
 	})
@@ -151,6 +187,9 @@ func run(args []string) error {
 			}
 		}()
 	}
+
+	// M7: reconciliation worker.
+	go reconcilerSvc.Run(dispatcherCtx)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

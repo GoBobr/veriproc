@@ -1,0 +1,9 @@
+station_id: STATION-C
+proc_type: AGG_DAILY
+content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000ccc
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station C — daily aggregator. Use with --split-group to exercise
+  M7 split-group aggregation across multiple windows.
+scripts:
+  run: ./scripts/run.sh

@@ -9,6 +9,7 @@ import (
 
 	"github.com/eum/veriproc/internal/auth"
 	"github.com/eum/veriproc/internal/config"
+	"github.com/eum/veriproc/internal/groups"
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi/apierr"
 	"github.com/eum/veriproc/internal/runs"
@@ -25,6 +26,8 @@ type Deps struct {
 	Tasks *tasks.Service
 	// Runs is optional at M0–M2; required from M3 onward to expose run/job/artifact reads.
 	Runs *runs.Service
+	// Groups is optional; required from M7 to expose split-group endpoints (§5.5.7).
+	Groups *groups.Service
 	// Authn enforces bearer-token auth on /api/v1/* (M6). When nil, the API
 	// is open (preserves M0–M5 behavior for tests / local dev).
 	Authn auth.Authenticator
@@ -66,6 +69,13 @@ func NewRouter(d Deps) http.Handler {
 		mux.HandleFunc("GET /api/v1/runs/{run_id}/logs", rh.listLogs)
 		mux.HandleFunc("GET /api/v1/jobs/{job_id}", rh.getJob)
 		mux.HandleFunc("GET /api/v1/artifacts/{artifact_id}/content", rh.artifactContent)
+	}
+
+	if d.Groups != nil {
+		gh := &groupHandler{svc: d.Groups}
+		mux.HandleFunc("GET /api/v1/groups", gh.list)
+		mux.HandleFunc("GET /api/v1/groups/{group_id}", gh.get)
+		mux.HandleFunc("POST /api/v1/groups/{group_id}/close", gh.close)
 	}
 
 	// Catch-all that distinguishes 404 (no route at all) from 405 (route exists
