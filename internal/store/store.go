@@ -94,6 +94,24 @@ func (s *Store) Tasks() *TaskRepo { return &TaskRepo{q: s.db, dialect: s.dialect
 // Runs returns the run repository bound to the connection pool.
 func (s *Store) Runs() *RunRepo { return &RunRepo{q: s.db, dialect: s.dialect} }
 
+// Jobs returns the job repository bound to the connection pool.
+func (s *Store) Jobs() *JobRepo { return &JobRepo{q: s.db, dialect: s.dialect} }
+
+// Manifests returns the manifest repository bound to the connection pool.
+func (s *Store) Manifests() *ManifestRepo {
+	return &ManifestRepo{q: s.db, dialect: s.dialect, store: s}
+}
+
+// Fingerprints returns the processing-fingerprint repository.
+func (s *Store) Fingerprints() *FingerprintRepo {
+	return &FingerprintRepo{q: s.db, dialect: s.dialect}
+}
+
+// Artifacts returns the artifact-metadata repository.
+func (s *Store) Artifacts() *ArtifactRepo {
+	return &ArtifactRepo{q: s.db, dialect: s.dialect}
+}
+
 // Stations returns the station-revision repository.
 func (s *Store) Stations() *StationRevisionRepo {
 	return &StationRevisionRepo{q: s.db, dialect: s.dialect}
@@ -102,6 +120,16 @@ func (s *Store) Stations() *StationRevisionRepo {
 // Idempotency returns the idempotency-record repository.
 func (s *Store) Idempotency() *IdempotencyRepo {
 	return &IdempotencyRepo{q: s.db, dialect: s.dialect}
+}
+
+// Canonicality returns the canonicality-audit repository (M6).
+func (s *Store) Canonicality() *CanonicalityRepo {
+	return &CanonicalityRepo{q: s.db, dialect: s.dialect}
+}
+
+// Publications returns the rolling-archive-publication repository (M6).
+func (s *Store) Publications() *PublicationRepo {
+	return &PublicationRepo{q: s.db, dialect: s.dialect}
 }
 
 // InTx runs fn inside a transaction. The transaction is committed if fn
@@ -143,6 +171,28 @@ func (t *Tx) Idempotency() *IdempotencyRepo {
 	return &IdempotencyRepo{q: t.tx, dialect: t.dialect}
 }
 
+// Jobs returns the job repository bound to the transaction.
+func (t *Tx) Jobs() *JobRepo { return &JobRepo{q: t.tx, dialect: t.dialect} }
+
+// Manifests returns the manifest repository bound to the transaction.
+func (t *Tx) Manifests() *ManifestRepo { return &ManifestRepo{q: t.tx, dialect: t.dialect} }
+
+// Fingerprints returns the fingerprint repository bound to the transaction.
+func (t *Tx) Fingerprints() *FingerprintRepo { return &FingerprintRepo{q: t.tx, dialect: t.dialect} }
+
+// Artifacts returns the artifact repository bound to the transaction.
+func (t *Tx) Artifacts() *ArtifactRepo { return &ArtifactRepo{q: t.tx, dialect: t.dialect} }
+
+// Canonicality returns the canonicality-audit repository bound to the transaction.
+func (t *Tx) Canonicality() *CanonicalityRepo {
+	return &CanonicalityRepo{q: t.tx, dialect: t.dialect}
+}
+
+// Publications returns the publication repository bound to the transaction.
+func (t *Tx) Publications() *PublicationRepo {
+	return &PublicationRepo{q: t.tx, dialect: t.dialect}
+}
+
 // querier is the small subset of sql.DB / sql.Tx used by repositories so that
 // repository methods can run in either pooled or transactional context.
 type querier interface {
@@ -180,3 +230,11 @@ func (dialectSQLite) IsForeignKeyViolation(err error) bool {
 // nowUTC returns the current time normalized to UTC. Centralized so test
 // fixtures can swap if needed in later milestones.
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// boolInt returns 1 if b is true, 0 otherwise. SQLite stores booleans as INTs.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

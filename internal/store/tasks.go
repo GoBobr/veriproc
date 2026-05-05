@@ -92,6 +92,41 @@ func (r *TaskRepo) Get(ctx context.Context, taskID string) (*TaskRecord, error) 
 	return t, err
 }
 
+// SetState updates the task's state and (optionally) failure summary. No
+// preconditions are enforced; callers compose state machines at the service
+// layer.
+func (r *TaskRepo) SetState(ctx context.Context, taskID, state, failureSummary string) error {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE tasks SET state = ?, failure_summary = ? WHERE task_id = ?`,
+		state, nullStr(failureSummary), taskID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetLatestRun records the latest run id for a task (Spec §5.6: latest_run
+// follows backend-defined ordering; the service is responsible for ordering).
+func (r *TaskRepo) SetLatestRun(ctx context.Context, taskID, runID string) error {
+	_, err := r.q.ExecContext(ctx,
+		`UPDATE tasks SET latest_run_id = ? WHERE task_id = ?`, runID, taskID)
+	return err
+}
+
+// SetCanonicalRun records the canonical run id for a task and stamps
+// completed_at if not already set.
+func (r *TaskRepo) SetCanonicalRun(ctx context.Context, taskID, runID string, completedAt time.Time) error {
+	_, err := r.q.ExecContext(ctx,
+		`UPDATE tasks SET canonical_run_id = ?,
+		 completed_at = COALESCE(completed_at, ?) WHERE task_id = ?`,
+		runID, completedAt.UTC(), taskID)
+	return err
+}
+
 // ListFilter constrains List queries. Zero values mean "no filter".
 type ListFilter struct {
 	DestinationStationID string
@@ -295,11 +330,4 @@ func nullTime(t sql.NullTime) any {
 		return nil
 	}
 	return t.Time.UTC()
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

@@ -11,6 +11,7 @@ package tasks
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -76,10 +77,11 @@ type SubmitResult struct {
 
 // Service implements the task-submission and query domain.
 type Service struct {
-	store     *store.Store
-	stations  stations.Resolver
-	now       func() time.Time
-	idFactory func() string
+	store           *store.Store
+	stations        stations.Resolver
+	now             func() time.Time
+	idFactory       func() string
+	idempotencyTTL  time.Duration
 }
 
 // NewService constructs a Service. now and idFactory are injected for tests;
@@ -91,8 +93,16 @@ func NewService(s *store.Store, r stations.Resolver, now func() time.Time, idFac
 	if idFactory == nil {
 		idFactory = defaultTaskID
 	}
-	return &Service{store: s, stations: r, now: now, idFactory: idFactory}
+	return &Service{store: s, stations: r, now: now, idFactory: idFactory, idempotencyTTL: 24 * time.Hour}
 }
+
+// SetIdempotencyTTL overrides the default 24h retention window for newly
+// inserted idempotency_records (Spec §3.3 retention). A non-positive value
+// disables the TTL (records are kept indefinitely until explicitly swept).
+func (s *Service) SetIdempotencyTTL(d time.Duration) { s.idempotencyTTL = d }
+
+// IdempotencyTTL reports the currently configured retention window.
+func (s *Service) IdempotencyTTL() time.Duration { return s.idempotencyTTL }
 
 func defaultTaskID() string {
 	id, err := uuid.NewV7()
@@ -178,6 +188,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 				RequestHash: hash,
 				TaskID:      taskID,
 				CreatedAt:   now,
+			}
+			if s.idempotencyTTL > 0 {
+				rec.ExpiresAt = sql.NullTime{Time: now.Add(s.idempotencyTTL).UTC(), Valid: true}
 			}
 			if err := tx.Idempotency().Insert(ctx, rec); err != nil {
 				return err

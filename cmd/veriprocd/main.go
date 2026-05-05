@@ -8,13 +8,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/eum/veriproc/internal/auth"
 	"github.com/eum/veriproc/internal/config"
+	"github.com/eum/veriproc/internal/executor"
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi"
 	"github.com/eum/veriproc/internal/logging"
+	"github.com/eum/veriproc/internal/publisher"
+	"github.com/eum/veriproc/internal/runs"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
 	"github.com/eum/veriproc/internal/tasks"
@@ -65,11 +70,37 @@ func run(args []string) error {
 	// M2 ships with no built-in stations; deployments / tests seed them.
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 
+	stubExec := executor.NewStubExecutor(nil)
+	runsSvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executor:        stubExec,
+		Resolver:        registry,
+		WorkingRootBase: cfg.Paths.WorkingRootBase,
+	})
+	dispatcher := runs.NewDispatcher(runsSvc, 250*time.Millisecond, logger)
+
+	// M6: parse VERIPROC_AUTH_TOKENS=subject:role:token[:quotaPerMin][;...]
+	authn, quota := loadAuth(os.Getenv("VERIPROC_AUTH_TOKENS"))
+
+	// M6: optional rolling-archive publisher.
+	var pubSvc *publisher.Service
+	if base := os.Getenv("VERIPROC_ARCHIVE_BASE"); base != "" {
+		pubSvc = publisher.New(publisher.Config{
+			Store:       st,
+			ArchiveBase: base,
+			Logger:      logger,
+			Interval:    5 * time.Second,
+		})
+	}
+
 	router := httpapi.NewRouter(httpapi.Deps{
 		Config: cfg,
 		Health: agg,
 		Logger: logger,
 		Tasks:  taskSvc,
+		Runs:   runsSvc,
+		Authn:  authn,
+		Quota:  quota,
 	})
 
 	srv := &http.Server{
@@ -87,6 +118,40 @@ func run(args []string) error {
 		close(errCh)
 	}()
 
+	dispatcherCtx, cancelDispatcher := context.WithCancel(context.Background())
+	defer cancelDispatcher()
+	go func() {
+		if err := dispatcher.Run(dispatcherCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn().Err(err).Msg("dispatcher exited with error")
+		}
+	}()
+
+	// M6: idempotency-record sweeper. Runs hourly; safe to omit when no
+	// idempotency records are written.
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-dispatcherCtx.Done():
+				return
+			case <-t.C:
+				if _, err := st.Idempotency().Sweep(dispatcherCtx, time.Now().UTC()); err != nil {
+					logger.Warn().Err(err).Msg("idempotency sweep failed")
+				}
+			}
+		}
+	}()
+
+	// M6: rolling-archive publisher.
+	if pubSvc != nil {
+		go func() {
+			if err := pubSvc.Run(dispatcherCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn().Err(err).Msg("publisher exited with error")
+			}
+		}()
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
@@ -101,6 +166,7 @@ func run(args []string) error {
 	}
 
 	agg.BeginShutdown()
+	cancelDispatcher()
 
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	if shutdownTimeout <= 0 {
@@ -114,4 +180,37 @@ func run(args []string) error {
 	}
 	logger.Info().Msg("veriprocd stopped cleanly")
 	return nil
+}
+
+// loadAuth parses VERIPROC_AUTH_TOKENS into a StaticAuthenticator and
+// QuotaEnforcer. The format is `subject:role:token[:quotaPerMin]` separated
+// by `;`. Returns (nil, nil) when the spec is empty (open API).
+func loadAuth(spec string) (auth.Authenticator, *auth.QuotaEnforcer) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil, nil
+	}
+	entries := map[string]auth.Principal{}
+	for _, raw := range strings.Split(spec, ";") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		parts := strings.Split(raw, ":")
+		if len(parts) < 3 {
+			continue
+		}
+		p := auth.Principal{Subject: parts[0], Role: auth.Role(parts[1])}
+		token := parts[2]
+		if len(parts) >= 4 {
+			var q int
+			fmt.Sscanf(parts[3], "%d", &q)
+			p.QuotaPerMinute = q
+		}
+		entries[token] = p
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	return auth.NewStaticAuthenticator(entries), auth.NewQuotaEnforcer(time.Now)
 }

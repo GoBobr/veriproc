@@ -7,9 +7,11 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/eum/veriproc/internal/auth"
 	"github.com/eum/veriproc/internal/config"
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi/apierr"
+	"github.com/eum/veriproc/internal/runs"
 	"github.com/eum/veriproc/internal/tasks"
 	"github.com/rs/zerolog"
 )
@@ -21,6 +23,13 @@ type Deps struct {
 	Logger zerolog.Logger
 	// Tasks is optional at M0; required from M2 onward to expose /tasks.
 	Tasks *tasks.Service
+	// Runs is optional at M0–M2; required from M3 onward to expose run/job/artifact reads.
+	Runs *runs.Service
+	// Authn enforces bearer-token auth on /api/v1/* (M6). When nil, the API
+	// is open (preserves M0–M5 behavior for tests / local dev).
+	Authn auth.Authenticator
+	// Quota enforces per-principal mutating-request quotas (M6). Optional.
+	Quota *auth.QuotaEnforcer
 }
 
 // NewRouter returns an http.Handler with all Milestone-0 endpoints mounted.
@@ -46,6 +55,19 @@ func NewRouter(d Deps) http.Handler {
 		mux.HandleFunc("GET /api/v1/tasks/{task_id}", th.get)
 	}
 
+	if d.Runs != nil {
+		rh := &runHandler{svc: d.Runs}
+		mux.HandleFunc("GET /api/v1/runs", rh.list)
+		mux.HandleFunc("GET /api/v1/runs/{run_id}", rh.get)
+		mux.HandleFunc("POST /api/v1/runs/{run_id}/cancel", rh.cancel)
+		mux.HandleFunc("POST /api/v1/runs/{run_id}/promote", rh.promote)
+		mux.HandleFunc("GET /api/v1/runs/{run_id}/jobs", rh.listJobs)
+		mux.HandleFunc("GET /api/v1/runs/{run_id}/artifacts", rh.listArtifacts)
+		mux.HandleFunc("GET /api/v1/runs/{run_id}/logs", rh.listLogs)
+		mux.HandleFunc("GET /api/v1/jobs/{job_id}", rh.getJob)
+		mux.HandleFunc("GET /api/v1/artifacts/{artifact_id}/content", rh.artifactContent)
+	}
+
 	// Catch-all that distinguishes 404 (no route at all) from 405 (route exists
 	// for a different method). The standard mux already returns 405 for known
 	// paths with the wrong method via its own default handler, but it returns
@@ -68,6 +90,8 @@ func NewRouter(d Deps) http.Handler {
 		correlationIDMiddleware(),
 		requestLogMiddleware(d.Logger),
 		recoverMiddleware(d.Logger),
+		authMiddleware(d.Authn),
+		quotaMiddleware(d.Quota),
 	)
 }
 

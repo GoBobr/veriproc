@@ -18,17 +18,23 @@ import (
 // Code is the stable, machine-readable error code clients should switch on.
 type Code string
 
-// The minimal code set introduced at M0/M2. M5 will extend this catalog to
-// fully cover the error categories listed in Spec \u00a75.7.
+// The minimal code set introduced at M0/M2. M5 extends it to fully cover the
+// error categories listed in Spec §5.7. M6 adds auth/quota codes.
 const (
-	CodeInvalidRequest        Code = "invalid_request"
-	CodeNotFound              Code = "not_found"
-	CodeMethodNotAllowed      Code = "method_not_allowed"
-	CodeIdempotencyConflict   Code = "idempotency_conflict"
-	CodeUnknownStation        Code = "unknown_station"
+	CodeInvalidRequest         Code = "invalid_request"
+	CodeNotFound               Code = "not_found"
+	CodeMethodNotAllowed       Code = "method_not_allowed"
+	CodeIdempotencyConflict    Code = "idempotency_conflict"
+	CodeUnknownStation         Code = "unknown_station"
 	CodeInvalidStateTransition Code = "invalid_state_transition"
-	CodeDependencyUnavailable Code = "dependency_unavailable"
-	CodeInternal              Code = "internal"
+	CodeCancellationUnsupported Code = "cancellation_unsupported"
+	CodeReconciliationInProgress Code = "reconciliation_in_progress"
+	CodeDependencyUnavailable  Code = "dependency_unavailable"
+	CodeUnauthenticated        Code = "unauthenticated"
+	CodeUnauthorized           Code = "unauthorized"
+	CodeQuotaExceeded          Code = "quota_exceeded"
+	CodeRateLimited            Code = "rate_limited"
+	CodeInternal               Code = "internal"
 )
 
 // Body is the canonical JSON envelope.
@@ -38,11 +44,14 @@ type Body struct {
 
 // Detail describes a single error.
 type Detail struct {
-	Code          Code              `json:"code"`
-	Message       string            `json:"message"`
-	CorrelationID string            `json:"correlation_id,omitempty"`
-	Fields        []FieldError      `json:"fields,omitempty"`
-	Details       map[string]string `json:"details,omitempty"`
+	Code                 Code              `json:"code"`
+	Message              string            `json:"message"`
+	CorrelationID        string            `json:"correlation_id,omitempty"`
+	Fields               []FieldError      `json:"fields,omitempty"`
+	Details              map[string]string `json:"details,omitempty"`
+	Retryable            *bool             `json:"retryable,omitempty"`
+	Dependency           string            `json:"dependency,omitempty"`
+	ConflictingResourceID string           `json:"conflicting_resource_id,omitempty"`
 }
 
 // FieldError describes one offending field for invalid_request responses.
@@ -77,11 +86,22 @@ func HTTPStatusFor(code Code) int {
 		return http.StatusNotFound
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed
-	case CodeIdempotencyConflict, CodeInvalidStateTransition:
+	case CodeIdempotencyConflict, CodeInvalidStateTransition,
+		CodeCancellationUnsupported, CodeReconciliationInProgress:
 		return http.StatusConflict
 	case CodeDependencyUnavailable:
 		return http.StatusServiceUnavailable
+	case CodeUnauthenticated:
+		return http.StatusUnauthorized
+	case CodeUnauthorized:
+		return http.StatusForbidden
+	case CodeQuotaExceeded, CodeRateLimited:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}
 }
+
+// BoolPtr returns a pointer to b. Convenience for callers populating
+// Detail.Retryable inline.
+func BoolPtr(b bool) *bool { return &b }

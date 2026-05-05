@@ -10,20 +10,21 @@ import (
 
 // RunRecord is the persisted shape of a run (Spec §3.7 / §4.3.7).
 type RunRecord struct {
-	RunID                 string
-	TaskID                string
-	StationRevisionID     string
-	RetryIndex            int
-	WorkingRoot           string
-	State                 string
-	Canonicality          string
-	ProcessingFingerprint string
-	FailureReason         string
-	CreatedAt             time.Time
-	PreparedAt            sql.NullTime
-	DispatchedAt          sql.NullTime
-	StartedAt             sql.NullTime
-	TerminalAt            sql.NullTime
+	RunID                   string
+	TaskID                  string
+	StationRevisionID       string
+	RetryIndex              int
+	WorkingRoot             string
+	State                   string
+	Canonicality            string
+	ProcessingFingerprint   string
+	FailureReason           string
+	CreatedAt               time.Time
+	PreparedAt              sql.NullTime
+	DispatchedAt            sql.NullTime
+	StartedAt               sql.NullTime
+	TerminalAt              sql.NullTime
+	CancellationRequestedAt sql.NullTime
 }
 
 // RunRepo persists runs.
@@ -70,7 +71,8 @@ func (r *RunRepo) Get(ctx context.Context, runID string) (*RunRecord, error) {
 		       state, canonicality,
 		       COALESCE(processing_fingerprint, ''),
 		       COALESCE(failure_reason, ''),
-		       created_at, prepared_at, dispatched_at, started_at, terminal_at
+		       created_at, prepared_at, dispatched_at, started_at, terminal_at,
+		       cancellation_requested_at
 		FROM runs WHERE run_id = ?`, runID)
 
 	var rec RunRecord
@@ -79,6 +81,7 @@ func (r *RunRepo) Get(ctx context.Context, runID string) (*RunRecord, error) {
 		&rec.State, &rec.Canonicality,
 		&rec.ProcessingFingerprint, &rec.FailureReason,
 		&rec.CreatedAt, &rec.PreparedAt, &rec.DispatchedAt, &rec.StartedAt, &rec.TerminalAt,
+		&rec.CancellationRequestedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

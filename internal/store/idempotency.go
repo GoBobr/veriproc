@@ -46,7 +46,9 @@ func (r *IdempotencyRepo) Insert(ctx context.Context, rec *IdempotencyRecord) er
 	return nil
 }
 
-// GetByKey returns the record for (scope, key) or ErrNotFound.
+// GetByKey returns the record for (scope, key) or ErrNotFound. Records past
+// their expires_at remain visible until Sweep removes them; clients see a
+// stable replay window even if the sweeper has not yet run.
 func (r *IdempotencyRepo) GetByKey(ctx context.Context, scope, key string) (*IdempotencyRecord, error) {
 	row := r.q.QueryRowContext(ctx, `
 		SELECT idempotency_record_id, scope, key, request_hash,
@@ -62,4 +64,21 @@ func (r *IdempotencyRepo) GetByKey(ctx context.Context, scope, key string) (*Ide
 	}
 	rec.CreatedAt = rec.CreatedAt.UTC()
 	return &rec, nil
+}
+
+// Sweep deletes idempotency_records whose expires_at is non-NULL and strictly
+// before `before`. Records with NULL expires_at are retained indefinitely.
+// Returns the number of rows deleted. Spec §3.3 retention sweeper.
+func (r *IdempotencyRepo) Sweep(ctx context.Context, before time.Time) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`DELETE FROM idempotency_records WHERE expires_at IS NOT NULL AND expires_at < ?`,
+		before.UTC())
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }

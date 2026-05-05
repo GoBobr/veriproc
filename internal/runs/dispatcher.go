@@ -1,0 +1,126 @@
+package runs
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/rs/zerolog"
+
+	"github.com/eum/veriproc/internal/executor"
+	"github.com/eum/veriproc/internal/store"
+)
+
+// Dispatcher drives runs through the lifecycle on a fixed cadence:
+//
+//   - Newly-created runs in "ready" state are dispatched to the executor.
+//   - Active runs (dispatched/running) are polled.
+//   - Runs in "finalizing" are finalized.
+//
+// One Dispatcher is intended per process; it serializes work using the
+// service's per-row conditional UPDATEs as the concurrency control.
+type Dispatcher struct {
+	svc      *Service
+	interval time.Duration
+	logger   zerolog.Logger
+}
+
+// NewDispatcher constructs a Dispatcher that ticks at the supplied interval.
+// An interval of 0 defaults to 250ms.
+func NewDispatcher(svc *Service, interval time.Duration, logger zerolog.Logger) *Dispatcher {
+	if interval <= 0 {
+		interval = 250 * time.Millisecond
+	}
+	return &Dispatcher{svc: svc, interval: interval, logger: logger}
+}
+
+// Run blocks, ticking the dispatcher until ctx is cancelled.
+func (d *Dispatcher) Run(ctx context.Context) error {
+	t := time.NewTicker(d.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			if err := d.Tick(ctx); err != nil {
+				d.logger.Warn().Err(err).Msg("dispatcher tick error")
+			}
+		}
+	}
+}
+
+// Tick runs one pass of the dispatcher: admit new tasks, dispatch ready runs,
+// poll active runs, finalize completed runs. Exposed publicly so tests can
+// drive the lifecycle without spinning up a goroutine.
+func (d *Dispatcher) Tick(ctx context.Context) error {
+	if err := d.admitNewTasks(ctx); err != nil {
+		return err
+	}
+	if err := d.dispatchReady(ctx); err != nil {
+		return err
+	}
+	if err := d.pollActive(ctx); err != nil {
+		return err
+	}
+	return d.finalizeReady(ctx)
+}
+
+// admitNewTasks prepares a run for each task in state "accepted" that has no
+// latest_run_id yet. This bridges the tasks service (which only persists the
+// task row) and the run lifecycle.
+func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
+	page, err := d.svc.store.Tasks().List(ctx, store.ListFilter{State: "accepted", Limit: 100})
+	if err != nil {
+		return err
+	}
+	for _, t := range page.Items {
+		if t.LatestRunID != "" {
+			continue
+		}
+		if _, err := d.svc.PrepareRun(ctx, t.TaskID); err != nil {
+			d.logger.Warn().Str("task_id", t.TaskID).Err(err).Msg("prepare run failed")
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) dispatchReady(ctx context.Context) error {
+	ready, err := d.svc.store.Runs().ListByStates(ctx, "ready")
+	if err != nil {
+		return err
+	}
+	for _, r := range ready {
+		if _, err := d.svc.Dispatch(ctx, r.RunID); err != nil {
+			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("dispatch failed")
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) pollActive(ctx context.Context) error {
+	active, err := d.svc.store.Runs().ListByStates(ctx, "dispatched", "running")
+	if err != nil {
+		return err
+	}
+	for _, r := range active {
+		if _, err := d.svc.Poll(ctx, r.RunID); err != nil &&
+			!errors.Is(err, executor.ErrUnknownJob) {
+			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("poll failed")
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) finalizeReady(ctx context.Context) error {
+	finalizing, err := d.svc.store.Runs().ListByStates(ctx, "finalizing")
+	if err != nil {
+		return err
+	}
+	for _, r := range finalizing {
+		if _, err := d.svc.Finalize(ctx, r.RunID); err != nil {
+			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("finalize failed")
+		}
+	}
+	return nil
+}
