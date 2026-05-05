@@ -25,8 +25,8 @@ func newTestRouter(t *testing.T, agg *health.Aggregator) http.Handler {
 	return NewRouter(Deps{Config: cfg, Health: agg, Logger: logger})
 }
 
-// TestAPI_Health_5_8_M0 — GET /health returns 200 + payload shape (Spec 5.7).
-func TestAPI_Health_5_8_M0(t *testing.T) {
+// TestAPI_Health_5_11_M0 — GET /health returns 200 + payload shape (Spec §5.11).
+func TestAPI_Health_5_11_M0(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 
 	for _, path := range []string{"/health", "/api/v1/health"} {
@@ -69,8 +69,8 @@ func TestAPI_Health_Shutdown_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_Readiness_5_8_M0 — GET /readiness returns 200 with no deps configured.
-func TestAPI_Readiness_5_8_M0(t *testing.T) {
+// TestAPI_Readiness_5_11_M0 — GET /readiness returns 200 with no deps configured.
+func TestAPI_Readiness_5_11_M0(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
 	rr := httptest.NewRecorder()
@@ -140,7 +140,7 @@ func TestAPI_CorrelationID_Generated_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_MethodNotAllowed_M0 — wrong method on /health returns 405.
+// TestAPI_MethodNotAllowed_M0 — wrong method on /health returns 405 with envelope.
 func TestAPI_MethodNotAllowed_M0(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
@@ -149,15 +149,33 @@ func TestAPI_MethodNotAllowed_M0(t *testing.T) {
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rr.Code)
 	}
+	var body map[string]map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("expected JSON envelope, got %q: %v", rr.Body.String(), err)
+	}
+	if body["error"]["code"] != "method_not_allowed" {
+		t.Errorf("error.code = %v", body["error"]["code"])
+	}
 }
 
-// TestAPI_NotFound_M0 — unknown route returns 404.
+// TestAPI_NotFound_M0 — unknown route returns 404 with envelope (Spec §5.5.8).
 func TestAPI_NotFound_M0(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
+	req.Header.Set(logging.CorrelationHeader, "corr-xyz")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rr.Code)
+	}
+	var body map[string]map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("expected JSON envelope, got %q: %v", rr.Body.String(), err)
+	}
+	if body["error"]["code"] != "not_found" {
+		t.Errorf("error.code = %v", body["error"]["code"])
+	}
+	if body["error"]["correlation_id"] != "corr-xyz" {
+		t.Errorf("correlation_id = %v, want corr-xyz", body["error"]["correlation_id"])
 	}
 }

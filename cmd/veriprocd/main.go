@@ -15,6 +15,9 @@ import (
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi"
 	"github.com/eum/veriproc/internal/logging"
+	"github.com/eum/veriproc/internal/stations"
+	"github.com/eum/veriproc/internal/store"
+	"github.com/eum/veriproc/internal/tasks"
 	"github.com/eum/veriproc/internal/version"
 )
 
@@ -42,10 +45,31 @@ func run(args []string) error {
 	agg := health.NewAggregator(2 * time.Second)
 	// Milestone 0 ships with no checkers; later milestones register their own.
 
+	// Persistence + task service (M1 + M2). When no DSN is configured we fall
+	// back to an in-memory SQLite database so the daemon still starts in
+	// developer setups.
+	dsn := cfg.DB.DSN
+	if dsn == "" {
+		dsn = "sqlite://:memory:"
+	}
+	st, err := store.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer st.Close()
+	if err := store.Migrate(context.Background(), st); err != nil {
+		return fmt.Errorf("migrate store: %w", err)
+	}
+
+	registry := stations.NewRegistry()
+	// M2 ships with no built-in stations; deployments / tests seed them.
+	taskSvc := tasks.NewService(st, registry, nil, nil)
+
 	router := httpapi.NewRouter(httpapi.Deps{
 		Config: cfg,
 		Health: agg,
 		Logger: logger,
+		Tasks:  taskSvc,
 	})
 
 	srv := &http.Server{

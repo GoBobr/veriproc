@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/eum/veriproc/internal/httpapi/apierr"
 	"github.com/eum/veriproc/internal/logging"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -66,9 +67,8 @@ func recoverMiddleware(logger zerolog.Logger) func(http.Handler) http.Handler {
 						Bytes("stack", debug.Stack()).
 						Str("path", r.URL.Path).
 						Msg("panic recovered")
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"error":{"code":"internal","message":"internal server error"}}`))
+					apierr.Write(w, r, http.StatusInternalServerError,
+						apierr.CodeInternal, "internal server error")
 				}
 			}()
 			next.ServeHTTP(w, r)
