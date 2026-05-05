@@ -1,0 +1,15 @@
+# Build artifacts
+bin/
+*.test
+*.out
+coverage.*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Python venv (existing)
+venv/
