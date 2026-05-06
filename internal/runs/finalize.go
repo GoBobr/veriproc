@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/eum/veriproc/internal/store"
 )
@@ -44,6 +46,12 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("write log: %w", err)
 	}
 
+	// Collect stub output artifacts for every filename declared by the station.
+	outputArtifacts, err := s.writeStubOutputs(ctx, run)
+	if err != nil {
+		return nil, fmt.Errorf("write outputs: %w", err)
+	}
+
 	// Spec §2.14.1 / §3.15: forced reruns must not silently overwrite the
 	// previous canonical record. They are persisted as "forced" runs and do
 	// not compete for the canonical claim.
@@ -78,6 +86,11 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		if err := tx.Artifacts().Insert(ctx, logArtifact); err != nil {
 			return err
 		}
+		for _, oa := range outputArtifacts {
+			if err := tx.Artifacts().Insert(ctx, oa); err != nil {
+				return err
+			}
+		}
 		if err := tx.Runs().MarkComplete(ctx, runID, canonicality, now); err != nil {
 			return err
 		}
@@ -104,6 +117,91 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, err
 	}
 	return s.store.Runs().Get(ctx, runID)
+}
+
+// writeJobOrder writes job-order.yaml to the working root before the executor
+// is invoked. The file captures the run identity and dispatch context so that
+// a human or real executor can inspect what was submitted.
+func (s *Service) writeJobOrder(run *store.RunRecord, path string) (*store.ArtifactRecord, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf(
+		"run_id: %q\ntask_id: %q\nstation_revision_id: %q\nworking_root: %q\nsubmitted_at: %q\nexecutor: %q\n",
+		run.RunID, run.TaskID, run.StationRevisionID, run.WorkingRoot,
+		s.clock().UTC().Format(time.RFC3339Nano), s.exec.Type(),
+	)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256([]byte(body))
+	return &store.ArtifactRecord{
+		ArtifactID:       "art-" + sha12(run.RunID+":joborder"),
+		ProducingRunID:   run.RunID,
+		LogicalType:      "joborder",
+		FileType:         "JOB_ORDER",
+		Path:             path,
+		Size:             int64(len(body)),
+		Checksum:         hex.EncodeToString(sum[:]),
+		ChecksumAlgo:     "sha256",
+		ValidationStatus: "validated",
+		Availability:     "available",
+		CreatedAt:        s.clock().UTC(),
+	}, nil
+}
+
+// writeStubOutputs creates or registers output artifacts for every filename
+// declared in the station revision's DeclaredOutputs field.
+//
+// If the executor already wrote the file (e.g. LocalExecutor ran run.sh), the
+// existing file is read and its checksum computed. If the file is absent (stub
+// mode), a short placeholder is written so the artifact record is consistent.
+func (s *Service) writeStubOutputs(ctx context.Context, run *store.RunRecord) ([]*store.ArtifactRecord, error) {
+	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	if rev.DeclaredOutputs == "" {
+		return nil, nil
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(rev.DeclaredOutputs), &names); err != nil {
+		return nil, fmt.Errorf("parse declared_outputs: %w", err)
+	}
+	dir := filepath.Join(run.WorkingRoot, "outputs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	arts := make([]*store.ArtifactRecord, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		// Use the file the executor produced, if present; otherwise write a
+		// stub placeholder so artifact records remain consistent.
+		var body []byte
+		if existing, rerr := os.ReadFile(path); rerr == nil {
+			body = existing
+		} else {
+			body = []byte(fmt.Sprintf("stub output: %s (run=%s)\n", name, run.RunID))
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				return nil, err
+			}
+		}
+		sum := sha256.Sum256(body)
+		arts = append(arts, &store.ArtifactRecord{
+			ArtifactID:       "art-" + sha12(run.RunID+":output:"+name),
+			ProducingRunID:   run.RunID,
+			LogicalType:      "output",
+			FileType:         "STATION_OUTPUT",
+			Path:             path,
+			Size:             int64(len(body)),
+			Checksum:         hex.EncodeToString(sum[:]),
+			ChecksumAlgo:     "sha256",
+			ValidationStatus: "validated",
+			Availability:     "available",
+			CreatedAt:        s.clock().UTC(),
+		})
+	}
+	return arts, nil
 }
 
 // writeStubLog writes a deterministic log file to {workingRoot}/logs/run.log

@@ -69,8 +69,17 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
-	// M2 ships with no built-in stations; deployments / tests seed them.
-	// VERIPROC_SEED_STATIONS=station_id:proc_type:content_hash:schema_version[;...]
+	if cfg.Paths.StationConfigRoot != "" {
+		specs, err := stations.LoadDir(context.Background(), cfg.Paths.StationConfigRoot, registry, st)
+		if err != nil {
+			return fmt.Errorf("load stations: %w", err)
+		}
+		logger.Info().Str("dir", cfg.Paths.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
+	}
+	// Direct seeding remains useful for tests and tiny deployments.
+	// Supported forms:
+	//   station_id:proc_type
+	//   station_id:proc_type:content_hash:schema_version
 	if seed := os.Getenv("VERIPROC_SEED_STATIONS"); seed != "" {
 		var specs []stations.Spec
 		for _, entry := range strings.Split(seed, ";") {
@@ -79,13 +88,23 @@ func run(args []string) error {
 				continue
 			}
 			parts := strings.Split(entry, ":")
-			if len(parts) < 4 {
-				return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: want station:proc:hash:schema", entry)
+			if len(parts) == 2 {
+				spec, err := stations.SpecFromSeed(parts[0], parts[1])
+				if err != nil {
+					return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: %w", entry, err)
+				}
+				specs = append(specs, spec)
+				continue
 			}
-			specs = append(specs, stations.Spec{
-				StationID: parts[0], ProcType: parts[1],
-				ContentHash: parts[2], SchemaVersion: parts[3],
-			})
+			if len(parts) >= 4 {
+				hash := strings.Join(parts[2:len(parts)-1], ":")
+				specs = append(specs, stations.Spec{
+					StationID: parts[0], ProcType: parts[1],
+					ContentHash: hash, SchemaVersion: parts[len(parts)-1],
+				})
+				continue
+			}
+			return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: want station:proc or station:proc:hash:schema", entry)
 		}
 		if err := registry.Seed(context.Background(), st, specs...); err != nil {
 			return fmt.Errorf("seed stations: %w", err)
@@ -94,11 +113,19 @@ func run(args []string) error {
 	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 
-	stubExec := executor.NewStubExecutor(nil)
+	var exec executor.Executor
+	switch os.Getenv("VERIPROC_EXECUTOR") {
+	case "local":
+		exec = executor.NewLocalExecutor(nil)
+		logger.Info().Msg("executor: local (runs station scripts as OS processes)")
+	default:
+		exec = executor.NewStubExecutor(nil)
+		logger.Info().Msg("executor: stub (simulates lifecycle without running scripts)")
+	}
 	groupSvc := groups.NewService(st, nil)
 	runsSvc := runs.NewService(runs.Config{
 		Store:           st,
-		Executor:        stubExec,
+		Executor:        exec,
 		Resolver:        registry,
 		WorkingRootBase: cfg.Paths.WorkingRootBase,
 		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {

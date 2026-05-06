@@ -166,6 +166,9 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v, ok := env["VERIPROC_DB_DSN"]; ok && v != "" {
 		cfg.DB.DSN = v
 	}
+	if v, ok := env["VERIPROC_DSN"]; ok && v != "" {
+		cfg.DB.DSN = v
+	}
 	if v, ok := env["VERIPROC_HTTP_READ_TIMEOUT"]; ok && v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.HTTP.ReadTimeout = d
@@ -185,6 +188,9 @@ func applyEnv(cfg *Config, env map[string]string) {
 		cfg.Paths.WorkingRootBase = v
 	}
 	if v, ok := env["VERIPROC_STATION_CONFIG_ROOT"]; ok && v != "" {
+		cfg.Paths.StationConfigRoot = v
+	}
+	if v, ok := env["VERIPROC_STATION_DIR"]; ok && v != "" {
 		cfg.Paths.StationConfigRoot = v
 	}
 }

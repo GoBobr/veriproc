@@ -16,8 +16,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -71,8 +73,9 @@ type Config struct {
 	RegisterGroup   GroupRegistrar
 }
 
-// NewService constructs a Service. WorkingRootBase defaults to "/var/lib/veriproc/runs"
-// when empty; tests typically supply a t.TempDir().
+// NewService constructs a Service. WorkingRootBase defaults to
+// $XDG_CACHE_HOME/veriproc/runs (via os.UserCacheDir) when empty;
+// tests typically supply a t.TempDir().
 func NewService(cfg Config) *Service {
 	if cfg.Clock == nil {
 		cfg.Clock = func() time.Time { return time.Now().UTC() }
@@ -81,7 +84,11 @@ func NewService(cfg Config) *Service {
 		cfg.IDFactory = defaultRunID
 	}
 	if cfg.WorkingRootBase == "" {
-		cfg.WorkingRootBase = "/var/lib/veriproc/runs"
+		base, err := os.UserCacheDir()
+		if err != nil {
+			base = os.TempDir()
+		}
+		cfg.WorkingRootBase = filepath.Join(base, "veriproc", "runs")
 	}
 	return &Service{
 		store:           cfg.Store,
@@ -200,11 +207,27 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("%w: cannot dispatch run in state %q", ErrInvalidStateTransition, run.State)
 	}
 
+	jobOrderPath := filepath.Join(run.WorkingRoot, "job-order.yaml")
+	jobOrderArtifact, err := s.writeJobOrder(run, jobOrderPath)
+	if err != nil {
+		return nil, fmt.Errorf("write job-order: %w", err)
+	}
+
+	// Resolve the run script path from the station revision's declared scripts.
+	var scriptPath string
+	if rev, rerr := s.store.Stations().Get(ctx, run.StationRevisionID); rerr == nil && rev.DeclaredScripts != "" {
+		var scripts map[string]string
+		if jerr := json.Unmarshal([]byte(rev.DeclaredScripts), &scripts); jerr == nil {
+			scriptPath = scripts["run"]
+		}
+	}
+
 	desc := executor.JobDescription{
 		RunID:        run.RunID,
 		WorkingRoot:  run.WorkingRoot,
-		JobOrderPath: filepath.Join(run.WorkingRoot, "job-order.yaml"),
+		JobOrderPath: jobOrderPath,
 		Command:      "run",
+		ScriptPath:   scriptPath,
 	}
 	schedID, err := s.exec.Submit(ctx, desc)
 	if err != nil {
@@ -224,6 +247,9 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	}
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
 		if err := tx.Jobs().Insert(ctx, job); err != nil {
+			return err
+		}
+		if err := tx.Artifacts().Insert(ctx, jobOrderArtifact); err != nil {
 			return err
 		}
 		return tx.Runs().MarkDispatched(ctx, run.RunID, now)

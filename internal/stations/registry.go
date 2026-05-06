@@ -1,14 +1,14 @@
 // Package stations provides station-revision resolution.
 //
-// Milestone 2 ships an in-memory Registry seeded at startup (from config or
-// tests). Later milestones will replace this with a filesystem-watched
-// loader that materializes station_revisions from on-disk station configs
-// (Spec §3.2). Both implementations satisfy the Resolver interface so the
-// task service is insulated from the change.
+// Milestone 2 ships an in-memory Registry seeded at startup (from config,
+// station.yaml files, or tests). Both the file loader and direct seeding
+// satisfy the Resolver interface so the task service is insulated from the
+// source of station-revision material.
 package stations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -25,6 +25,11 @@ var ErrUnknownStation = errors.New("stations: unknown station")
 // than one station and the caller did not pin a station_id (Spec §5.3.2).
 var ErrAmbiguousProcType = errors.New("stations: ambiguous proc_type")
 
+// ErrDuplicateStation is returned when two different revisions are registered
+// for the same station_id during one startup load. Later milestones may add a
+// revision-selection policy; the M0-M7 profile keeps startup deterministic.
+var ErrDuplicateStation = errors.New("stations: duplicate station")
+
 // Resolver is the interface used by the task service.
 type Resolver interface {
 	// Resolve returns a station revision for the destination request. Either
@@ -39,13 +44,18 @@ type Spec struct {
 	ProcType      string
 	ContentHash   string
 	SchemaVersion string
+	// Outputs is the list of output filenames declared in station.yaml.
+	Outputs []string
+	// Scripts maps script verb (e.g. "run") to the resolved absolute path of
+	// the script file. Populated by the file loader; empty for seed-only stations.
+	Scripts map[string]string
 }
 
 // Registry is the in-memory Resolver used by M2.
 type Registry struct {
-	mu      sync.RWMutex
-	byID    map[string]*store.StationRevisionRecord
-	byProc  map[string][]*store.StationRevisionRecord
+	mu     sync.RWMutex
+	byID   map[string]*store.StationRevisionRecord
+	byProc map[string][]*store.StationRevisionRecord
 }
 
 // NewRegistry creates an empty registry.
@@ -62,12 +72,37 @@ func NewRegistry() *Registry {
 // treated as a no-op.
 func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) error {
 	for _, sp := range specs {
-		rec := &store.StationRevisionRecord{
-			RevisionID:    fmt.Sprintf("rev-%s-%s", sp.StationID, shortHash(sp.ContentHash)),
-			StationID:     sp.StationID,
-			ContentHash:   sp.ContentHash,
-			SchemaVersion: sp.SchemaVersion,
+		if sp.SchemaVersion == "" {
+			sp.SchemaVersion = DefaultSchemaVersion
 		}
+		declaredOutputs := ""
+		if len(sp.Outputs) > 0 {
+			b, _ := json.Marshal(sp.Outputs)
+			declaredOutputs = string(b)
+		}
+		declaredScripts := ""
+		if len(sp.Scripts) > 0 {
+			b, _ := json.Marshal(sp.Scripts)
+			declaredScripts = string(b)
+		}
+		rec := &store.StationRevisionRecord{
+			RevisionID:      fmt.Sprintf("rev-%s-%s", sp.StationID, shortHash(sp.ContentHash)),
+			StationID:       sp.StationID,
+			ContentHash:     sp.ContentHash,
+			SchemaVersion:   sp.SchemaVersion,
+			DeclaredOutputs: declaredOutputs,
+			DeclaredScripts: declaredScripts,
+		}
+		r.mu.Lock()
+		if existing, ok := r.byID[sp.StationID]; ok {
+			if existing.ContentHash == rec.ContentHash && existing.SchemaVersion == rec.SchemaVersion {
+				r.mu.Unlock()
+				continue
+			}
+			r.mu.Unlock()
+			return fmt.Errorf("%w: station_id=%s", ErrDuplicateStation, sp.StationID)
+		}
+		r.mu.Unlock()
 		if s != nil {
 			if err := s.Stations().Insert(ctx, rec); err != nil && !errors.Is(err, store.ErrConflict) {
 				return fmt.Errorf("seed station %s: %w", sp.StationID, err)

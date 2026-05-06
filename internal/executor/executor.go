@@ -51,6 +51,9 @@ type JobDescription struct {
 	WorkingRoot  string
 	JobOrderPath string
 	Command      string
+	// ScriptPath is the resolved absolute path of the script to execute.
+	// Used by LocalExecutor; ignored by StubExecutor and remote executors.
+	ScriptPath string
 }
 
 // Observation is the result of polling.

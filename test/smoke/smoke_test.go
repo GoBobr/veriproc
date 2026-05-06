@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -37,11 +38,14 @@ func TestSmoke_StartShutdown_M0(t *testing.T) {
 	}
 
 	addr := pickAddr(t)
+	stationRoot := filepath.Join(dir, "stations")
+	writeSmokeStation(t, stationRoot)
 	cmd := exec.Command(bin,
 		"--http-addr", addr,
 		"--instance-id", "smoke-test",
 		"--log-level", "warn",
 	)
+	cmd.Env = append(os.Environ(), "VERIPROC_STATION_DIR="+stationRoot)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 
@@ -74,6 +78,18 @@ func TestSmoke_StartShutdown_M0(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		_ = cmd.Process.Kill()
 		t.Fatalf("process did not exit within shutdown deadline")
+	}
+}
+
+func writeSmokeStation(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "station-a")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir station: %v", err)
+	}
+	content := []byte("station_id: SMOKE-STATION\nproc_type: SMOKE_PROC\nscripts:\n  run: ./scripts/run.sh\n")
+	if err := os.WriteFile(filepath.Join(dir, "station.yaml"), content, 0o644); err != nil {
+		t.Fatalf("write station: %v", err)
 	}
 }
 
