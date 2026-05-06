@@ -1,119 +1,67 @@
 # VeriProc Sandbox
 
-A minimal live sandbox for exercising the **Core MVP — stub-executor profile**
-(M0–M7): server startup, station loading, task submission, run inspection,
-artifact/log metadata, split-group aggregation, publication status, and the
-background reconciler.
+This sandbox demonstrates the local developer profile of VeriProc with a real execution path. The daemon loads a top-level instance configuration, resolves inputs from a configured rolling archive, writes a spec-shaped `joborder.yaml`, launches station scripts through the local executor, validates real output files, publishes selected outputs back to the archive, and creates one linear downstream task.
 
-The sandbox is live and useful for API/CLI workflows under the stub profile.
-The shell scripts in `stations/*/scripts/` are forward-compatible fixtures:
-they describe the contract a future SLURM/Kubernetes executor would honor,
-but the current `veriprocd` profile still executes work through the built-in
-`StubExecutor`.
-
----
+The profile is still lightweight: it uses SQLite, local POSIX paths, and local process execution rather than SLURM. Split-group aggregation and rich provenance queries remain intentionally narrow compared with the full specification.
 
 ## Layout
 
-```
+```text
 sandbox/
-├── README.md                  # this file
+├── instance.yaml                  # top-level VeriProc instance config
+├── rolling-archives/
+│   ├── README.md
+│   └── hot/                       # configured rolling archive fixtures
 ├── stations/
-│   ├── station-a/             # STATION-A / SCE_2
-│   ├── station-b/             # STATION-B / TRACK_L1
-│   └── station-c/             # STATION-C / AGG_DAILY
-└── data/                      # created at runtime (sqlite + archive)
+│   ├── station-a/                 # resolves two inputs, publishes output, routes to B
+│   ├── station-b/                 # consumes A's published output
+│   └── station-c/                 # retained split-group fixture
+└── data/                          # runtime SQLite DB and working roots
 ```
 
-Each `station.yaml` contains only human-maintained fields such as station id,
-processing type, description, scripts, outputs, and metadata. VeriProc
-computes the immutable station revision `content_hash` at load time from a
-deterministic canonical representation of the file. You should not type or
-maintain hashes for normal sandbox use.
+## Build
 
----
-
-## 1. Build
-
-From the repo root:
+From the repository root:
 
 ```bash
 go build -o ./bin/veriprocd ./cmd/veriprocd
 go build -o ./bin/veriproc  ./cmd/veriproc
 ```
 
-## 2. Start the server with station auto-loading
+## Start The Daemon
 
 ```bash
 mkdir -p sandbox/data
-export VERIPROC_DSN="sqlite://$PWD/sandbox/data/veriproc.db"
-export VERIPROC_ARCHIVE_BASE="$PWD/sandbox/data/archive"
-export VERIPROC_WORKING_ROOT_BASE="$PWD/sandbox/data/working-roots"
-export VERIPROC_AUTH_TOKENS="alice:operator:dev-token-alice:120;bob:reader:dev-token-bob:60"
-export VERIPROC_STATION_DIR="$PWD/sandbox/stations"
-
-./bin/veriprocd
+./bin/veriprocd --config sandbox/instance.yaml
 ```
 
-`VERIPROC_STATION_DIR` scans immediate child directories for
-`station.yaml` files, e.g. `sandbox/stations/station-a/station.yaml`.
-Duplicate `station_id` values are rejected unless they are the exact same
-revision already registered through another mechanism. Content changes produce
-a different computed hash; in this M0–M7 profile, only one revision per station
-id may be loaded at startup.
+The instance file selects the `local` executor. Station scripts are actually run as OS processes and receive the runtime variables required by the spec, including `VERIPROC_WORKING_ROOT`, `VERIPROC_STATION_ID`, `VERIPROC_RUN_ID`, `VERIPROC_TASK_ID`, and `VERIPROC_JOBORDER_PATH`.
 
-The server listens on `127.0.0.1:8080` by default. Liveness: `GET /health`.
-Readiness: `GET /api/v1/health`.
-
-### Optional fallback seeding
-
-`VERIPROC_SEED_STATIONS` remains supported for tests and tiny deployments,
-but it is not the recommended sandbox path. It accepts either short form:
-
-```bash
-export VERIPROC_SEED_STATIONS="STATION-A:SCE_2;STATION-B:TRACK_L1"
-```
-
-or the legacy explicit form:
-
-```bash
-export VERIPROC_SEED_STATIONS="STATION-A:SCE_2:sha256:<hex>:veriproc.station/v1"
-```
-
-When both `VERIPROC_STATION_DIR` and `VERIPROC_SEED_STATIONS` are set, file
-loaded stations are registered first, then seed entries are added. Conflicting
-duplicates fail startup so station identity remains deterministic.
-
-## 3. Configure the CLI
+In another terminal:
 
 ```bash
 export VERIPROC_API_URL="http://localhost:8080"
-export VERIPROC_TOKEN="dev-token-alice"
-export VERIPROC_OUTPUT="table"   # or json / yaml
+export VERIPROC_OUTPUT="table"
 ```
 
-## 4. Walk through the M7 surface
+Authentication is disabled by default in `sandbox/instance.yaml` for a small local loop. Add `VERIPROC_AUTH_TOKENS` if you want to exercise authenticated CLI calls.
 
-### 4a. Submit a single task
+## Demo Flow
+
+Submit STATION-A:
 
 ```bash
 ./bin/veriproc submit \
   --station STATION-A \
   --start 2025-07-03T11:00:00Z \
   --end   2025-07-03T11:15:00Z \
-  --idempotency-key demo-001
+  --idempotency-key sandbox-a-001
 ```
 
-Inspect it:
+Inspect state:
 
 ```bash
 ./bin/veriproc task list
-./bin/veriproc task get <task-id>
-```
-
-### 4b. Watch the run materialize
-
-```bash
 ./bin/veriproc run list --task <task-id>
 ./bin/veriproc run get <run-id>
 ./bin/veriproc run jobs <run-id>
@@ -121,60 +69,37 @@ Inspect it:
 ./bin/veriproc logs <run-id>
 ```
 
-`artifact list` will show two artifacts for every successful stub run:
-
-| logical_type | file | notes |
-|---|---|---|
-| `joborder` | `<working-root>/job-order.yaml` | input spec written before executor submission |
-| `log` | `<working-root>/logs/run.log` | stub lifecycle log written at finalization |
-
-The station `outputs:` entries (e.g. `result.json`) are **not** written by the
-stub executor — a real SLURM/Kubernetes executor would produce those files.
-
-
-### 4c. Split-group aggregation
-
-Submit two windows tagged with the same `--split-group`, then close the group
-to materialize its terminal state:
+Check the filesystem record:
 
 ```bash
-./bin/veriproc submit --station STATION-C \
-  --start 2025-07-03T00:00:00Z --end 2025-07-03T12:00:00Z \
-  --split-group day-2025-07-03
-
-./bin/veriproc submit --station STATION-C \
-  --start 2025-07-03T12:00:00Z --end 2025-07-04T00:00:00Z \
-  --split-group day-2025-07-03
-
-./bin/veriproc group list
-./bin/veriproc group get day-2025-07-03
-./bin/veriproc group close day-2025-07-03
+find sandbox/data/working-roots -maxdepth 5 -type f -o -type l | sort
+cat sandbox/rolling-archives/hot/STATION-A/result-a.json
 ```
 
-### 4d. Cancel safely
+The STATION-A working root contains:
+
+- `joborder.yaml`
+- `input/` symlinks to selected archive products
+- `output/result-a.json`
+- `logs/run.log` captured from the station script
+- `temp/`
+- `manifest/resolved-inputs.yaml`
+
+STATION-A's default downstream rule creates a STATION-B task only after A has validated outputs, recorded artifacts, elected canonicality, and published the selected output. STATION-B resolves `STATION-A/result-a.json` from the archive and writes `output/track.csv` in its own working root.
+
+## Fixture Data
+
+The `hot` archive contains six deterministic text products. There are two declared input file types for STATION-A (`PRIMARY_A` and `AUX_A`) plus extra non-selected files so folder scanning and deterministic selection are visible. See `rolling-archives/README.md` for the purpose of each file.
+
+## Reset
 
 ```bash
-./bin/veriproc cancel --yes --reason "operator stop" <run-id>
+rm -rf sandbox/data sandbox/rolling-archives/hot/STATION-A
 ```
 
-If the background reconciler is currently repairing that run, the API returns
-HTTP 409 `reconciliation_in_progress` and the CLI exits 5, matching Spec
-§6.10 conflict behavior.
+## Current Narrowing
 
-### 4e. Promote a duplicate
-
-```bash
-./bin/veriproc promote --reason "manual override" --actor alice <run-id>
-```
-
-## 5. Reset
-
-```bash
-rm -rf sandbox/data
-```
-
-## 6. Reference
-
-- CLI surface: `specs/6.command_line_interface.md`
-- Conformance report: `docs/milestones/M0-M7-report.md`
-- Spec exit codes: §6.10
+- The local executor is for development and conformance-style tests; it is not a SLURM adapter.
+- Rolling archive publication is implemented for local filesystem copy mode in this profile.
+- Dynamic `task-out.yaml` routing and full split-group aggregation semantics remain deferred; the sandbox demonstrates simple station-default downstream routing.
+- Provenance links are persisted for downstream creation, but the public API is still narrower than the full provenance query model.

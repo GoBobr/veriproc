@@ -1,0 +1,42 @@
+schema_version: veriproc.instance/v1
+instance_id: sandbox-local
+
+http:
+  bind_addr: 127.0.0.1:8080
+
+log:
+  level: debug
+  format: console
+
+db:
+  dsn: sqlite://sandbox/data/veriproc.db
+
+storage:
+  working_root_base: sandbox/data/working-roots
+  station_config_root: sandbox/stations
+
+facility:
+  processing_center: SANDBOX
+  environment: LOCAL
+  acquisition_station: Testbed
+
+rolling_archives:
+  hot:
+    path: sandbox/rolling-archives/hot
+    retention_policy: keep-fixtures
+
+product_categories:
+  - name: product
+    folders:
+      - rolling:hot
+
+executor:
+  type: local
+
+generators:
+  job_order:
+    type: system-default
+    version: local-mvp-v1
+  working_root:
+    type: system-default
+    version: local-mvp-v1

@@ -3,10 +3,13 @@ package runs_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/executor"
 	"github.com/eum/veriproc/internal/runs"
@@ -25,6 +28,141 @@ type fixture struct {
 	dispatch *runs.Dispatcher
 }
 
+// TestRuns_LocalExecutionJobOrderArchiveDownstream_2_8_2_12_2_13 exercises a
+// spec-faithful local execution path: real input resolution, joborder.yaml,
+// runtime environment, output validation, publication, and default downstream.
+func TestRuns_LocalExecutionJobOrderArchiveDownstream_2_8_2_12_2_13(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "local.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "20250703_AUX_A_v1.txt"), []byte("aux A v1\n"), 0o644); err != nil {
+		t.Fatalf("write aux: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "20250703_PRIMARY_A_v1.txt"), []byte("primary A v1\n"), 0o644); err != nil {
+		t.Fatalf("write primary: %v", err)
+	}
+
+	scriptA := writeExecutable(t, dir, "station-a.sh", `#!/bin/sh
+set -eu
+test -n "$VERIPROC_WORKING_ROOT"
+test -n "$VERIPROC_STATION_ID"
+test -n "$VERIPROC_RUN_ID"
+test -n "$VERIPROC_TASK_ID"
+test -f "$VERIPROC_JOBORDER_PATH"
+printf '{"station":"%s","run":"%s"}\n' "$VERIPROC_STATION_ID" "$VERIPROC_RUN_ID" > "$VERIPROC_RUN_DIR/result-a.json"
+`)
+	scriptB := writeExecutable(t, dir, "station-b.sh", `#!/bin/sh
+set -eu
+test -f input/00_A_RESULT_result-a.json
+printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIPROC_RUN_DIR/result-b.json"
+`)
+
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st,
+		stations.Spec{StationID: "STATION-A", ProcType: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Scripts: map[string]string{"run": scriptA}},
+		stations.Spec{StationID: "STATION-B", ProcType: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "STATION-A/result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "task-a" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), InstanceID: "test-instance", Facility: map[string]string{"environment": "TEST"}, RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, Generators: map[string]string{"job_order": "test-generator-v1"}, IDFactory: func() string { runN++; return "run-local-" + strconv.Itoa(runN) }})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "STATION-A"}, Window: tasks.Window{Start: time.Date(2025, 7, 3, 11, 15, 0, 0, time.UTC), End: time.Date(2025, 7, 3, 11, 30, 0, 0, time.UTC)}})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+
+	parent, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	runA, _ := st.Runs().Get(ctx, parent.CanonicalRunID)
+	for _, rel := range []string{"joborder.yaml", "input", "output", "logs", "temp", "manifest/resolved-inputs.yaml"} {
+		if _, err := os.Stat(filepath.Join(runA.WorkingRoot, rel)); err != nil {
+			t.Fatalf("working root missing %s: %v", rel, err)
+		}
+	}
+	jobOrderRaw, err := os.ReadFile(filepath.Join(runA.WorkingRoot, "joborder.yaml"))
+	if err != nil {
+		t.Fatalf("read joborder: %v", err)
+	}
+	var jobOrder map[string]any
+	if err := yaml.Unmarshal(jobOrderRaw, &jobOrder); err != nil {
+		t.Fatalf("parse joborder: %v", err)
+	}
+	if jobOrder["schema_version"] != "veriproc.joborder/v1" || jobOrder["log_level"] == nil || jobOrder["dyn_params"] == nil {
+		t.Fatalf("joborder missing required root fields: %#v", jobOrder)
+	}
+	if inputs, ok := jobOrder["inputs"].([]any); !ok || len(inputs) != 2 {
+		t.Fatalf("joborder inputs = %#v, want two flat input entries", jobOrder["inputs"])
+	}
+	mf, err := st.Manifests().GetByRun(ctx, runA.RunID)
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	if len(mf.Entries) != 2 || mf.Entries[0].SourceArchiveID != "hot" {
+		t.Fatalf("manifest entries not resolved from archive: %#v", mf.Entries)
+	}
+	arts, _ := st.Artifacts().ListByRun(ctx, runA.RunID, "output")
+	if len(arts) != 1 || arts[0].Size == 0 || arts[0].FileType != "A_RESULT" {
+		t.Fatalf("output artifact = %#v", arts)
+	}
+	pubs, _ := st.Publications().ListByRun(ctx, runA.RunID)
+	if len(pubs) != 1 || pubs[0].PublicationState != store.PublicationStatePublished {
+		t.Fatalf("publication = %#v", pubs)
+	}
+	if _, err := os.Stat(filepath.Join(archive, "STATION-A", "result-a.json")); err != nil {
+		t.Fatalf("published output missing: %v", err)
+	}
+	waitForTaskCount(t, ctx, st, disp, 2)
+	page, _ := st.Tasks().List(ctx, store.ListFilter{ParentRunID: runA.RunID, Limit: 10})
+	if len(page.Items) != 1 || page.Items[0].DestinationStationID != "STATION-B" {
+		t.Fatalf("downstream tasks = %#v", page.Items)
+	}
+	waitForTaskState(t, ctx, st, disp, page.Items[0].TaskID, "completed")
+}
+
+func TestRuns_LocalExecutionMissingOutputFails_5_6_7_5_4(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "missing.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	script := writeExecutable(t, dir, "no-output.sh", "#!/bin/sh\nset -eu\necho no output created\n")
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{StationID: "BROKEN", ProcType: "BROKEN", ContentHash: "sha256:broken", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "required.json", FileType: "REQUIRED", Required: true}}, Scripts: map[string]string{"run": script}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "task-broken" })
+	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), IDFactory: func() string { return "run-broken" }})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "BROKEN"}, Window: tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()}})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "failed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.LatestRunID)
+	if run.State != "failed" || run.FailureReason == "" {
+		t.Fatalf("run should fail with reason, got %#v", run)
+	}
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "runs.db")
@@ -37,8 +175,15 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatalf("migrate: %v", err)
 	}
 	reg := stations.NewRegistry()
+	archive := filepath.Join(t.TempDir(), "archive")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "20250703_PRIMARY_INPUT_v1.dat"), []byte("primary input\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
 	if err := reg.Seed(context.Background(), st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
+		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_INPUT", Category: "product"}}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -56,12 +201,14 @@ func newFixture(t *testing.T) *fixture {
 	tsvc := tasks.NewService(st, reg, fixedClock(now), taskIDs)
 	exec := executor.NewStubExecutor(fixedClock(now))
 	rsvc := runs.NewService(runs.Config{
-		Store:           st,
-		Executor:        exec,
-		Resolver:        reg,
-		WorkingRootBase: t.TempDir(),
-		Clock:           fixedClock(now),
-		IDFactory:       runIDs,
+		Store:             st,
+		Executor:          exec,
+		Resolver:          reg,
+		WorkingRootBase:   t.TempDir(),
+		RollingArchives:   map[string]string{"hot": archive},
+		ProductCategories: map[string][]string{"product": {"rolling:hot"}},
+		Clock:             fixedClock(now),
+		IDFactory:         runIDs,
 	})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
 	return &fixture{st: st, tasks: tsvc, exec: exec, runs: rsvc, dispatch: disp}
@@ -80,6 +227,55 @@ func submitTask(t *testing.T, f *fixture) string {
 		t.Fatalf("submit task: %v", err)
 	}
 	return res.Task.TaskID
+}
+
+func writeExecutable(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+	return path
+}
+
+func waitForTaskState(t *testing.T, ctx context.Context, st *store.Store, disp *runs.Dispatcher, taskID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := disp.Tick(ctx); err != nil {
+			t.Fatalf("dispatcher tick: %v", err)
+		}
+		task, err := st.Tasks().Get(ctx, taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		if task.State == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	task, _ := st.Tasks().Get(ctx, taskID)
+	t.Fatalf("task %s state = %q, want %q", taskID, task.State, want)
+}
+
+func waitForTaskCount(t *testing.T, ctx context.Context, st *store.Store, disp *runs.Dispatcher, want int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := disp.Tick(ctx); err != nil {
+			t.Fatalf("dispatcher tick: %v", err)
+		}
+		page, err := st.Tasks().List(ctx, store.ListFilter{Limit: 100})
+		if err != nil {
+			t.Fatalf("list tasks: %v", err)
+		}
+		if len(page.Items) >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	page, _ := st.Tasks().List(ctx, store.ListFilter{Limit: 100})
+	t.Fatalf("task count = %d, want at least %d", len(page.Items), want)
 }
 
 // TestRuns_PrepareAndFreeze_3_8_3_10_M3 — PrepareRun creates a run, persists a

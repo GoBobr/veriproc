@@ -132,6 +132,11 @@ func (s *Store) Publications() *PublicationRepo {
 	return &PublicationRepo{q: s.db, dialect: s.dialect}
 }
 
+// Provenance returns the machine-queryable provenance repository.
+func (s *Store) Provenance() *ProvenanceRepo {
+	return &ProvenanceRepo{q: s.db, dialect: s.dialect}
+}
+
 // InTx runs fn inside a transaction. The transaction is committed if fn
 // returns nil and rolled back otherwise. Tx-scoped repositories are passed via
 // a dedicated Tx handle.
@@ -191,6 +196,11 @@ func (t *Tx) Canonicality() *CanonicalityRepo {
 // Publications returns the publication repository bound to the transaction.
 func (t *Tx) Publications() *PublicationRepo {
 	return &PublicationRepo{q: t.tx, dialect: t.dialect}
+}
+
+// Provenance returns the provenance repository bound to the transaction.
+func (t *Tx) Provenance() *ProvenanceRepo {
+	return &ProvenanceRepo{q: t.tx, dialect: t.dialect}
 }
 
 // querier is the small subset of sql.DB / sql.Tx used by repositories so that

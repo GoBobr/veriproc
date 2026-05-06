@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-WIN_START="${1:-unknown}"
-WIN_END="${2:-unknown}"
-OUT_DIR="${VERIPROC_RUN_DIR:-./out}"
-mkdir -p "${OUT_DIR}"
-cat > "${OUT_DIR}/track.csv" <<CSV
-ts,track_id,confidence
-${WIN_START},T1,0.91
-${WIN_START},T2,0.87
+
+: "${VERIPROC_WORKING_ROOT:?}"
+: "${VERIPROC_STATION_ID:?}"
+: "${VERIPROC_RUN_ID:?}"
+: "${VERIPROC_RUN_DIR:?}"
+
+input=$(find "${VERIPROC_WORKING_ROOT}/input" -type l -name '*A_RESULT*' | sort | tail -n 1)
+
+cat > "${VERIPROC_RUN_DIR}/track.csv" <<CSV
+run_id,station,input_file,confidence
+${VERIPROC_RUN_ID},${VERIPROC_STATION_ID},$(basename "${input}"),0.91
 CSV
-echo "wrote ${OUT_DIR}/track.csv"
+echo "wrote ${VERIPROC_RUN_DIR}/track.csv from ${input}"

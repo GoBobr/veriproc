@@ -114,7 +114,11 @@ func run(args []string) error {
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 
 	var exec executor.Executor
-	switch os.Getenv("VERIPROC_EXECUTOR") {
+	execType := cfg.Executor.Type
+	if execType == "" {
+		execType = os.Getenv("VERIPROC_EXECUTOR")
+	}
+	switch execType {
 	case "local":
 		exec = executor.NewLocalExecutor(nil)
 		logger.Info().Msg("executor: local (runs station scripts as OS processes)")
@@ -123,11 +127,28 @@ func run(args []string) error {
 		logger.Info().Msg("executor: stub (simulates lifecycle without running scripts)")
 	}
 	groupSvc := groups.NewService(st, nil)
+	archivePaths := map[string]string{}
+	for id, archive := range cfg.RollingArchives {
+		archivePaths[id] = archive.Path
+	}
+	productCategories := map[string][]string{}
+	for _, cat := range cfg.ProductCategories {
+		productCategories[cat.Name] = append([]string(nil), cat.Folders...)
+	}
+	generators := map[string]string{}
+	for name, gen := range cfg.Generators {
+		generators[name] = gen.Version
+	}
 	runsSvc := runs.NewService(runs.Config{
-		Store:           st,
-		Executor:        exec,
-		Resolver:        registry,
-		WorkingRootBase: cfg.Paths.WorkingRootBase,
+		Store:             st,
+		Executor:          exec,
+		Resolver:          registry,
+		WorkingRootBase:   cfg.Paths.WorkingRootBase,
+		InstanceID:        cfg.InstanceID,
+		Facility:          cfg.Facility,
+		RollingArchives:   archivePaths,
+		ProductCategories: productCategories,
+		Generators:        generators,
 		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {
 			return groupSvc.RegisterRun(ctx, splitGroupID, runID, taskID, "")
 		},
@@ -146,7 +167,7 @@ func run(args []string) error {
 
 	// M6: optional rolling-archive publisher.
 	var pubSvc *publisher.Service
-	if base := os.Getenv("VERIPROC_ARCHIVE_BASE"); base != "" {
+	if base := firstArchiveBase(archivePaths); base != "" {
 		pubSvc = publisher.New(publisher.Config{
 			Store:       st,
 			ArchiveBase: base,
@@ -246,6 +267,16 @@ func run(args []string) error {
 	}
 	logger.Info().Msg("veriprocd stopped cleanly")
 	return nil
+}
+
+func firstArchiveBase(paths map[string]string) string {
+	if paths["default"] != "" {
+		return paths["default"]
+	}
+	for _, path := range paths {
+		return path
+	}
+	return ""
 }
 
 // loadAuth parses VERIPROC_AUTH_TOKENS into a StaticAuthenticator and

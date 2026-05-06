@@ -22,14 +22,82 @@ const DefaultSchemaVersion = "veriproc.station/v1"
 // loader. ContentHash is accepted only as an optional consistency check; the
 // loader computes the revision identity from the rest of the definition.
 type Definition struct {
-	StationID     string            `yaml:"station_id" json:"station_id"`
-	ProcType      string            `yaml:"proc_type" json:"proc_type"`
-	SchemaVersion string            `yaml:"schema_version,omitempty" json:"schema_version"`
-	ContentHash   string            `yaml:"content_hash,omitempty" json:"-"`
-	Description   string            `yaml:"description,omitempty" json:"description,omitempty"`
-	Scripts       map[string]string `yaml:"scripts,omitempty" json:"scripts,omitempty"`
-	Outputs       []string          `yaml:"outputs,omitempty" json:"outputs,omitempty"`
-	Metadata      map[string]string `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	StationID      string              `yaml:"station_id" json:"station_id"`
+	ProcType       string              `yaml:"proc_type" json:"proc_type"`
+	SchemaVersion  string              `yaml:"schema_version,omitempty" json:"schema_version"`
+	ContentHash    string              `yaml:"content_hash,omitempty" json:"-"`
+	Description    string              `yaml:"description,omitempty" json:"description,omitempty"`
+	Execution      Execution           `yaml:"execution,omitempty" json:"execution,omitempty"`
+	Scripts        map[string]string   `yaml:"scripts,omitempty" json:"scripts,omitempty"`
+	Inputs         []InputDefinition   `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	Outputs        OutputDefinitions   `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+	Downstream     []DownstreamTarget  `yaml:"downstream,omitempty" json:"downstream,omitempty"`
+	Publication    PublicationPolicy   `yaml:"publication,omitempty" json:"publication,omitempty"`
+	RollingFolders map[string][]string `yaml:"rolling_folders,omitempty" json:"rolling_folders,omitempty"`
+	Metadata       map[string]string   `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+}
+
+type Execution struct {
+	Mode    string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+}
+
+type InputDefinition struct {
+	FileType string `yaml:"file_type" json:"file_type"`
+	Category string `yaml:"category" json:"category"`
+	Pattern  string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+type OutputDefinition struct {
+	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
+	FileType string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
+	Pattern  string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Required bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Publish  bool   `yaml:"publish,omitempty" json:"publish,omitempty"`
+}
+
+type OutputDefinitions []OutputDefinition
+
+func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.SequenceNode {
+		return fmt.Errorf("outputs must be a sequence")
+	}
+	out := make([]OutputDefinition, 0, len(value.Content))
+	for _, item := range value.Content {
+		switch item.Kind {
+		case yaml.ScalarNode:
+			out = append(out, OutputDefinition{Name: item.Value, FileType: item.Value, Required: true})
+		case yaml.MappingNode:
+			var def OutputDefinition
+			if err := item.Decode(&def); err != nil {
+				return err
+			}
+			if def.Name == "" && def.Pattern == "" {
+				def.Name = def.FileType
+			}
+			if def.FileType == "" {
+				def.FileType = def.Name
+			}
+			out = append(out, def)
+		default:
+			return fmt.Errorf("outputs entries must be strings or mappings")
+		}
+	}
+	*o = out
+	return nil
+}
+
+type DownstreamTarget struct {
+	StationID string `yaml:"station_id" json:"station_id"`
+	ProcType  string `yaml:"proc_type,omitempty" json:"proc_type,omitempty"`
+}
+
+type PublicationPolicy struct {
+	Enabled   bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ArchiveID string   `yaml:"archive_id,omitempty" json:"archive_id,omitempty"`
+	Mode      string   `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Outputs   []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 }
 
 // LoadDir scans root for */station.yaml, computes revision hashes, and seeds
@@ -55,12 +123,16 @@ func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Sto
 		// executor can invoke them without knowing the station config root.
 		if len(def.Scripts) > 0 {
 			stationDir := filepath.Dir(path)
+			absStationDir, err := filepath.Abs(stationDir)
+			if err != nil {
+				return nil, fmt.Errorf("stations: resolve %q: %w", stationDir, err)
+			}
 			spec.Scripts = make(map[string]string, len(def.Scripts))
 			for verb, rel := range def.Scripts {
 				if filepath.IsAbs(rel) {
 					spec.Scripts[verb] = rel
 				} else {
-					spec.Scripts[verb] = filepath.Join(stationDir, rel)
+					spec.Scripts[verb] = filepath.Join(absStationDir, rel)
 				}
 			}
 		}
@@ -122,11 +194,15 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 		return Spec{}, fmt.Errorf("content_hash mismatch: got %s, computed %s", def.ContentHash, computed)
 	}
 	return Spec{
-		StationID:     def.StationID,
-		ProcType:      def.ProcType,
-		ContentHash:   computed,
-		SchemaVersion: def.SchemaVersion,
-		Outputs:       def.Outputs,
+		StationID:      def.StationID,
+		ProcType:       def.ProcType,
+		ContentHash:    computed,
+		SchemaVersion:  def.SchemaVersion,
+		Inputs:         def.Inputs,
+		Outputs:        []OutputDefinition(def.Outputs),
+		Downstream:     def.Downstream,
+		Publication:    def.Publication,
+		RollingFolders: def.RollingFolders,
 	}, nil
 }
 
@@ -154,6 +230,44 @@ func normalizeDefinition(def Definition) Definition {
 	}
 	def.ContentHash = strings.TrimSpace(def.ContentHash)
 	def.Description = strings.TrimSpace(def.Description)
+	def.Execution.Mode = strings.TrimSpace(def.Execution.Mode)
+	def.Execution.Command = strings.TrimSpace(def.Execution.Command)
+	if def.Execution.Command != "" {
+		if def.Scripts == nil {
+			def.Scripts = map[string]string{}
+		}
+		if def.Scripts["run"] == "" {
+			def.Scripts["run"] = def.Execution.Command
+		}
+	}
+	for i := range def.Inputs {
+		def.Inputs[i].FileType = strings.TrimSpace(def.Inputs[i].FileType)
+		def.Inputs[i].Category = strings.TrimSpace(def.Inputs[i].Category)
+		def.Inputs[i].Pattern = strings.TrimSpace(def.Inputs[i].Pattern)
+	}
+	for i := range def.Outputs {
+		def.Outputs[i].Name = strings.TrimSpace(def.Outputs[i].Name)
+		def.Outputs[i].FileType = strings.TrimSpace(def.Outputs[i].FileType)
+		def.Outputs[i].Pattern = strings.TrimSpace(def.Outputs[i].Pattern)
+		if def.Outputs[i].Name == "" && def.Outputs[i].Pattern == "" {
+			def.Outputs[i].Name = def.Outputs[i].FileType
+		}
+		if def.Outputs[i].FileType == "" {
+			def.Outputs[i].FileType = def.Outputs[i].Name
+		}
+		if !def.Outputs[i].Required {
+			def.Outputs[i].Required = true
+		}
+	}
+	for i := range def.Downstream {
+		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)
+		def.Downstream[i].ProcType = strings.TrimSpace(def.Downstream[i].ProcType)
+	}
+	def.Publication.ArchiveID = strings.TrimSpace(def.Publication.ArchiveID)
+	def.Publication.Mode = strings.TrimSpace(def.Publication.Mode)
+	if def.Publication.Mode == "" {
+		def.Publication.Mode = "copy"
+	}
 	return def
 }
 
@@ -166,6 +280,30 @@ func validateDefinition(def Definition) error {
 	}
 	if def.SchemaVersion == "" {
 		return errors.New("schema_version must not be empty")
+	}
+	for _, input := range def.Inputs {
+		if input.FileType == "" {
+			return errors.New("input file_type must not be empty")
+		}
+		if input.Category == "" {
+			return fmt.Errorf("input %s category must not be empty", input.FileType)
+		}
+	}
+	for _, out := range def.Outputs {
+		if out.FileType == "" {
+			return errors.New("output file_type must not be empty")
+		}
+		if out.Name == "" && out.Pattern == "" {
+			return fmt.Errorf("output %s must define name or pattern", out.FileType)
+		}
+	}
+	for _, down := range def.Downstream {
+		if down.StationID == "" && down.ProcType == "" {
+			return errors.New("downstream target must define station_id or proc_type")
+		}
+	}
+	if def.Publication.Enabled && def.Publication.ArchiveID == "" {
+		return errors.New("publication archive_id must not be empty when enabled")
 	}
 	return nil
 }

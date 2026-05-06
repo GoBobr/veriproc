@@ -18,15 +18,16 @@ type ManifestRecord struct {
 
 // ManifestEntry is one resolved input row.
 type ManifestEntry struct {
-	EntryID      string
-	FileType     string
-	Category     string
-	Path         string
-	Optional     bool
-	Present      bool
-	Size         int64
-	Checksum     string
-	ChecksumAlgo string
+	EntryID         string
+	FileType        string
+	Category        string
+	Path            string
+	Optional        bool
+	Present         bool
+	Size            int64
+	Checksum        string
+	ChecksumAlgo    string
+	SourceArchiveID string
 }
 
 // ManifestRepo persists manifest headers + entries.
@@ -59,11 +60,12 @@ func (r *ManifestRepo) Insert(ctx context.Context, m *ManifestRecord) error {
 			if _, err := q.ExecContext(ctx, `
 				INSERT INTO resolved_input_entries
 					(entry_id, manifest_id, file_type, category, path,
-					 optional, present, size, checksum, checksum_algo)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					 optional, present, size, checksum, checksum_algo, source_archive_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				e.EntryID, m.ManifestID, e.FileType, nullStr(e.Category), nullStr(e.Path),
 				boolInt(e.Optional), boolInt(e.Present),
-				nullInt(e.Size), nullStr(e.Checksum), nullStr(e.ChecksumAlgo)); err != nil {
+				nullInt(e.Size), nullStr(e.Checksum), nullStr(e.ChecksumAlgo),
+				nullStr(e.SourceArchiveID)); err != nil {
 				return err
 			}
 		}
@@ -95,7 +97,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT entry_id, file_type, COALESCE(category,''), COALESCE(path,''),
 		       optional, present, COALESCE(size,0),
-		       COALESCE(checksum,''), COALESCE(checksum_algo,'')
+		       COALESCE(checksum,''), COALESCE(checksum_algo,''),
+		       COALESCE(source_archive_id,'')
 		FROM resolved_input_entries WHERE manifest_id = ? ORDER BY entry_id`, m.ManifestID)
 	if err != nil {
 		return nil, err
@@ -105,7 +108,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 		var e ManifestEntry
 		var opt, pres int
 		if err := rows.Scan(&e.EntryID, &e.FileType, &e.Category, &e.Path,
-			&opt, &pres, &e.Size, &e.Checksum, &e.ChecksumAlgo); err != nil {
+			&opt, &pres, &e.Size, &e.Checksum, &e.ChecksumAlgo,
+			&e.SourceArchiveID); err != nil {
 			return nil, err
 		}
 		e.Optional = opt != 0

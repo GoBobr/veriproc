@@ -48,6 +48,8 @@ func (s Status) IsTerminal() bool {
 // input manifest; the executor's job is purely to dispatch.
 type JobDescription struct {
 	RunID        string
+	TaskID       string
+	StationID    string
 	WorkingRoot  string
 	JobOrderPath string
 	Command      string

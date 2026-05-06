@@ -1,0 +1,1 @@
+QC_B fixture for non-selected archive file type

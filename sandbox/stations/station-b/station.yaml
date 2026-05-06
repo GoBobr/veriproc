@@ -1,12 +1,22 @@
 station_id: STATION-B
 proc_type: TRACK_L1
+schema_version: veriproc.station/v1
 description: |
-  Sandbox station B — second processing type for cross-station tests and
-  split-group experiments.
+  Sandbox station B consumes STATION-A's published output from the rolling
+  archive and writes a small CSV product.
+execution:
+  mode: local
+  command: ./scripts/run.sh
 scripts:
   run: ./scripts/run.sh
+inputs:
+  - file_type: A_RESULT
+    category: product
+    pattern: "STATION-A/result-a.json"
 outputs:
-  - track.csv
+  - file_type: B_TRACK
+    name: track.csv
+    required: true
 metadata:
   owner: sandbox
   cadence: 15m

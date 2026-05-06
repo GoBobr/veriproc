@@ -25,10 +25,40 @@ type Config struct {
 	// InstanceID is the deployment-level instance identifier (Spec 2.3.1).
 	InstanceID string `yaml:"instance_id"`
 
-	HTTP  HTTPConfig  `yaml:"http"`
-	Log   LogConfig   `yaml:"log"`
-	DB    DBConfig    `yaml:"db"`
-	Paths PathsConfig `yaml:"paths"`
+	SchemaVersion     string                    `yaml:"schema_version"`
+	HTTP              HTTPConfig                `yaml:"http"`
+	Log               LogConfig                 `yaml:"log"`
+	DB                DBConfig                  `yaml:"db"`
+	Storage           PathsConfig               `yaml:"storage"`
+	Paths             PathsConfig               `yaml:"paths"`
+	Facility          map[string]string         `yaml:"facility"`
+	RollingArchives   map[string]RollingArchive `yaml:"rolling_archives"`
+	ProductCategories []ProductCategory         `yaml:"product_categories"`
+	Executor          ExecutorConfig            `yaml:"executor"`
+	Generators        map[string]Generator      `yaml:"generators"`
+}
+
+// RollingArchive describes a configured archive root (Spec §2.3.1).
+type RollingArchive struct {
+	Path            string `yaml:"path"`
+	RetentionPolicy string `yaml:"retention_policy"`
+}
+
+// ProductCategory defines the ordered folder search list for an input category.
+type ProductCategory struct {
+	Name    string   `yaml:"name"`
+	Folders []string `yaml:"folders"`
+}
+
+// ExecutorConfig selects the local execution backend for developer profiles.
+type ExecutorConfig struct {
+	Type string `yaml:"type"`
+}
+
+// Generator records an instance-level generator identity for audit/job orders.
+type Generator struct {
+	Type    string `yaml:"type"`
+	Version string `yaml:"version"`
 }
 
 // HTTPConfig configures the REST API server.
@@ -61,7 +91,8 @@ type PathsConfig struct {
 // Defaults returns a Config populated with built-in defaults.
 func Defaults() Config {
 	return Config{
-		InstanceID: "veriproc-local",
+		InstanceID:    "veriproc-local",
+		SchemaVersion: "veriproc.instance/v1",
 		HTTP: HTTPConfig{
 			BindAddr:        "127.0.0.1:8080",
 			ReadTimeout:     15 * time.Second,
@@ -186,12 +217,24 @@ func applyEnv(cfg *Config, env map[string]string) {
 	}
 	if v, ok := env["VERIPROC_WORKING_ROOT_BASE"]; ok && v != "" {
 		cfg.Paths.WorkingRootBase = v
+		cfg.Storage.WorkingRootBase = v
 	}
 	if v, ok := env["VERIPROC_STATION_CONFIG_ROOT"]; ok && v != "" {
 		cfg.Paths.StationConfigRoot = v
+		cfg.Storage.StationConfigRoot = v
 	}
 	if v, ok := env["VERIPROC_STATION_DIR"]; ok && v != "" {
 		cfg.Paths.StationConfigRoot = v
+		cfg.Storage.StationConfigRoot = v
+	}
+	if v, ok := env["VERIPROC_EXECUTOR"]; ok && v != "" {
+		cfg.Executor.Type = v
+	}
+	if v, ok := env["VERIPROC_ARCHIVE_BASE"]; ok && v != "" {
+		if cfg.RollingArchives == nil {
+			cfg.RollingArchives = map[string]RollingArchive{}
+		}
+		cfg.RollingArchives["default"] = RollingArchive{Path: v}
 	}
 }
 
@@ -199,6 +242,12 @@ func applyEnv(cfg *Config, env map[string]string) {
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.InstanceID) == "" {
 		return errors.New("config: instance_id must not be empty")
+	}
+	if c.Storage.WorkingRootBase != "" {
+		c.Paths.WorkingRootBase = c.Storage.WorkingRootBase
+	}
+	if c.Storage.StationConfigRoot != "" {
+		c.Paths.StationConfigRoot = c.Storage.StationConfigRoot
 	}
 	if _, _, err := net.SplitHostPort(c.HTTP.BindAddr); err != nil {
 		return fmt.Errorf("config: http.bind_addr %q invalid: %w", c.HTTP.BindAddr, err)

@@ -40,12 +40,15 @@ type Resolver interface {
 
 // Spec describes one station the registry will serve.
 type Spec struct {
-	StationID     string
-	ProcType      string
-	ContentHash   string
-	SchemaVersion string
-	// Outputs is the list of output filenames declared in station.yaml.
-	Outputs []string
+	StationID      string
+	ProcType       string
+	ContentHash    string
+	SchemaVersion  string
+	Inputs         []InputDefinition
+	Outputs        []OutputDefinition
+	Downstream     []DownstreamTarget
+	Publication    PublicationPolicy
+	RollingFolders map[string][]string
 	// Scripts maps script verb (e.g. "run") to the resolved absolute path of
 	// the script file. Populated by the file loader; empty for seed-only stations.
 	Scripts map[string]string
@@ -75,10 +78,30 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 		if sp.SchemaVersion == "" {
 			sp.SchemaVersion = DefaultSchemaVersion
 		}
+		declaredInputs := ""
+		if len(sp.Inputs) > 0 {
+			b, _ := json.Marshal(sp.Inputs)
+			declaredInputs = string(b)
+		}
 		declaredOutputs := ""
 		if len(sp.Outputs) > 0 {
 			b, _ := json.Marshal(sp.Outputs)
 			declaredOutputs = string(b)
+		}
+		declaredDownstream := ""
+		if len(sp.Downstream) > 0 {
+			b, _ := json.Marshal(sp.Downstream)
+			declaredDownstream = string(b)
+		}
+		publicationPolicy := ""
+		if sp.Publication.Enabled {
+			b, _ := json.Marshal(sp.Publication)
+			publicationPolicy = string(b)
+		}
+		rollingFolders := ""
+		if len(sp.RollingFolders) > 0 {
+			b, _ := json.Marshal(sp.RollingFolders)
+			rollingFolders = string(b)
 		}
 		declaredScripts := ""
 		if len(sp.Scripts) > 0 {
@@ -86,12 +109,16 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			declaredScripts = string(b)
 		}
 		rec := &store.StationRevisionRecord{
-			RevisionID:      fmt.Sprintf("rev-%s-%s", sp.StationID, shortHash(sp.ContentHash)),
-			StationID:       sp.StationID,
-			ContentHash:     sp.ContentHash,
-			SchemaVersion:   sp.SchemaVersion,
-			DeclaredOutputs: declaredOutputs,
-			DeclaredScripts: declaredScripts,
+			RevisionID:         fmt.Sprintf("rev-%s-%s", sp.StationID, shortHash(sp.ContentHash)),
+			StationID:          sp.StationID,
+			ContentHash:        sp.ContentHash,
+			SchemaVersion:      sp.SchemaVersion,
+			DeclaredInputs:     declaredInputs,
+			DeclaredOutputs:    declaredOutputs,
+			DeclaredDownstream: declaredDownstream,
+			PublicationPolicy:  publicationPolicy,
+			RollingFolders:     rollingFolders,
+			DeclaredScripts:    declaredScripts,
 		}
 		r.mu.Lock()
 		if existing, ok := r.byID[sp.StationID]; ok {

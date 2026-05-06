@@ -17,7 +17,7 @@ func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 		ProcType:    "SCE_2",
 		Description: "demo station",
 		Scripts:     map[string]string{"run": "./scripts/run.sh"},
-		Outputs:     []string{"result.json"},
+		Outputs:     stations.OutputDefinitions{{Name: "result.json", FileType: "RESULT", Required: true}},
 	}
 	spec, err := stations.SpecFromDefinition(def)
 	if err != nil {

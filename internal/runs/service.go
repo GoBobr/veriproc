@@ -19,8 +19,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,11 +36,11 @@ import (
 
 // Sentinel errors. Package-level so HTTP handlers can map them to API codes.
 var (
-	ErrRunNotFound          = errors.New("runs: run not found")
+	ErrRunNotFound            = errors.New("runs: run not found")
 	ErrInvalidStateTransition = errors.New("runs: invalid state transition")
-	ErrTaskNotFound         = errors.New("runs: task not found")
-	ErrUnknownStation       = errors.New("runs: unknown station")
-	ErrJobNotFound          = errors.New("runs: job not found")
+	ErrTaskNotFound           = errors.New("runs: task not found")
+	ErrUnknownStation         = errors.New("runs: unknown station")
+	ErrJobNotFound            = errors.New("runs: job not found")
 	// ErrReconciliationInProgress is returned by Cancel/PromoteCanonical when
 	// the reconciler currently holds soft ownership of the run (Spec §3.13 /
 	// §7.8). The HTTP layer maps this to 409 reconciliation_in_progress.
@@ -48,13 +51,18 @@ var (
 // state transitions are guarded by conditional UPDATE statements at the store
 // layer (Spec §5.6 lag tolerance).
 type Service struct {
-	store           *store.Store
-	exec            executor.Executor
-	resolver        stations.Resolver
-	workingRootBase string
-	clock           func() time.Time
-	idFactory       func() string
-	registerGroup   GroupRegistrar
+	store             *store.Store
+	exec              executor.Executor
+	resolver          stations.Resolver
+	workingRootBase   string
+	clock             func() time.Time
+	idFactory         func() string
+	registerGroup     GroupRegistrar
+	instanceID        string
+	facility          map[string]string
+	rollingArchives   map[string]string
+	productCategories map[string][]string
+	generators        map[string]string
 }
 
 // GroupRegistrar is the optional callback invoked after PrepareRun when a
@@ -64,13 +72,18 @@ type GroupRegistrar func(ctx context.Context, splitGroupID, runID, taskID string
 
 // Config configures a Service.
 type Config struct {
-	Store           *store.Store
-	Executor        executor.Executor
-	Resolver        stations.Resolver
-	WorkingRootBase string
-	Clock           func() time.Time
-	IDFactory       func() string
-	RegisterGroup   GroupRegistrar
+	Store             *store.Store
+	Executor          executor.Executor
+	Resolver          stations.Resolver
+	WorkingRootBase   string
+	Clock             func() time.Time
+	IDFactory         func() string
+	RegisterGroup     GroupRegistrar
+	InstanceID        string
+	Facility          map[string]string
+	RollingArchives   map[string]string
+	ProductCategories map[string][]string
+	Generators        map[string]string
 }
 
 // NewService constructs a Service. WorkingRootBase defaults to
@@ -90,14 +103,23 @@ func NewService(cfg Config) *Service {
 		}
 		cfg.WorkingRootBase = filepath.Join(base, "veriproc", "runs")
 	}
+	if abs, err := filepath.Abs(cfg.WorkingRootBase); err == nil {
+		cfg.WorkingRootBase = abs
+	}
+	cfg.RollingArchives = absPathMap(cfg.RollingArchives)
 	return &Service{
-		store:           cfg.Store,
-		exec:            cfg.Executor,
-		resolver:        cfg.Resolver,
-		workingRootBase: cfg.WorkingRootBase,
-		clock:           cfg.Clock,
-		idFactory:       cfg.IDFactory,
-		registerGroup:   cfg.RegisterGroup,
+		store:             cfg.Store,
+		exec:              cfg.Executor,
+		resolver:          cfg.Resolver,
+		workingRootBase:   cfg.WorkingRootBase,
+		clock:             cfg.Clock,
+		idFactory:         cfg.IDFactory,
+		registerGroup:     cfg.RegisterGroup,
+		instanceID:        cfg.InstanceID,
+		facility:          cloneStringMap(cfg.Facility),
+		rollingArchives:   cloneStringMap(cfg.RollingArchives),
+		productCategories: cloneStringSliceMap(cfg.ProductCategories),
+		generators:        cloneStringMap(cfg.Generators),
 	}
 }
 
@@ -159,7 +181,13 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 		CreatedAt:         now,
 	}
 
-	manifest := buildStubManifest(runID)
+	if err := materializeWorkingRoot(workingRoot); err != nil {
+		return nil, err
+	}
+	manifest, err := s.resolveManifest(ctx, runID, task, rev, workingRoot)
+	if err != nil {
+		return nil, err
+	}
 	fingerprintValue := computeFingerprint(rev, manifest, task.Force)
 
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
@@ -207,15 +235,19 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("%w: cannot dispatch run in state %q", ErrInvalidStateTransition, run.State)
 	}
 
-	jobOrderPath := filepath.Join(run.WorkingRoot, "job-order.yaml")
-	jobOrderArtifact, err := s.writeJobOrder(run, jobOrderPath)
+	jobOrderPath := filepath.Join(run.WorkingRoot, "joborder.yaml")
+	jobOrderArtifact, err := s.writeJobOrder(ctx, run, jobOrderPath)
 	if err != nil {
 		return nil, fmt.Errorf("write job-order: %w", err)
 	}
 
 	// Resolve the run script path from the station revision's declared scripts.
 	var scriptPath string
-	if rev, rerr := s.store.Stations().Get(ctx, run.StationRevisionID); rerr == nil && rev.DeclaredScripts != "" {
+	rev, rerr := s.store.Stations().Get(ctx, run.StationRevisionID)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if rev.DeclaredScripts != "" {
 		var scripts map[string]string
 		if jerr := json.Unmarshal([]byte(rev.DeclaredScripts), &scripts); jerr == nil {
 			scriptPath = scripts["run"]
@@ -226,6 +258,8 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		RunID:        run.RunID,
 		WorkingRoot:  run.WorkingRoot,
 		JobOrderPath: jobOrderPath,
+		StationID:    rev.StationID,
+		TaskID:       run.TaskID,
 		Command:      "run",
 		ScriptPath:   scriptPath,
 	}
@@ -383,22 +417,176 @@ func mapStoreErr(err error) error {
 	return err
 }
 
-// buildStubManifest produces a single-entry manifest used by the stub-executor
-// profile. Real executors will populate this from station declarations.
-func buildStubManifest(runID string) *store.ManifestRecord {
-	return &store.ManifestRecord{
-		ManifestID: "mf-" + sha12(runID),
-		RunID:      runID,
-		Entries: []store.ManifestEntry{
-			{
-				EntryID:  "ent-" + sha12(runID+":primary"),
-				FileType: "PRIMARY_INPUT",
-				Category: "input",
-				Optional: false,
-				Present:  true,
-			},
-		},
+func materializeWorkingRoot(root string) error {
+	for _, rel := range []string{"input", "output", "logs", "temp", "manifest"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func (s *Service) resolveManifest(ctx context.Context, runID string, task *store.TaskRecord, rev *store.StationRevisionRecord, workingRoot string) (*store.ManifestRecord, error) {
+	_ = task
+	manifest := &store.ManifestRecord{ManifestID: "mf-" + sha12(runID), RunID: runID}
+	if rev.DeclaredInputs == "" {
+		return manifest, nil
+	}
+	var inputs []stations.InputDefinition
+	if err := json.Unmarshal([]byte(rev.DeclaredInputs), &inputs); err != nil {
+		return nil, fmt.Errorf("parse declared inputs: %w", err)
+	}
+	var rollingFolders map[string][]string
+	if rev.RollingFolders != "" {
+		if err := json.Unmarshal([]byte(rev.RollingFolders), &rollingFolders); err != nil {
+			return nil, fmt.Errorf("parse rolling folders: %w", err)
+		}
+	}
+	for idx, input := range inputs {
+		entry := store.ManifestEntry{
+			EntryID:  fmt.Sprintf("ent-%s-%02d", sha12(runID+":"+input.FileType), idx),
+			FileType: input.FileType,
+			Category: input.Category,
+			Optional: input.Optional,
+		}
+		folders := s.productCategories[input.Category]
+		if override := rollingFolders[input.Category]; len(override) > 0 {
+			folders = override
+		}
+		candidate, archiveID, err := s.selectInputCandidate(input, folders)
+		if err != nil {
+			return nil, err
+		}
+		if candidate == "" {
+			if !input.Optional {
+				return nil, fmt.Errorf("mandatory input %s not found in category %s", input.FileType, input.Category)
+			}
+			manifest.Entries = append(manifest.Entries, entry)
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err != nil {
+			return nil, err
+		}
+		checksum, err := checksumFile(candidate)
+		if err != nil {
+			return nil, err
+		}
+		linkName := safeInputLinkName(idx, input.FileType, filepath.Base(candidate))
+		linkPath := filepath.Join(workingRoot, "input", linkName)
+		_ = os.Remove(linkPath)
+		if err := os.Symlink(candidate, linkPath); err != nil {
+			return nil, fmt.Errorf("symlink input %s: %w", input.FileType, err)
+		}
+		entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
+		entry.Present = true
+		entry.Size = info.Size()
+		entry.Checksum = checksum
+		entry.ChecksumAlgo = "sha256"
+		entry.SourceArchiveID = archiveID
+		manifest.Entries = append(manifest.Entries, entry)
+	}
+	_ = ctx
+	return manifest, nil
+}
+
+func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string) (string, string, error) {
+	if len(folders) == 0 {
+		return "", "", nil
+	}
+	pattern := input.Pattern
+	if pattern == "" {
+		pattern = "*" + input.FileType + "*"
+	}
+	for _, folderRef := range folders {
+		folder, archiveID, err := s.resolveFolderRef(folderRef)
+		if err != nil {
+			return "", "", err
+		}
+		matches, err := filepath.Glob(filepath.Join(folder, pattern))
+		if err != nil {
+			return "", "", err
+		}
+		files := matches[:0]
+		for _, match := range matches {
+			if info, err := os.Stat(match); err == nil && !info.IsDir() {
+				files = append(files, match)
+			}
+		}
+		if len(files) == 0 {
+			continue
+		}
+		sort.Strings(files)
+		return files[len(files)-1], archiveID, nil
+	}
+	return "", "", nil
+}
+
+func (s *Service) resolveFolderRef(ref string) (string, string, error) {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "rolling:") {
+		archiveID := strings.TrimPrefix(ref, "rolling:")
+		path := s.rollingArchives[archiveID]
+		if path == "" {
+			return "", "", fmt.Errorf("unknown rolling archive %q", archiveID)
+		}
+		return path, archiveID, nil
+	}
+	if abs, err := filepath.Abs(ref); err == nil {
+		return abs, "", nil
+	}
+	return ref, "", nil
+}
+
+func safeInputLinkName(idx int, fileType, base string) string {
+	cleanType := strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, fileType)
+	return fmt.Sprintf("%02d_%s_%s", idx, cleanType, base)
+}
+
+func checksumFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func absPathMap(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		if abs, err := filepath.Abs(v); err == nil {
+			out[k] = abs
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func cloneStringSliceMap(in map[string][]string) map[string][]string {
+	out := map[string][]string{}
+	for k, v := range in {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
 }
 
 // computeFingerprint hashes the canonical JSON of {station_revision_id,
@@ -414,10 +602,10 @@ func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecor
 		})
 	}
 	payload := map[string]any{
-		"station_revision_id":          rev.RevisionID,
+		"station_revision_id":           rev.RevisionID,
 		"station_revision_content_hash": rev.ContentHash,
-		"manifest":                     entries,
-		"force":                        force,
+		"manifest":                      entries,
+		"force":                         force,
 	}
 	raw, err := canonjson.Marshal(payload)
 	if err != nil {

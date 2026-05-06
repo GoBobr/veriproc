@@ -53,9 +53,12 @@ func (e *LocalExecutor) SupportsCancellation() bool { return false }
 // Submit launches the script described by desc.ScriptPath and returns
 // immediately. The script is executed with:
 //
-//	VERIPROC_RUN_DIR   = {WorkingRoot}/outputs   (where outputs are written)
-//	VERIPROC_RUN_ID    = desc.RunID
+//	VERIPROC_RUN_DIR        = {WorkingRoot}/output   (where outputs are written)
+//	VERIPROC_RUN_ID         = desc.RunID
+//	VERIPROC_TASK_ID        = desc.TaskID
+//	VERIPROC_STATION_ID     = desc.StationID
 //	VERIPROC_WORKING_ROOT = desc.WorkingRoot
+//	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath
 //
 // All other env vars are inherited from the daemon process.
 func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, error) {
@@ -70,9 +73,12 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 	e.jobs[id] = job
 	e.mu.Unlock()
 
-	outDir := filepath.Join(desc.WorkingRoot, "outputs")
+	if err := os.MkdirAll(filepath.Join(desc.WorkingRoot, "logs"), 0o755); err != nil {
+		return "", fmt.Errorf("local executor: mkdir logs: %w", err)
+	}
+	outDir := filepath.Join(desc.WorkingRoot, "output")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", fmt.Errorf("local executor: mkdir outputs: %w", err)
+		return "", fmt.Errorf("local executor: mkdir output: %w", err)
 	}
 
 	go func() {
@@ -86,12 +92,19 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 		cmd.Env = append(os.Environ(),
 			"VERIPROC_RUN_DIR="+outDir,
 			"VERIPROC_RUN_ID="+desc.RunID,
+			"VERIPROC_TASK_ID="+desc.TaskID,
+			"VERIPROC_STATION_ID="+desc.StationID,
 			"VERIPROC_WORKING_ROOT="+desc.WorkingRoot,
+			"VERIPROC_JOBORDER_PATH="+desc.JobOrderPath,
 		)
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 
 		err := cmd.Run()
+		logPath := filepath.Join(desc.WorkingRoot, "logs", "run.log")
+		if writeErr := os.WriteFile(logPath, out.Bytes(), 0o644); writeErr != nil && err == nil {
+			err = writeErr
+		}
 
 		job.mu.Lock()
 		defer job.mu.Unlock()
@@ -100,7 +113,11 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 			if errors.As(err, &exitErr) {
 				job.exitCode = exitErr.ExitCode()
 			}
-			job.failMsg = err.Error()
+			if out.Len() > 0 {
+				job.failMsg = err.Error() + ": " + out.String()
+			} else {
+				job.failMsg = err.Error()
+			}
 			job.status = StatusFailed
 		} else {
 			job.status = StatusSucceeded

@@ -1,11 +1,34 @@
 station_id: STATION-A
 proc_type: SCE_2
+schema_version: veriproc.station/v1
 description: |
-  Sandbox station A — produces a small JSON artifact for a 15-minute window.
+  Sandbox station A selects two rolling-archive inputs, writes a JSON output,
+  publishes it back to the hot archive, and triggers STATION-B.
+execution:
+  mode: local
+  command: ./scripts/run.sh
 scripts:
   run: ./scripts/run.sh
+inputs:
+  - file_type: PRIMARY_A
+    category: product
+    pattern: "*PRIMARY_A*"
+  - file_type: AUX_A
+    category: product
+    pattern: "*AUX_A*"
 outputs:
-  - result.json
+  - file_type: A_RESULT
+    name: result-a.json
+    required: true
+    publish: true
+publication:
+  enabled: true
+  archive_id: hot
+  mode: copy
+  outputs:
+    - result-a.json
+downstream:
+  - station_id: STATION-B
 metadata:
   owner: sandbox
   cadence: 15m
