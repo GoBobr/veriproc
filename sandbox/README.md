@@ -73,7 +73,7 @@ Check the filesystem record:
 
 ```bash
 find sandbox/data/working-roots -maxdepth 5 -type f -o -type l | sort
-cat sandbox/rolling-archives/hot/STATION-A/result-a.json
+cat sandbox/rolling-archives/hot/result-a.json
 ```
 
 The STATION-A working root contains:
@@ -85,16 +85,16 @@ The STATION-A working root contains:
 - `temp/`
 - `manifest/resolved-inputs.yaml`
 
-STATION-A's default downstream rule creates a STATION-B task only after A has validated outputs, recorded artifacts, elected canonicality, and published the selected output. STATION-B resolves `STATION-A/result-a.json` from the archive and writes `output/track.csv` in its own working root.
+STATION-A's default downstream rule creates a STATION-B task only after A has validated outputs, recorded artifacts, elected canonicality, and published the selected output. STATION-B resolves `result-a.json` from the archive root and writes `output/track.csv` in its own working root.
 
 ## Fixture Data
 
-The `hot` archive contains six deterministic text products. There are two declared input file types for STATION-A (`PRIMARY_A` and `AUX_A`) plus extra non-selected files so folder scanning and deterministic selection are visible. See `rolling-archives/README.md` for the purpose of each file.
+The `hot` archive contains six deterministic text products using the configured structured filename contract: mission id, fixed-width 16-character file type, UTC start/end/generation timestamps, and a free suffix. There are two declared input file types for STATION-A (`PRIMARY_A_______` and `AUX_A___________`) plus extra non-selected files so folder scanning, component parsing, interval filtering, and deterministic selection are visible. See `rolling-archives/README.md` for the purpose of each file.
 
 ## Reset
 
 ```bash
-rm -rf sandbox/data sandbox/rolling-archives/hot/STATION-A
+rm -rf sandbox/data sandbox/rolling-archives/hot/result-a.json
 ```
 
 ## Current Narrowing

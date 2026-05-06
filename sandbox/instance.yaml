@@ -29,6 +29,24 @@ naming:
     replace_invalid: "_"
     max_segment_length: 128
     station_case: preserve
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    components:
+      MISSION_ID:
+        pattern: "CO2?"
+        length: 4
+        charset: ascii
+      FILE_TYPE:
+        length: 16
+        charset: ascii
+      START_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      END_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      GENERATION_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
 
 integrity:
   checksum_policy: available_only

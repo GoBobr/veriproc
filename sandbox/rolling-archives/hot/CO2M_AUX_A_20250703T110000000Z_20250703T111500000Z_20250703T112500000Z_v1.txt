@@ -1,2 +1,0 @@
-AUX_A fixture version 1
-calibration: baseline

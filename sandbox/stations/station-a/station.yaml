@@ -10,19 +10,22 @@ execution:
 scripts:
   run: ./scripts/run.sh
 inputs:
-  - file_type: PRIMARY_A
+  - file_type: PRIMARY_A_______
     category: product
-    pattern: "CO2M_PRIMARY_A_*.txt"
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    window_match: overlaps
     margins: [0, 0]
     mandatory: true
-  - file_type: AUX_A
+  - file_type: AUX_A___________
     category: product
-    pattern: "CO2M_AUX_A_*.txt"
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    window_match: overlaps
     margins: [0, 0]
     mandatory: true
 outputs:
-  - file_type: A_RESULT
+  - file_type: A_RESULT________
     name: result-a.json
+    filename_pattern: "result-a.json"
     mandatory: true
     publish:
       rolling_archive: hot

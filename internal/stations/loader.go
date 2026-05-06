@@ -43,21 +43,24 @@ type Execution struct {
 }
 
 type InputDefinition struct {
-	FileType  string `yaml:"file_type" json:"file_type"`
-	Category  string `yaml:"category" json:"category"`
-	Pattern   string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Margins   []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
-	Mandatory bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
-	Optional  bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	FileType        string `yaml:"file_type" json:"file_type"`
+	Category        string `yaml:"category" json:"category"`
+	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
+	WindowMatch     string `yaml:"window_match,omitempty" json:"window_match,omitempty"`
+	Margins         []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
+	Mandatory       bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Optional        bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type OutputDefinition struct {
-	Name      string `yaml:"name,omitempty" json:"name,omitempty"`
-	FileType  string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
-	Pattern   string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
-	Mandatory bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
-	Publish   any    `yaml:"publish,omitempty" json:"publish,omitempty"`
+	Name            string `yaml:"name,omitempty" json:"name,omitempty"`
+	FileType        string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
+	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
+	Required        bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Mandatory       bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Publish         any    `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
 
 type OutputDefinitions []OutputDefinition
@@ -93,10 +96,11 @@ type DownstreamTarget struct {
 }
 
 type PublicationPolicy struct {
-	Enabled   bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ArchiveID string   `yaml:"archive_id,omitempty" json:"archive_id,omitempty"`
-	Mode      string   `yaml:"mode,omitempty" json:"mode,omitempty"`
-	Outputs   []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+	Enabled       bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ArchiveID     string   `yaml:"archive_id,omitempty" json:"archive_id,omitempty"`
+	Mode          string   `yaml:"mode,omitempty" json:"mode,omitempty"`
+	TargetSubpath string   `yaml:"target_subpath,omitempty" json:"target_subpath,omitempty"`
+	Outputs       []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 }
 
 // LoadDir scans root for */station.yaml, computes revision hashes, and seeds

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -211,11 +213,10 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 	dir := filepath.Join(run.WorkingRoot, "output")
 	arts := make([]*store.ArtifactRecord, 0, len(outputs))
 	for _, out := range outputs {
-		name := out.Name
-		if name == "" {
-			name = out.FileType
+		path, name, err := s.resolveOutputPath(dir, out)
+		if err != nil {
+			return nil, err
 		}
-		path := filepath.Join(dir, name)
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil, fmt.Errorf("mandatory output %s missing at %s", out.FileType, path)
@@ -237,6 +238,65 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 		})
 	}
 	return arts, nil
+}
+
+func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (string, string, error) {
+	name := out.Name
+	if name != "" {
+		path := filepath.Join(dir, name)
+		if out.FilenamePattern != "" {
+			effective := policy.EffectiveFilenamePattern(s.naming.Filenames.FilenamePattern, out.FilenamePattern, out.FileType)
+			if _, err := policy.ParseFilename(filepath.Base(path), effective, s.naming.Filenames.Components); err != nil {
+				return "", "", fmt.Errorf("output %s filename_pattern validation: %w", out.FileType, err)
+			}
+		}
+		return path, name, nil
+	}
+	effective := policy.EffectiveFilenamePattern(s.naming.Filenames.FilenamePattern, out.FilenamePattern, out.FileType)
+	if effective != "" {
+		matches := []string{}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return "", "", err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if _, err := policy.ParseFilename(entry.Name(), effective, s.naming.Filenames.Components); err == nil {
+				matches = append(matches, filepath.Join(dir, entry.Name()))
+			}
+		}
+		if len(matches) == 0 {
+			return "", "", fmt.Errorf("mandatory output %s missing matching filename_pattern", out.FileType)
+		}
+		sort.Slice(matches, func(i, j int) bool {
+			im, _ := os.Stat(matches[i])
+			jm, _ := os.Stat(matches[j])
+			if im != nil && jm != nil && !im.ModTime().Equal(jm.ModTime()) {
+				return im.ModTime().Before(jm.ModTime())
+			}
+			return matches[i] < matches[j]
+		})
+		path := matches[len(matches)-1]
+		return path, filepath.Base(path), nil
+	}
+	if out.Pattern != "" {
+		matches, err := filepath.Glob(filepath.Join(dir, out.Pattern))
+		if err != nil {
+			return "", "", err
+		}
+		if len(matches) == 0 {
+			return "", "", fmt.Errorf("mandatory output %s missing matching pattern %s", out.FileType, out.Pattern)
+		}
+		sort.Strings(matches)
+		path := matches[len(matches)-1]
+		return path, filepath.Base(path), nil
+	}
+	if out.FileType == "" {
+		return "", "", fmt.Errorf("mandatory output has neither name nor file_type")
+	}
+	return filepath.Join(dir, out.FileType), out.FileType, nil
 }
 
 func (s *Service) collectRunLog(run *store.RunRecord) (*store.ArtifactRecord, error) {
@@ -360,6 +420,10 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 	if s.rollingArchives[policy.ArchiveID] == "" {
 		return nil, fmt.Errorf("publication archive %q is not configured", policy.ArchiveID)
 	}
+	subpath, err := cleanPublicationSubpath(policy.TargetSubpath)
+	if err != nil {
+		return nil, err
+	}
 	selected := map[string]bool{}
 	for _, name := range policy.Outputs {
 		selected[name] = true
@@ -370,7 +434,10 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 		if len(selected) > 0 && !selected[name] && !selected[art.FileType] {
 			continue
 		}
-		targetPath := filepath.Join(rev.StationID, name)
+		targetPath := name
+		if subpath != "" {
+			targetPath = filepath.ToSlash(filepath.Join(subpath, name))
+		}
 		if err := copyArtifactToArchive(art.Path, filepath.Join(s.rollingArchives[policy.ArchiveID], targetPath)); err != nil {
 			return nil, err
 		}
@@ -378,6 +445,24 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, PublicationMode: policy.Mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
 	}
 	return records, nil
+}
+
+func cleanPublicationSubpath(subpath string) (string, error) {
+	subpath = filepath.ToSlash(strings.TrimSpace(subpath))
+	if subpath == "" || subpath == "." {
+		return "", nil
+	}
+	if filepath.IsAbs(subpath) || strings.HasPrefix(subpath, "/") {
+		return "", fmt.Errorf("publication target_subpath %q must be relative", subpath)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(subpath)))
+	if clean == "." {
+		return "", nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return "", fmt.Errorf("publication target_subpath %q escapes archive root", subpath)
+	}
+	return clean, nil
 }
 
 func copyArtifactToArchive(src, dst string) error {

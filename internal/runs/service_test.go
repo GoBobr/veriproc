@@ -71,7 +71,7 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	reg := stations.NewRegistry()
 	if err := reg.Seed(ctx, st,
 		stations.Spec{StationID: "STATION-A", ProcType: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Scripts: map[string]string{"run": scriptA}},
-		stations.Spec{StationID: "STATION-B", ProcType: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "STATION-A/result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
+		stations.Spec{StationID: "STATION-B", ProcType: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -135,7 +135,10 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	if pubs[0].Checksum != "" || pubs[0].ChecksumAlgo != "" || pubs[0].ChecksumSource != "" {
 		t.Fatalf("available_only should not compute publication checksum without metadata: %#v", pubs[0])
 	}
-	if _, err := os.Stat(filepath.Join(archive, "STATION-A", "result-a.json")); err != nil {
+	if pubs[0].TargetPath != "result-a.json" {
+		t.Fatalf("publication target_path = %q, want archive-root filename", pubs[0].TargetPath)
+	}
+	if _, err := os.Stat(filepath.Join(archive, "result-a.json")); err != nil {
 		t.Fatalf("published output missing: %v", err)
 	}
 	waitForTaskCount(t, ctx, st, disp, 2)

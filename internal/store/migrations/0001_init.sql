@@ -179,6 +179,9 @@ CREATE TABLE resolved_input_entries (
     source_archive_id TEXT,
     source_precedence INTEGER,
     version_metadata TEXT,
+    effective_filename_pattern TEXT,
+    filename_components TEXT,
+    window_match TEXT,
     selection_reason TEXT,
     FOREIGN KEY (manifest_id) REFERENCES resolved_input_manifests(manifest_id)
 );

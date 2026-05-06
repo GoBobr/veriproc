@@ -107,7 +107,7 @@ func TestStore_Manifest_FrozenAtConstruction_3_8_M3(t *testing.T) {
 		ManifestID: "mf-1",
 		RunID:      runID,
 		Entries: []ManifestEntry{
-			{EntryID: "e1", FileType: "L1B", Optional: false, Present: true},
+			{EntryID: "e1", FileType: "L1B", Optional: false, Present: true, EffectiveFilenamePattern: "CDM?_L1B_____________*", FilenameComponents: `{"file_type":"L1B"}`, WindowMatch: "overlaps"},
 			{EntryID: "e2", FileType: "AUX", Optional: true, Present: false},
 		},
 	}
@@ -120,6 +120,9 @@ func TestStore_Manifest_FrozenAtConstruction_3_8_M3(t *testing.T) {
 	}
 	if len(got.Entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(got.Entries))
+	}
+	if got.Entries[0].EffectiveFilenamePattern == "" || got.Entries[0].FilenameComponents == "" || got.Entries[0].WindowMatch != "overlaps" {
+		t.Fatalf("structured manifest metadata not persisted: %#v", got.Entries[0])
 	}
 	// Second insert for same run must conflict (one manifest per run).
 	m2 := &ManifestRecord{ManifestID: "mf-2", RunID: runID}

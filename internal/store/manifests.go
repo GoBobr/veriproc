@@ -18,21 +18,24 @@ type ManifestRecord struct {
 
 // ManifestEntry is one resolved input row.
 type ManifestEntry struct {
-	EntryID          string
-	FileType         string
-	Category         string
-	Path             string
-	Optional         bool
-	Present          bool
-	Size             int64
-	MTime            sql.NullTime
-	Checksum         string
-	ChecksumAlgo     string
-	ChecksumSource   string
-	SourceArchiveID  string
-	SourcePrecedence int
-	VersionMetadata  string
-	SelectionReason  string
+	EntryID                  string
+	FileType                 string
+	Category                 string
+	Path                     string
+	Optional                 bool
+	Present                  bool
+	Size                     int64
+	MTime                    sql.NullTime
+	Checksum                 string
+	ChecksumAlgo             string
+	ChecksumSource           string
+	SourceArchiveID          string
+	SourcePrecedence         int
+	VersionMetadata          string
+	EffectiveFilenamePattern string
+	FilenameComponents       string
+	WindowMatch              string
+	SelectionReason          string
 }
 
 // ManifestRepo persists manifest headers + entries.
@@ -66,13 +69,15 @@ func (r *ManifestRepo) Insert(ctx context.Context, m *ManifestRecord) error {
 				INSERT INTO resolved_input_entries
 					(entry_id, manifest_id, file_type, category, path,
 					 optional, present, size, mtime, checksum, checksum_algo, checksum_source,
-					 source_archive_id, source_precedence, version_metadata, selection_reason)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					 source_archive_id, source_precedence, version_metadata,
+					 effective_filename_pattern, filename_components, window_match, selection_reason)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				e.EntryID, m.ManifestID, e.FileType, nullStr(e.Category), nullStr(e.Path),
 				boolInt(e.Optional), boolInt(e.Present),
 				nullInt(e.Size), nullTime(e.MTime), nullStr(e.Checksum), nullStr(e.ChecksumAlgo),
 				nullStr(e.ChecksumSource), nullStr(e.SourceArchiveID), nullInt(int64(e.SourcePrecedence)),
-				nullStr(e.VersionMetadata), nullStr(e.SelectionReason)); err != nil {
+				nullStr(e.VersionMetadata), nullStr(e.EffectiveFilenamePattern), nullStr(e.FilenameComponents),
+				nullStr(e.WindowMatch), nullStr(e.SelectionReason)); err != nil {
 				return err
 			}
 		}
@@ -106,7 +111,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 		       optional, present, COALESCE(size,0), mtime,
 		       COALESCE(checksum,''), COALESCE(checksum_algo,''), COALESCE(checksum_source,''),
 		       COALESCE(source_archive_id,''), COALESCE(source_precedence,0),
-		       COALESCE(version_metadata,''), COALESCE(selection_reason,'')
+		       COALESCE(version_metadata,''), COALESCE(effective_filename_pattern,''),
+		       COALESCE(filename_components,''), COALESCE(window_match,''), COALESCE(selection_reason,'')
 		FROM resolved_input_entries WHERE manifest_id = ? ORDER BY entry_id`, m.ManifestID)
 	if err != nil {
 		return nil, err
@@ -118,7 +124,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 		if err := rows.Scan(&e.EntryID, &e.FileType, &e.Category, &e.Path,
 			&opt, &pres, &e.Size, &e.MTime, &e.Checksum, &e.ChecksumAlgo,
 			&e.ChecksumSource, &e.SourceArchiveID, &e.SourcePrecedence,
-			&e.VersionMetadata, &e.SelectionReason); err != nil {
+			&e.VersionMetadata, &e.EffectiveFilenamePattern, &e.FilenameComponents,
+			&e.WindowMatch, &e.SelectionReason); err != nil {
 			return nil, err
 		}
 		if e.MTime.Valid {

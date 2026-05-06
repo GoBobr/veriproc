@@ -10,13 +10,14 @@ execution:
 scripts:
   run: ./scripts/run.sh
 inputs:
-  - file_type: A_RESULT
+  - file_type: A_RESULT________
     category: product
-    pattern: "STATION-A/result-a.json"
+    filename_pattern: "result-a.json"
     mandatory: true
 outputs:
-  - file_type: B_TRACK
+  - file_type: B_TRACK_________
     name: track.csv
+    filename_pattern: "track.csv"
     mandatory: true
 metadata:
   owner: sandbox

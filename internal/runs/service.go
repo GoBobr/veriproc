@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -443,7 +444,6 @@ func materializeWorkingRoot(root string) error {
 }
 
 func (s *Service) resolveManifest(ctx context.Context, runID string, task *store.TaskRecord, rev *store.StationRevisionRecord, workingRoot string) (*store.ManifestRecord, error) {
-	_ = task
 	manifest := &store.ManifestRecord{ManifestID: "mf-" + sha12(runID), RunID: runID}
 	if rev.DeclaredInputs == "" {
 		return manifest, nil
@@ -460,68 +460,150 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 	}
 	for idx, input := range inputs {
 		entry := store.ManifestEntry{
-			EntryID:  fmt.Sprintf("ent-%s-%02d", sha12(runID+":"+input.FileType), idx),
-			FileType: input.FileType,
-			Category: input.Category,
-			Optional: input.Optional,
+			EntryID:                  fmt.Sprintf("ent-%s-%02d", sha12(runID+":"+input.FileType), idx),
+			FileType:                 input.FileType,
+			Category:                 input.Category,
+			Optional:                 input.Optional,
+			EffectiveFilenamePattern: s.effectiveInputFilenamePattern(input),
 		}
+		entry.WindowMatch = defaultWindowMatch(entry.EffectiveFilenamePattern, s.naming, input)
 		folders := s.productCategories[input.Category]
 		if override := rollingFolders[input.Category]; len(override) > 0 {
 			folders = override
 		}
-		candidate, archiveID, precedence, reason, err := s.selectInputCandidate(input, folders)
+		selected, err := s.selectInputCandidate(input, folders, task)
 		if err != nil {
 			return nil, err
 		}
-		if candidate == "" {
-			entry.SelectionReason = reason
+		entry.SourceArchiveID = selected.ArchiveID
+		entry.SourcePrecedence = selected.Precedence
+		entry.SelectionReason = selected.Reason
+		entry.EffectiveFilenamePattern = selected.EffectivePattern
+		entry.FilenameComponents = selected.FilenameComponents
+		entry.WindowMatch = selected.WindowMatch
+		if selected.Path == "" {
 			if !input.Optional {
 				return nil, fmt.Errorf("mandatory input %s not found in category %s", input.FileType, input.Category)
 			}
 			manifest.Entries = append(manifest.Entries, entry)
 			continue
 		}
-		info, err := os.Stat(candidate)
+		info, err := os.Stat(selected.Path)
 		if err != nil {
 			return nil, err
 		}
-		linkName := safeInputLinkName(idx, input.FileType, filepath.Base(candidate))
+		linkName := safeInputLinkName(idx, input.FileType, filepath.Base(selected.Path))
 		linkPath := filepath.Join(workingRoot, "input", linkName)
 		_ = os.Remove(linkPath)
-		if err := os.Symlink(candidate, linkPath); err != nil {
+		if err := os.Symlink(selected.Path, linkPath); err != nil {
 			return nil, fmt.Errorf("symlink input %s: %w", input.FileType, err)
 		}
 		entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
 		entry.Present = true
 		entry.Size = info.Size()
 		entry.MTime = nullTime(info.ModTime().UTC())
-		entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(candidate, s.integrity)
-		entry.SourceArchiveID = archiveID
-		entry.SourcePrecedence = precedence
-		entry.VersionMetadata = versionMetadata(candidate)
-		entry.SelectionReason = reason
+		entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(selected.Path, s.integrity)
+		entry.VersionMetadata = versionMetadata(selected.Path)
 		manifest.Entries = append(manifest.Entries, entry)
 	}
 	_ = ctx
 	return manifest, nil
 }
 
-func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string) (string, string, int, string, error) {
-	if len(folders) == 0 {
-		return "", "", 0, "no configured folders", nil
+type selectedInputCandidate struct {
+	Path               string
+	ArchiveID          string
+	Precedence         int
+	Reason             string
+	EffectivePattern   string
+	FilenameComponents string
+	WindowMatch        string
+}
+
+func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string, task *store.TaskRecord) (selectedInputCandidate, error) {
+	selected := selectedInputCandidate{
+		EffectivePattern: s.effectiveInputFilenamePattern(input),
 	}
-	pattern := input.Pattern
-	if pattern == "" {
-		pattern = "*" + input.FileType + "*"
+	patternHasFileType := s.inputPatternHasFileType(input)
+	selected.WindowMatch = defaultWindowMatch(selected.EffectivePattern, s.naming, input)
+	if len(folders) == 0 {
+		selected.Reason = "no configured folders"
+		return selected, nil
 	}
 	for precedence, folderRef := range folders {
 		folder, archiveID, err := s.resolveFolderRef(folderRef)
 		if err != nil {
-			return "", "", 0, "", err
+			return selected, err
+		}
+		files, err := s.inputCandidatesInFolder(folder, input, selected.EffectivePattern)
+		if err != nil {
+			return selected, err
+		}
+		valid := make([]selectedInputCandidate, 0, len(files))
+		for _, file := range files {
+			candidate := selectedInputCandidate{Path: file, ArchiveID: archiveID, Precedence: precedence + 1, EffectivePattern: selected.EffectivePattern, WindowMatch: selected.WindowMatch}
+			if selected.EffectivePattern != "" {
+				components, err := policy.ParseFilename(filepath.Base(file), selected.EffectivePattern, s.naming.Filenames.Components)
+				if err != nil {
+					continue
+				}
+				if patternHasFileType {
+					components["file_type"] = input.FileType
+				}
+				if !candidateMatchesWindow(components, selected.WindowMatch, input, task) {
+					continue
+				}
+				body, err := canonjson.Marshal(components)
+				if err != nil {
+					return selected, err
+				}
+				candidate.FilenameComponents = string(body)
+			}
+			valid = append(valid, candidate)
+		}
+		if len(valid) == 0 {
+			continue
+		}
+		sort.Slice(valid, func(i, j int) bool {
+			im, _ := os.Stat(valid[i].Path)
+			jm, _ := os.Stat(valid[j].Path)
+			if im != nil && jm != nil && !im.ModTime().Equal(jm.ModTime()) {
+				return im.ModTime().Before(jm.ModTime())
+			}
+			return valid[i].Path < valid[j].Path
+		})
+		winner := valid[len(valid)-1]
+		winner.Reason = "selected latest by mtime then path within precedence"
+		if selected.EffectivePattern != "" {
+			winner.Reason = "selected latest matching filename_pattern/window_match by mtime then path within precedence"
+		}
+		return winner, nil
+	}
+	selected.Reason = "no matching candidate"
+	return selected, nil
+}
+
+func (s *Service) effectiveInputFilenamePattern(input stations.InputDefinition) string {
+	return policy.EffectiveFilenamePattern(s.naming.Filenames.FilenamePattern, input.FilenamePattern, input.FileType)
+}
+
+func (s *Service) inputPatternHasFileType(input stations.InputDefinition) bool {
+	pattern := strings.TrimSpace(s.naming.Filenames.FilenamePattern)
+	if strings.TrimSpace(input.FilenamePattern) != "" {
+		pattern = strings.TrimSpace(input.FilenamePattern)
+	}
+	return strings.Contains(pattern, "<FILE_TYPE>")
+}
+
+func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDefinition, effectivePattern string) ([]string, error) {
+	if effectivePattern == "" {
+		pattern := input.Pattern
+		if pattern == "" {
+			pattern = "*" + input.FileType + "*"
 		}
 		matches, err := filepath.Glob(filepath.Join(folder, pattern))
 		if err != nil {
-			return "", "", 0, "", err
+			return nil, err
 		}
 		files := matches[:0]
 		for _, match := range matches {
@@ -529,20 +611,25 @@ func (s *Service) selectInputCandidate(input stations.InputDefinition, folders [
 				files = append(files, match)
 			}
 		}
-		if len(files) == 0 {
-			continue
-		}
-		sort.Slice(files, func(i, j int) bool {
-			im, _ := os.Stat(files[i])
-			jm, _ := os.Stat(files[j])
-			if im != nil && jm != nil && !im.ModTime().Equal(jm.ModTime()) {
-				return im.ModTime().Before(jm.ModTime())
-			}
-			return files[i] < files[j]
-		})
-		return files[len(files)-1], archiveID, precedence + 1, "selected latest by mtime then path within precedence", nil
+		return files, nil
 	}
-	return "", "", 0, "no matching candidate", nil
+	files := []string{}
+	if err := filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".sha256") {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, created time.Time) string {
@@ -595,6 +682,71 @@ func filenameMatchesInput(name string, input stations.InputDefinition) bool {
 		return true
 	}
 	return strings.Contains(name, input.FileType)
+}
+
+func defaultWindowMatch(effectivePattern string, naming policy.Naming, input stations.InputDefinition) string {
+	if match := canonicalWindowMatch(input.WindowMatch); match != "" {
+		return match
+	}
+	if effectivePattern != "" && strings.Contains(effectivePattern, "<START_TIME>") && strings.Contains(effectivePattern, "<END_TIME>") {
+		return "overlaps"
+	}
+	_ = naming
+	return ""
+}
+
+func canonicalWindowMatch(match string) string {
+	switch strings.ToLower(strings.TrimSpace(match)) {
+	case "", "none":
+		return ""
+	case "overlaps", "cross":
+		return "overlaps"
+	case "within_window", "fully_within":
+		return "within_window"
+	case "covers_window", "surrender":
+		return "covers_window"
+	default:
+		return strings.ToLower(strings.TrimSpace(match))
+	}
+}
+
+func candidateMatchesWindow(components map[string]string, match string, input stations.InputDefinition, task *store.TaskRecord) bool {
+	match = canonicalWindowMatch(match)
+	if match == "" {
+		return true
+	}
+	if task == nil {
+		return false
+	}
+	candidateStart, err := policy.ParseFilenameTime(components["start_time"])
+	if err != nil {
+		return false
+	}
+	candidateEnd, err := policy.ParseFilenameTime(components["end_time"])
+	if err != nil || candidateEnd.Before(candidateStart) {
+		return false
+	}
+	windowStart, windowEnd := effectiveInputWindow(task.WindowStart, task.WindowEnd, input.Margins)
+	switch match {
+	case "overlaps":
+		return !candidateEnd.Before(windowStart) && !candidateStart.After(windowEnd)
+	case "within_window":
+		return !candidateStart.Before(windowStart) && !candidateEnd.After(windowEnd)
+	case "covers_window":
+		return !candidateStart.After(windowStart) && !candidateEnd.Before(windowEnd)
+	default:
+		return false
+	}
+}
+
+func effectiveInputWindow(start, end time.Time, margins []int) (time.Time, time.Time) {
+	before, after := 0, 0
+	if len(margins) == 1 {
+		before, after = margins[0], margins[0]
+	} else if len(margins) >= 2 {
+		before, after = margins[0], margins[1]
+	}
+	return start.UTC().Add(-time.Duration(before) * time.Second), end.UTC().Add(time.Duration(after) * time.Second)
 }
 
 func availableChecksum(path string, integrity policy.Integrity) (string, string, string) {
