@@ -341,6 +341,17 @@ func (h *runHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
+func (h *runHandler) retry(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	out, err := h.svc.Retry(r.Context(), taskID)
+	if err != nil {
+		writeRunErr(w, r, err)
+		return
+	}
+	task, _ := h.svc.GetTask(r.Context(), out.Run.TaskID)
+	writeJSON(w, http.StatusCreated, toRunWire(out.Run, task))
+}
+
 func (h *runHandler) promote(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("run_id")
 	var body struct {
@@ -499,6 +510,8 @@ func writeRunErr(w http.ResponseWriter, r *http.Request, err error) {
 		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeUnknownStation, err.Error())
 	case errors.Is(err, runs.ErrTaskNotFound):
 		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, err.Error())
+	case errors.Is(err, runs.ErrRetryIneligible):
+		apierr.Write(w, r, http.StatusConflict, apierr.CodeInvalidStateTransition, err.Error())
 	default:
 		apierr.Write(w, r, http.StatusInternalServerError, apierr.CodeInternal, "internal error")
 	}

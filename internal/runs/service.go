@@ -647,21 +647,31 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 }
 
 func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, created time.Time) string {
-	values := map[string]string{
+	// taskValues uses the task's own CreatedAt so that all retries of the same
+	// task share the same task-level directory. runValues uses the run's
+	// creation time for the run-level sub-directory.
+	taskValues := map[string]string{
+		"station_id":   rev.StationID,
+		"start":        policy.CompactTaskWindow(task.WindowStart),
+		"end":          policy.CompactTaskWindow(task.WindowEnd),
+		"created":      policy.CompactRuntimeEvent(task.CreatedAt),
+		"short_run_id": policy.ShortRunID(runID),
+	}
+	runValues := map[string]string{
 		"station_id":   rev.StationID,
 		"start":        policy.CompactTaskWindow(task.WindowStart),
 		"end":          policy.CompactTaskWindow(task.WindowEnd),
 		"created":      policy.CompactRuntimeEvent(created),
 		"short_run_id": policy.ShortRunID(runID),
 	}
-	station := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.StationSegment, values, s.naming)
-	taskSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.TaskSegment, values, s.naming)
-	runSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.RunSegment, values, s.naming)
+	station := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.StationSegment, taskValues, s.naming)
+	taskSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.TaskSegment, taskValues, s.naming)
+	runSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.RunSegment, runValues, s.naming)
 	path := filepath.Join(s.workingRootBase, station, taskSegment, runSegment)
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return path
 	}
-	suffix := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.CollisionSuffix, values, s.naming)
+	suffix := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.CollisionSuffix, runValues, s.naming)
 	return filepath.Join(s.workingRootBase, station, taskSegment, runSegment+suffix)
 }
 

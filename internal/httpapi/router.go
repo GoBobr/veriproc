@@ -62,6 +62,7 @@ func NewRouter(d Deps) http.Handler {
 		rh := &runHandler{svc: d.Runs}
 		mux.HandleFunc("GET /api/v1/runs", rh.list)
 		mux.HandleFunc("GET /api/v1/runs/{run_id}", rh.get)
+		mux.HandleFunc("POST /api/v1/tasks/{task_id}/retry", rh.retry)
 		mux.HandleFunc("POST /api/v1/runs/{run_id}/cancel", rh.cancel)
 		mux.HandleFunc("POST /api/v1/runs/{run_id}/promote", rh.promote)
 		mux.HandleFunc("GET /api/v1/runs/{run_id}/jobs", rh.listJobs)

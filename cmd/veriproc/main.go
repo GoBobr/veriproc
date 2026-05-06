@@ -60,7 +60,7 @@ const (
 	ExitIndeterminate = 8
 )
 
-const cliVersion = "0.7.0-m7"
+const cliVersion = "0.8.0-m8"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -558,8 +558,24 @@ func (c *client) cmdTask(sub string, args []string) int {
 		}
 		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "created_at"})
 		return ExitOK
+	case "retry":
+		if len(args) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc task retry TASK_ID")
+			return ExitUsage
+		}
+		m, raw, err := c.do(http.MethodPost, "/api/v1/tasks/"+args[0]+"/retry", nil)
+		if err != nil {
+			var ae *apiError
+			if !errors.As(err, &ae) {
+				fmt.Fprintln(c.stderr, "veriproc task retry: "+err.Error()+" (outcome indeterminate)")
+				return ExitIndeterminate
+			}
+			return c.reportErr(err)
+		}
+		c.renderResource(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "retry_index", "created_at"})
+		return ExitOK
 	default:
-		fmt.Fprintln(c.stderr, "veriproc task {get|list}")
+		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry}")
 		return ExitUsage
 	}
 }
@@ -846,6 +862,7 @@ Commands:
   submit        --station ID --start RFC3339 --end RFC3339 [--idempotency-key K] [--force] [--split-group GID]
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
+  task retry    TASK_ID
   run  get      RUN_ID
   run  list     [--task TASK_ID] [--state S]
   run  jobs     RUN_ID

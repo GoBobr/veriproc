@@ -23,3 +23,4 @@ primary input: ${primary}
 aux input: ${aux}
 OUTPUT
 echo "wrote ${VERIPROC_RUN_DIR}/${OUTFNAME} from ${primary} and ${aux}"
+exit 0
