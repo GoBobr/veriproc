@@ -78,9 +78,6 @@ func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
 		if err := item.Decode(&def); err != nil {
 			return err
 		}
-		if def.Name == "" && def.Pattern == "" {
-			def.Name = def.FileType
-		}
 		if def.FileType == "" {
 			def.FileType = def.Name
 		}
@@ -255,9 +252,11 @@ func normalizeDefinition(def Definition) Definition {
 		def.Outputs[i].Name = strings.TrimSpace(def.Outputs[i].Name)
 		def.Outputs[i].FileType = strings.TrimSpace(def.Outputs[i].FileType)
 		def.Outputs[i].Pattern = strings.TrimSpace(def.Outputs[i].Pattern)
-		if def.Outputs[i].Name == "" && def.Outputs[i].Pattern == "" {
-			def.Outputs[i].Name = def.Outputs[i].FileType
-		}
+		// Name is intentionally NOT defaulted to FileType: when neither Name
+		// nor Pattern is set, resolveOutputPath falls through to filename-pattern
+		// scanning, which uses the instance-level filename_pattern to find any
+		// matching file in the output directory. Set Name explicitly only when
+		// a literal output filename is required.
 		if def.Outputs[i].FileType == "" {
 			def.Outputs[i].FileType = def.Outputs[i].Name
 		}
@@ -302,8 +301,8 @@ func validateDefinition(def Definition) error {
 		if out.FileType == "" {
 			return errors.New("output file_type must not be empty")
 		}
-		if out.Name == "" && out.Pattern == "" {
-			return fmt.Errorf("output %s must define name or pattern", out.FileType)
+		if out.Name == "" && out.Pattern == "" && out.FileType == "" {
+			return errors.New("output must define file_type, name, or pattern")
 		}
 	}
 	for _, down := range def.Downstream {

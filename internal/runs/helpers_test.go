@@ -9,3 +9,4 @@ import (
 func testLogger() zerolog.Logger {
 	return zerolog.New(io.Discard)
 }
+

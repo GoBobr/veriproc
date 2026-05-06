@@ -1,0 +1,82 @@
+schema_version: veriproc.instance/v1
+instance_id: sandbox-local
+
+http:
+  bind_addr: 127.0.0.1:8080
+
+log:
+  level: debug
+  format: console
+
+db:
+  dsn: sqlite://sandbox_real/data/veriproc.db
+
+storage:
+  working_root_base: sandbox_real/data/working-roots
+  station_config_root: sandbox_real/stations
+
+naming:
+  timestamp_format:
+    task_window: compact-utc-millis
+    runtime_event: compact-utc-micros
+  working_root:
+    station_segment: "{station_id}"
+    task_segment: "task-{start}-{created}"
+    run_segment: "run-{created}"
+    collision_suffix: "-{short_run_id}"
+  filenames:
+    allowed_charset: "A-Z a-z 0-9 - _ ."
+    replace_invalid: "_"
+    max_segment_length: 128
+    station_case: preserve
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_??_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    components:
+      MISSION_ID:
+        pattern: "CDM?"
+        length: 4
+        charset: ascii
+      FILE_TYPE:
+        length: 16
+        charset: ascii
+      START_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      END_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      GENERATION_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+
+integrity:
+  checksum_policy: available_only
+  allowed_algorithms: [sha256]
+  record_size_when_available: true
+  record_mtime_when_available: true
+
+facility:
+  processing_center: SANDBOX
+  environment: LOCAL
+  acquisition_station: Testbed
+
+rolling_archives:
+  hot:
+    path: sandbox_real/rolling-archives/hot
+    retention: keep-fixtures
+    mode: read_write
+
+product_categories:
+  - name: product
+    folders:
+      - rolling:hot
+
+executor:
+  type: local
+
+generators:
+  job_order:
+    type: system-default
+    version: local-mvp-v1
+  working_root:
+    type: system-default
+    version: local-mvp-v1

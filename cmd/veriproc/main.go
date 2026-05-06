@@ -95,6 +95,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	switch cmd {
+	case "help", "--help", "-h":
+		printUsage(stdout)
+		return ExitOK
 	case "submit":
 		return c.cmdSubmit(tail)
 	case "task":

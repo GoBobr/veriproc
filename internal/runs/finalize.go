@@ -219,7 +219,14 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, fmt.Errorf("mandatory output %s missing at %s", out.FileType, path)
+			entries, _ := os.ReadDir(dir)
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				if !e.IsDir() {
+					names = append(names, e.Name())
+				}
+			}
+			return nil, fmt.Errorf("mandatory output %s missing at %s (output dir contains: %v)", out.FileType, path, names)
 		}
 		checksum, algo, source := availableChecksum(path, s.integrity)
 		arts = append(arts, &store.ArtifactRecord{
@@ -259,16 +266,19 @@ func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (
 		if err != nil {
 			return "", "", err
 		}
+		var parseErrs []string
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
-			if _, err := policy.ParseFilename(entry.Name(), effective, s.naming.Filenames.Components); err == nil {
+			if _, perr := policy.ParseFilename(entry.Name(), effective, s.naming.Filenames.Components); perr == nil {
 				matches = append(matches, filepath.Join(dir, entry.Name()))
+			} else {
+				parseErrs = append(parseErrs, entry.Name()+":"+perr.Error())
 			}
 		}
 		if len(matches) == 0 {
-			return "", "", fmt.Errorf("mandatory output %s missing matching filename_pattern", out.FileType)
+			return "", "", fmt.Errorf("mandatory output %s: no file matched pattern %q (scan errors: %v)", out.FileType, effective, parseErrs)
 		}
 		sort.Slice(matches, func(i, j int) bool {
 			im, _ := os.Stat(matches[i])
@@ -431,7 +441,7 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 	records := make([]*store.PublicationRecord, 0, len(artifacts))
 	for _, art := range artifacts {
 		name := filepath.Base(art.Path)
-		if len(selected) > 0 && !selected[name] && !selected[art.FileType] {
+		if len(selected) > 0 && !selected[name] && !selected[art.FileType] && !matchesAnyGlob(name, policy.Outputs) {
 			continue
 		}
 		targetPath := name
@@ -445,6 +455,17 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, PublicationMode: policy.Mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
 	}
 	return records, nil
+}
+
+// matchesAnyGlob reports whether name matches any of the glob patterns.
+// Patterns that are not valid globs are treated as literal strings.
+func matchesAnyGlob(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if ok, err := filepath.Match(p, name); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 func cleanPublicationSubpath(subpath string) (string, error) {

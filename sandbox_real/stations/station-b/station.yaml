@@ -1,0 +1,24 @@
+station_id: STATION-B
+proc_type: TRACK_L1
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station B consumes STATION-A's published output from the rolling
+  archive and writes a small CSV product.
+execution:
+  mode: local
+  command: ./scripts/run.sh
+scripts:
+  run: ./scripts/run.sh
+inputs:
+  - file_type: A_RESULT________
+    category: product
+    filename_pattern: "result-a.json"
+    mandatory: true
+outputs:
+  - file_type: B_TRACK_________
+    name: track.csv
+    filename_pattern: "track.csv"
+    mandatory: true
+metadata:
+  owner: sandbox
+  cadence: 15m

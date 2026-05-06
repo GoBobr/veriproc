@@ -64,7 +64,7 @@ printf '{"station":"%s","run":"%s"}\n' "$VERIPROC_STATION_ID" "$VERIPROC_RUN_ID"
 `)
 	scriptB := writeExecutable(t, dir, "station-b.sh", `#!/bin/sh
 set -eu
-test -f input/00_A_RESULT_result-a.json
+test -f input/result-a.json
 printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIPROC_RUN_DIR/result-b.json"
 `)
 

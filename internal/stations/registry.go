@@ -131,7 +131,7 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 		}
 		r.mu.Unlock()
 		if s != nil {
-			if err := s.Stations().Insert(ctx, rec); err != nil && !errors.Is(err, store.ErrConflict) {
+			if err := s.Stations().Upsert(ctx, rec); err != nil {
 				return fmt.Errorf("seed station %s: %w", sp.StationID, err)
 			}
 		}

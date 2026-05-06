@@ -79,7 +79,13 @@ func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
 			continue
 		}
 		if _, err := d.svc.PrepareRun(ctx, t.TaskID); err != nil {
-			d.logger.Warn().Str("task_id", t.TaskID).Err(err).Msg("prepare run failed")
+			d.logger.Warn().
+				Str("task_id", t.TaskID).
+				Str("station_id", t.DestinationStationID).
+				Time("window_start", t.WindowStart).
+				Time("window_end", t.WindowEnd).
+				Err(err).
+				Msg("prepare run failed")
 		}
 	}
 	return nil

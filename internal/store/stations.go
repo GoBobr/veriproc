@@ -62,6 +62,37 @@ func (r *StationRevisionRepo) Insert(ctx context.Context, rec *StationRevisionRe
 	return nil
 }
 
+// Upsert inserts or updates a station revision. On conflict it refreshes all
+// serialized JSON fields (declared_inputs, declared_outputs, etc.) while
+// preserving the original created_at / effective_at timestamps. This ensures
+// that normalization changes in code are always reflected in the DB at
+// startup without requiring a manual DB wipe.
+func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRecord) error {
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = nowUTC()
+	}
+	if rec.EffectiveAt.IsZero() {
+		rec.EffectiveAt = rec.CreatedAt
+	}
+	_, err := r.q.ExecContext(ctx, `
+		INSERT INTO station_revisions
+			(revision_id, station_id, content_hash, schema_version, label, effective_at, created_at,
+			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders, declared_scripts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(revision_id) DO UPDATE SET
+			declared_inputs     = excluded.declared_inputs,
+			declared_outputs    = excluded.declared_outputs,
+			declared_downstream = excluded.declared_downstream,
+			publication_policy  = excluded.publication_policy,
+			rolling_folders     = excluded.rolling_folders,
+			declared_scripts    = excluded.declared_scripts`,
+		rec.RevisionID, rec.StationID, rec.ContentHash, rec.SchemaVersion,
+		nullStr(rec.Label), rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
+		rec.DeclaredInputs, rec.DeclaredOutputs, rec.DeclaredDownstream,
+		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredScripts)
+	return err
+}
+
 // Get returns the revision with the supplied id, or ErrNotFound.
 func (r *StationRevisionRepo) Get(ctx context.Context, revisionID string) (*StationRevisionRecord, error) {
 	row := r.q.QueryRowContext(ctx, `

@@ -195,6 +195,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	}
 	manifest, err := s.resolveManifest(ctx, runID, task, rev, workingRoot)
 	if err != nil {
+		_ = os.RemoveAll(workingRoot)
 		return nil, err
 	}
 	fingerprintValue := computeFingerprint(rev, manifest, task.Force)
@@ -263,6 +264,11 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		}
 	}
 
+	task, err := s.store.Tasks().Get(ctx, run.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: fetch task: %w", err)
+	}
+
 	desc := executor.JobDescription{
 		RunID:        run.RunID,
 		WorkingRoot:  run.WorkingRoot,
@@ -271,6 +277,8 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		TaskID:       run.TaskID,
 		Command:      "run",
 		ScriptPath:   scriptPath,
+		WindowStart:  task.WindowStart,
+		WindowEnd:    task.WindowEnd,
 	}
 	schedID, err := s.exec.Submit(ctx, desc)
 	if err != nil {
@@ -354,10 +362,16 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if err := s.store.Runs().MarkFailed(ctx, runID, reason, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
+		if logArt, werr := s.collectRunLog(run); werr == nil {
+			logArt.ValidationStatus = "failed"
+			_ = s.store.Artifacts().Insert(ctx, logArt)
+		}
 	case executor.StatusCancelled:
 		if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
 	}
 	return s.store.Runs().Get(ctx, runID)
 }
@@ -483,7 +497,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 		entry.WindowMatch = selected.WindowMatch
 		if selected.Path == "" {
 			if !input.Optional {
-				return nil, fmt.Errorf("mandatory input %s not found in category %s", input.FileType, input.Category)
+				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, selected.Reason)
 			}
 			manifest.Entries = append(manifest.Entries, entry)
 			continue
@@ -667,14 +681,8 @@ func (s *Service) resolveFolderRef(ref string) (string, string, error) {
 	return ref, "", nil
 }
 
-func safeInputLinkName(idx int, fileType, base string) string {
-	cleanType := strings.Map(func(r rune) rune {
-		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
-			return r
-		}
-		return '_'
-	}, fileType)
-	return fmt.Sprintf("%02d_%s_%s", idx, cleanType, base)
+func safeInputLinkName(_ int, _ string, base string) string {
+	return base
 }
 
 func filenameMatchesInput(name string, input stations.InputDefinition) bool {

@@ -57,8 +57,10 @@ func (e *LocalExecutor) SupportsCancellation() bool { return false }
 //	VERIPROC_RUN_ID         = desc.RunID
 //	VERIPROC_TASK_ID        = desc.TaskID
 //	VERIPROC_STATION_ID     = desc.StationID
-//	VERIPROC_WORKING_ROOT = desc.WorkingRoot
+//	VERIPROC_WORKING_ROOT   = desc.WorkingRoot
 //	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath
+//	VERIPROC_WINDOW_START   = desc.WindowStart  (YYYYMMDDTHHmmSS, UTC, no Z)
+//	VERIPROC_WINDOW_END     = desc.WindowEnd    (YYYYMMDDTHHmmSS, UTC, no Z)
 //
 // All other env vars are inherited from the daemon process.
 func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, error) {
@@ -96,6 +98,8 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 			"VERIPROC_STATION_ID="+desc.StationID,
 			"VERIPROC_WORKING_ROOT="+desc.WorkingRoot,
 			"VERIPROC_JOBORDER_PATH="+desc.JobOrderPath,
+			"VERIPROC_WINDOW_START="+desc.WindowStart.UTC().Format("20060102T150405"),
+			"VERIPROC_WINDOW_END="+desc.WindowEnd.UTC().Format("20060102T150405"),
 		)
 		cmd.Stdout = &out
 		cmd.Stderr = &out
