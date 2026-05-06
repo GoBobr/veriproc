@@ -113,13 +113,27 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	if len(mf.Entries) != 2 || mf.Entries[0].SourceArchiveID != "hot" {
 		t.Fatalf("manifest entries not resolved from archive: %#v", mf.Entries)
 	}
+	for _, entry := range mf.Entries {
+		if entry.Size == 0 || !entry.MTime.Valid || entry.SelectionReason == "" {
+			t.Fatalf("manifest entry missing available metadata: %#v", entry)
+		}
+		if entry.Checksum != "" || entry.ChecksumAlgo != "" || entry.ChecksumSource != "" {
+			t.Fatalf("available_only should not compute input checksum without metadata: %#v", entry)
+		}
+	}
 	arts, _ := st.Artifacts().ListByRun(ctx, runA.RunID, "output")
 	if len(arts) != 1 || arts[0].Size == 0 || arts[0].FileType != "A_RESULT" {
 		t.Fatalf("output artifact = %#v", arts)
 	}
+	if arts[0].Checksum != "" || arts[0].ChecksumAlgo != "" || arts[0].ChecksumSource != "" {
+		t.Fatalf("available_only should not compute output checksum without metadata: %#v", arts[0])
+	}
 	pubs, _ := st.Publications().ListByRun(ctx, runA.RunID)
 	if len(pubs) != 1 || pubs[0].PublicationState != store.PublicationStatePublished {
 		t.Fatalf("publication = %#v", pubs)
+	}
+	if pubs[0].Checksum != "" || pubs[0].ChecksumAlgo != "" || pubs[0].ChecksumSource != "" {
+		t.Fatalf("available_only should not compute publication checksum without metadata: %#v", pubs[0])
 	}
 	if _, err := os.Stat(filepath.Join(archive, "STATION-A", "result-a.json")); err != nil {
 		t.Fatalf("published output missing: %v", err)

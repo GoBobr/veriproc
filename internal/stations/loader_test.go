@@ -75,7 +75,9 @@ scripts:
 	writeStation(t, root, "station-b", `station_id: STATION-B
 proc_type: TRACK_L1
 outputs:
-  - track.csv
+  - file_type: TRACK
+    name: track.csv
+    mandatory: true
 `)
 	st := openStore(t)
 	reg := stations.NewRegistry()

@@ -1,12 +1,14 @@
 station_id: STATION-C
 proc_type: AGG_DAILY
 description: |
-  Sandbox station C — daily aggregator. Use with --split-group to exercise
+  Sandbox station C - daily aggregator. Use with --split-group to exercise
   M7 split-group aggregation across multiple windows.
 scripts:
   run: ./scripts/run.sh
 outputs:
-  - daily.json
+  - file_type: DAILY_SUMMARY
+    name: daily.json
+    mandatory: true
 metadata:
   owner: sandbox
   cadence: 1d

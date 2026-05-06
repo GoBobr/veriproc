@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +29,7 @@ import (
 
 	"github.com/eum/veriproc/internal/canonjson"
 	"github.com/eum/veriproc/internal/executor"
+	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
 )
@@ -63,6 +63,8 @@ type Service struct {
 	rollingArchives   map[string]string
 	productCategories map[string][]string
 	generators        map[string]string
+	naming            policy.Naming
+	integrity         policy.Integrity
 }
 
 // GroupRegistrar is the optional callback invoked after PrepareRun when a
@@ -84,6 +86,8 @@ type Config struct {
 	RollingArchives   map[string]string
 	ProductCategories map[string][]string
 	Generators        map[string]string
+	Naming            policy.Naming
+	Integrity         policy.Integrity
 }
 
 // NewService constructs a Service. WorkingRootBase defaults to
@@ -107,6 +111,8 @@ func NewService(cfg Config) *Service {
 		cfg.WorkingRootBase = abs
 	}
 	cfg.RollingArchives = absPathMap(cfg.RollingArchives)
+	cfg.Naming = cfg.Naming.WithDefaults()
+	cfg.Integrity = cfg.Integrity.WithDefaults()
 	return &Service{
 		store:             cfg.Store,
 		exec:              cfg.Executor,
@@ -120,6 +126,8 @@ func NewService(cfg Config) *Service {
 		rollingArchives:   cloneStringMap(cfg.RollingArchives),
 		productCategories: cloneStringSliceMap(cfg.ProductCategories),
 		generators:        cloneStringMap(cfg.Generators),
+		naming:            cfg.Naming,
+		integrity:         cfg.Integrity,
 	}
 }
 
@@ -168,7 +176,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 
 	runID := s.idFactory()
 	now := s.clock().UTC()
-	workingRoot := filepath.Join(s.workingRootBase, rev.StationID, taskID, runID)
+	workingRoot := s.workingRootPath(rev, task, runID, now)
 
 	run := &store.RunRecord{
 		RunID:             runID,
@@ -362,6 +370,14 @@ func (s *Service) GetRun(ctx context.Context, runID string) (*store.RunRecord, e
 	return r, nil
 }
 
+func (s *Service) GetTask(ctx context.Context, taskID string) (*store.TaskRecord, error) {
+	t, err := s.store.Tasks().Get(ctx, taskID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, ErrTaskNotFound
+	}
+	return t, err
+}
+
 // ListRuns paginates runs.
 func (s *Service) ListRuns(ctx context.Context, f store.RunListFilter) (*store.RunListPage, error) {
 	return s.store.Runs().List(ctx, f)
@@ -453,11 +469,12 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 		if override := rollingFolders[input.Category]; len(override) > 0 {
 			folders = override
 		}
-		candidate, archiveID, err := s.selectInputCandidate(input, folders)
+		candidate, archiveID, precedence, reason, err := s.selectInputCandidate(input, folders)
 		if err != nil {
 			return nil, err
 		}
 		if candidate == "" {
+			entry.SelectionReason = reason
 			if !input.Optional {
 				return nil, fmt.Errorf("mandatory input %s not found in category %s", input.FileType, input.Category)
 			}
@@ -465,10 +482,6 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 			continue
 		}
 		info, err := os.Stat(candidate)
-		if err != nil {
-			return nil, err
-		}
-		checksum, err := checksumFile(candidate)
 		if err != nil {
 			return nil, err
 		}
@@ -481,45 +494,74 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 		entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
 		entry.Present = true
 		entry.Size = info.Size()
-		entry.Checksum = checksum
-		entry.ChecksumAlgo = "sha256"
+		entry.MTime = nullTime(info.ModTime().UTC())
+		entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(candidate, s.integrity)
 		entry.SourceArchiveID = archiveID
+		entry.SourcePrecedence = precedence
+		entry.VersionMetadata = versionMetadata(candidate)
+		entry.SelectionReason = reason
 		manifest.Entries = append(manifest.Entries, entry)
 	}
 	_ = ctx
 	return manifest, nil
 }
 
-func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string) (string, string, error) {
+func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string) (string, string, int, string, error) {
 	if len(folders) == 0 {
-		return "", "", nil
+		return "", "", 0, "no configured folders", nil
 	}
 	pattern := input.Pattern
 	if pattern == "" {
 		pattern = "*" + input.FileType + "*"
 	}
-	for _, folderRef := range folders {
+	for precedence, folderRef := range folders {
 		folder, archiveID, err := s.resolveFolderRef(folderRef)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, "", err
 		}
 		matches, err := filepath.Glob(filepath.Join(folder, pattern))
 		if err != nil {
-			return "", "", err
+			return "", "", 0, "", err
 		}
 		files := matches[:0]
 		for _, match := range matches {
-			if info, err := os.Stat(match); err == nil && !info.IsDir() {
+			if info, err := os.Stat(match); err == nil && !info.IsDir() && filenameMatchesInput(filepath.Base(match), input) {
 				files = append(files, match)
 			}
 		}
 		if len(files) == 0 {
 			continue
 		}
-		sort.Strings(files)
-		return files[len(files)-1], archiveID, nil
+		sort.Slice(files, func(i, j int) bool {
+			im, _ := os.Stat(files[i])
+			jm, _ := os.Stat(files[j])
+			if im != nil && jm != nil && !im.ModTime().Equal(jm.ModTime()) {
+				return im.ModTime().Before(jm.ModTime())
+			}
+			return files[i] < files[j]
+		})
+		return files[len(files)-1], archiveID, precedence + 1, "selected latest by mtime then path within precedence", nil
 	}
-	return "", "", nil
+	return "", "", 0, "no matching candidate", nil
+}
+
+func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, created time.Time) string {
+	values := map[string]string{
+		"station_id":   rev.StationID,
+		"start":        policy.CompactTaskWindow(task.WindowStart),
+		"end":          policy.CompactTaskWindow(task.WindowEnd),
+		"created":      policy.CompactRuntimeEvent(created),
+		"short_run_id": policy.ShortRunID(runID),
+	}
+	station := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.StationSegment, values, s.naming)
+	taskSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.TaskSegment, values, s.naming)
+	runSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.RunSegment, values, s.naming)
+	path := filepath.Join(s.workingRootBase, station, taskSegment, runSegment)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+	suffix := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.CollisionSuffix, values, s.naming)
+	return filepath.Join(s.workingRootBase, station, taskSegment, runSegment+suffix)
 }
 
 func (s *Service) resolveFolderRef(ref string) (string, string, error) {
@@ -548,17 +590,39 @@ func safeInputLinkName(idx int, fileType, base string) string {
 	return fmt.Sprintf("%02d_%s_%s", idx, cleanType, base)
 }
 
-func checksumFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
+func filenameMatchesInput(name string, input stations.InputDefinition) bool {
+	if input.Pattern != "" {
+		return true
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	return strings.Contains(name, input.FileType)
+}
+
+func availableChecksum(path string, integrity policy.Integrity) (string, string, string) {
+	if integrity.ChecksumPolicy == policy.ChecksumNone {
+		return "", "", ""
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	for _, sidecar := range []string{path + ".sha256", strings.TrimSuffix(path, filepath.Ext(path)) + ".sha256"} {
+		body, err := os.ReadFile(sidecar)
+		if err != nil {
+			continue
+		}
+		fields := strings.Fields(string(body))
+		if len(fields) > 0 && len(fields[0]) == 64 {
+			return fields[0], "sha256", "sidecar"
+		}
+	}
+	return "", "", ""
+}
+
+func versionMetadata(path string) string {
+	base := filepath.Base(path)
+	parts := strings.Split(base, "_")
+	for _, part := range parts {
+		if strings.HasPrefix(strings.ToLower(part), "v") && len(part) > 1 {
+			return part
+		}
+	}
+	return ""
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -596,9 +660,10 @@ func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecor
 	entries := make([]any, 0, len(m.Entries))
 	for _, e := range m.Entries {
 		entries = append(entries, map[string]any{
-			"file_type": e.FileType,
-			"category":  e.Category,
-			"checksum":  e.Checksum,
+			"file_type":        e.FileType,
+			"category":         e.Category,
+			"path":             e.Path,
+			"version_metadata": e.VersionMetadata,
 		})
 	}
 	payload := map[string]any{

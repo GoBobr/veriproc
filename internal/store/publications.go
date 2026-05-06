@@ -24,10 +24,15 @@ type PublicationRecord struct {
 	TargetPath       string
 	PublicationMode  string
 	PublicationState string
+	Size             int64
+	Checksum         string
+	ChecksumAlgo     string
+	ChecksumSource   string
 	FailureReason    string
 	CreatedAt        time.Time
 	PublishedAt      sql.NullTime
 }
+
 // PublicationRepo persists publications.
 type PublicationRepo struct {
 	q       querier
@@ -49,10 +54,12 @@ func (r *PublicationRepo) Insert(ctx context.Context, p *PublicationRecord) erro
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO rolling_archive_publications
 			(publication_id, artifact_id, producing_run_id, archive_id, target_path,
-			 publication_mode, publication_state, failure_reason, created_at, published_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 publication_mode, publication_state, size, checksum, checksum_algo, checksum_source,
+			 failure_reason, created_at, published_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.PublicationID, p.ArtifactID, nullStr(p.ProducingRunID), p.ArchiveID, p.TargetPath,
-		p.PublicationMode, p.PublicationState, nullStr(p.FailureReason),
+		p.PublicationMode, p.PublicationState, nullInt(p.Size), nullStr(p.Checksum),
+		nullStr(p.ChecksumAlgo), nullStr(p.ChecksumSource), nullStr(p.FailureReason),
 		p.CreatedAt.UTC(), nullTime(p.PublishedAt))
 	if err != nil {
 		if r.dialect.IsUniqueViolation(err) {
@@ -98,6 +105,7 @@ func (r *PublicationRepo) ListPending(ctx context.Context, limit int) ([]*Public
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
 		       target_path, publication_mode, publication_state,
+		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
 		WHERE publication_state = 'pending'
@@ -114,6 +122,7 @@ func (r *PublicationRepo) ListByRun(ctx context.Context, runID string) ([]*Publi
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
 		       target_path, publication_mode, publication_state,
+		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
 		WHERE producing_run_id = ?
@@ -130,6 +139,7 @@ func (r *PublicationRepo) ListByArtifact(ctx context.Context, artifactID string)
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
 		       target_path, publication_mode, publication_state,
+		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
 		WHERE artifact_id = ?
@@ -146,11 +156,13 @@ func (r *PublicationRepo) Get(ctx context.Context, id string) (*PublicationRecor
 	row := r.q.QueryRowContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
 		       target_path, publication_mode, publication_state,
+		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications WHERE publication_id = ?`, id)
 	var p PublicationRecord
 	if err := row.Scan(&p.PublicationID, &p.ArtifactID, &p.ProducingRunID, &p.ArchiveID,
 		&p.TargetPath, &p.PublicationMode, &p.PublicationState,
+		&p.Size, &p.Checksum, &p.ChecksumAlgo, &p.ChecksumSource,
 		&p.FailureReason, &p.CreatedAt, &p.PublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -167,6 +179,7 @@ func scanPublications(rows *sql.Rows) ([]*PublicationRecord, error) {
 		var p PublicationRecord
 		if err := rows.Scan(&p.PublicationID, &p.ArtifactID, &p.ProducingRunID, &p.ArchiveID,
 			&p.TargetPath, &p.PublicationMode, &p.PublicationState,
+			&p.Size, &p.Checksum, &p.ChecksumAlgo, &p.ChecksumSource,
 			&p.FailureReason, &p.CreatedAt, &p.PublishedAt); err != nil {
 			return nil, err
 		}

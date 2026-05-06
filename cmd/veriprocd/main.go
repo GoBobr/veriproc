@@ -69,49 +69,15 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
-	if cfg.Paths.StationConfigRoot != "" {
-		specs, err := stations.LoadDir(context.Background(), cfg.Paths.StationConfigRoot, registry, st)
+	if cfg.Storage.StationConfigRoot != "" {
+		specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st)
 		if err != nil {
 			return fmt.Errorf("load stations: %w", err)
 		}
-		logger.Info().Str("dir", cfg.Paths.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
-	}
-	// Direct seeding remains useful for tests and tiny deployments.
-	// Supported forms:
-	//   station_id:proc_type
-	//   station_id:proc_type:content_hash:schema_version
-	if seed := os.Getenv("VERIPROC_SEED_STATIONS"); seed != "" {
-		var specs []stations.Spec
-		for _, entry := range strings.Split(seed, ";") {
-			entry = strings.TrimSpace(entry)
-			if entry == "" {
-				continue
-			}
-			parts := strings.Split(entry, ":")
-			if len(parts) == 2 {
-				spec, err := stations.SpecFromSeed(parts[0], parts[1])
-				if err != nil {
-					return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: %w", entry, err)
-				}
-				specs = append(specs, spec)
-				continue
-			}
-			if len(parts) >= 4 {
-				hash := strings.Join(parts[2:len(parts)-1], ":")
-				specs = append(specs, stations.Spec{
-					StationID: parts[0], ProcType: parts[1],
-					ContentHash: hash, SchemaVersion: parts[len(parts)-1],
-				})
-				continue
-			}
-			return fmt.Errorf("VERIPROC_SEED_STATIONS entry %q: want station:proc or station:proc:hash:schema", entry)
-		}
-		if err := registry.Seed(context.Background(), st, specs...); err != nil {
-			return fmt.Errorf("seed stations: %w", err)
-		}
-		logger.Info().Int("count", len(specs)).Msg("seeded stations")
+		logger.Info().Str("dir", cfg.Storage.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
 	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
+	taskSvc.SetNaming(cfg.Naming)
 
 	var exec executor.Executor
 	execType := cfg.Executor.Type
@@ -143,7 +109,9 @@ func run(args []string) error {
 		Store:             st,
 		Executor:          exec,
 		Resolver:          registry,
-		WorkingRootBase:   cfg.Paths.WorkingRootBase,
+		WorkingRootBase:   cfg.Storage.WorkingRootBase,
+		Naming:            cfg.Naming,
+		Integrity:         cfg.Integrity,
 		InstanceID:        cfg.InstanceID,
 		Facility:          cfg.Facility,
 		RollingArchives:   archivePaths,

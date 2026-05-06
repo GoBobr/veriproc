@@ -24,19 +24,22 @@ type taskHandler struct {
 // --- Wire types (transport-only; do not leak store types to clients) ---
 
 type submitRequest struct {
-	SchemaVersion  string                 `json:"schema_version,omitempty"`
-	IdempotencyKey string                 `json:"idempotency_key,omitempty"`
-	Destination    tasks.Destination      `json:"destination"`
-	Window         tasks.Window           `json:"window"`
-	Force          bool                   `json:"force,omitempty"`
-	Priority       string                 `json:"priority,omitempty"`
-	Parent         *tasks.Parent          `json:"parent,omitempty"`
-	SplitGroupID   string                 `json:"split_group_id,omitempty"`
-	ClientMetadata map[string]any         `json:"client_metadata,omitempty"`
+	SchemaVersion  string            `json:"schema_version,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	Destination    tasks.Destination `json:"destination"`
+	Window         tasks.Window      `json:"window"`
+	Force          bool              `json:"force,omitempty"`
+	Priority       string            `json:"priority,omitempty"`
+	Parent         *tasks.Parent     `json:"parent,omitempty"`
+	SplitGroupID   string            `json:"split_group_id,omitempty"`
+	ClientMetadata map[string]any    `json:"client_metadata,omitempty"`
 }
 
 type taskWire struct {
 	TaskID         string            `json:"task_id"`
+	StationID      string            `json:"station_id,omitempty"`
+	Start          time.Time         `json:"start"`
+	End            time.Time         `json:"end"`
 	Destination    tasks.Destination `json:"destination"`
 	Window         tasks.Window      `json:"window"`
 	Force          bool              `json:"force"`
@@ -184,7 +187,10 @@ func writeTaskErr(w http.ResponseWriter, r *http.Request, err error) {
 
 func toWire(t *store.TaskRecord) taskWire {
 	w := taskWire{
-		TaskID: t.TaskID,
+		TaskID:    t.TaskID,
+		StationID: t.DestinationStationID,
+		Start:     t.WindowStart.UTC(),
+		End:       t.WindowEnd.UTC(),
 		Destination: tasks.Destination{
 			StationID: t.DestinationStationID,
 			ProcType:  t.DestinationProcType,

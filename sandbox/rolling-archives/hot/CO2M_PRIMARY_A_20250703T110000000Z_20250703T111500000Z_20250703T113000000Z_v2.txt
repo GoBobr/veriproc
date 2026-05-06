@@ -1,0 +1,2 @@
+PRIMARY_A fixture version 2 selected by deterministic tie-break
+window: 2025-07-03T11:00:00Z/2025-07-03T11:15:00Z

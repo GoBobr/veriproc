@@ -15,6 +15,27 @@ storage:
   working_root_base: sandbox/data/working-roots
   station_config_root: sandbox/stations
 
+naming:
+  timestamp_format:
+    task_window: compact-utc-millis
+    runtime_event: compact-utc-micros
+  working_root:
+    station_segment: "{station_id}"
+    task_segment: "task-{start}-{created}"
+    run_segment: "run-{created}"
+    collision_suffix: "-{short_run_id}"
+  filenames:
+    allowed_charset: "A-Z a-z 0-9 - _ ."
+    replace_invalid: "_"
+    max_segment_length: 128
+    station_case: preserve
+
+integrity:
+  checksum_policy: available_only
+  allowed_algorithms: [sha256]
+  record_size_when_available: true
+  record_mtime_when_available: true
+
 facility:
   processing_center: SANDBOX
   environment: LOCAL
@@ -23,7 +44,8 @@ facility:
 rolling_archives:
   hot:
     path: sandbox/rolling-archives/hot
-    retention_policy: keep-fixtures
+    retention: keep-fixtures
+    mode: read_write
 
 product_categories:
   - name: product

@@ -12,15 +12,20 @@ scripts:
 inputs:
   - file_type: PRIMARY_A
     category: product
-    pattern: "*PRIMARY_A*"
+    pattern: "CO2M_PRIMARY_A_*.txt"
+    margins: [0, 0]
+    mandatory: true
   - file_type: AUX_A
     category: product
-    pattern: "*AUX_A*"
+    pattern: "CO2M_AUX_A_*.txt"
+    margins: [0, 0]
+    mandatory: true
 outputs:
   - file_type: A_RESULT
     name: result-a.json
-    required: true
-    publish: true
+    mandatory: true
+    publish:
+      rolling_archive: hot
 publication:
   enabled: true
   archive_id: hot

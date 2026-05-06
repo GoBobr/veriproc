@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/eum/veriproc/internal/policy"
 )
 
 // Config is the resolved backend configuration.
@@ -30,7 +32,8 @@ type Config struct {
 	Log               LogConfig                 `yaml:"log"`
 	DB                DBConfig                  `yaml:"db"`
 	Storage           PathsConfig               `yaml:"storage"`
-	Paths             PathsConfig               `yaml:"paths"`
+	Naming            policy.Naming             `yaml:"naming"`
+	Integrity         policy.Integrity          `yaml:"integrity"`
 	Facility          map[string]string         `yaml:"facility"`
 	RollingArchives   map[string]RollingArchive `yaml:"rolling_archives"`
 	ProductCategories []ProductCategory         `yaml:"product_categories"`
@@ -41,7 +44,8 @@ type Config struct {
 // RollingArchive describes a configured archive root (Spec §2.3.1).
 type RollingArchive struct {
 	Path            string `yaml:"path"`
-	RetentionPolicy string `yaml:"retention_policy"`
+	RetentionPolicy string `yaml:"retention"`
+	Mode            string `yaml:"mode"`
 }
 
 // ProductCategory defines the ordered folder search list for an input category.
@@ -103,6 +107,8 @@ func Defaults() Config {
 			Level:  "info",
 			Format: "json",
 		},
+		Naming:    policy.DefaultNaming(),
+		Integrity: policy.DefaultIntegrity(),
 	}
 }
 
@@ -197,9 +203,6 @@ func applyEnv(cfg *Config, env map[string]string) {
 	if v, ok := env["VERIPROC_DB_DSN"]; ok && v != "" {
 		cfg.DB.DSN = v
 	}
-	if v, ok := env["VERIPROC_DSN"]; ok && v != "" {
-		cfg.DB.DSN = v
-	}
 	if v, ok := env["VERIPROC_HTTP_READ_TIMEOUT"]; ok && v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.HTTP.ReadTimeout = d
@@ -216,25 +219,13 @@ func applyEnv(cfg *Config, env map[string]string) {
 		}
 	}
 	if v, ok := env["VERIPROC_WORKING_ROOT_BASE"]; ok && v != "" {
-		cfg.Paths.WorkingRootBase = v
 		cfg.Storage.WorkingRootBase = v
 	}
 	if v, ok := env["VERIPROC_STATION_CONFIG_ROOT"]; ok && v != "" {
-		cfg.Paths.StationConfigRoot = v
-		cfg.Storage.StationConfigRoot = v
-	}
-	if v, ok := env["VERIPROC_STATION_DIR"]; ok && v != "" {
-		cfg.Paths.StationConfigRoot = v
 		cfg.Storage.StationConfigRoot = v
 	}
 	if v, ok := env["VERIPROC_EXECUTOR"]; ok && v != "" {
 		cfg.Executor.Type = v
-	}
-	if v, ok := env["VERIPROC_ARCHIVE_BASE"]; ok && v != "" {
-		if cfg.RollingArchives == nil {
-			cfg.RollingArchives = map[string]RollingArchive{}
-		}
-		cfg.RollingArchives["default"] = RollingArchive{Path: v}
 	}
 }
 
@@ -243,11 +234,12 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.InstanceID) == "" {
 		return errors.New("config: instance_id must not be empty")
 	}
-	if c.Storage.WorkingRootBase != "" {
-		c.Paths.WorkingRootBase = c.Storage.WorkingRootBase
-	}
-	if c.Storage.StationConfigRoot != "" {
-		c.Paths.StationConfigRoot = c.Storage.StationConfigRoot
+	c.Naming = c.Naming.WithDefaults()
+	c.Integrity = c.Integrity.WithDefaults()
+	switch c.Integrity.ChecksumPolicy {
+	case policy.ChecksumAvailableOnly, policy.ChecksumNone, policy.ChecksumRequired:
+	default:
+		return fmt.Errorf("config: integrity.checksum_policy %q invalid", c.Integrity.ChecksumPolicy)
 	}
 	if _, _, err := net.SplitHostPort(c.HTTP.BindAddr); err != nil {
 		return fmt.Errorf("config: http.bind_addr %q invalid: %w", c.HTTP.BindAddr, err)

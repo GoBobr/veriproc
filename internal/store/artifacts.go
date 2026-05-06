@@ -20,6 +20,7 @@ type ArtifactRecord struct {
 	Size             int64
 	Checksum         string
 	ChecksumAlgo     string
+	ChecksumSource   string
 	ValidationStatus string
 	Availability     string // available | missing | unknown
 	CreatedAt        time.Time
@@ -42,12 +43,12 @@ func (r *ArtifactRepo) Insert(ctx context.Context, a *ArtifactRecord) error {
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO artifacts
 			(artifact_id, producing_run_id, logical_type, file_type, path,
-			 size, checksum, checksum_algo, validation_status, availability, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 size, checksum, checksum_algo, checksum_source, validation_status, availability, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ArtifactID, nullStr(a.ProducingRunID), a.LogicalType,
 		nullStr(a.FileType), nullStr(a.Path),
 		nullInt(a.Size), nullStr(a.Checksum), nullStr(a.ChecksumAlgo),
-		nullStr(a.ValidationStatus), a.Availability, a.CreatedAt.UTC())
+		nullStr(a.ChecksumSource), nullStr(a.ValidationStatus), a.Availability, a.CreatedAt.UTC())
 	if err != nil {
 		if r.dialect.IsForeignKeyViolation(err) {
 			return fmt.Errorf("%w: artifact references missing run", ErrConflict)
@@ -91,14 +92,14 @@ func (r *ArtifactRepo) ListByRun(ctx context.Context, runID, logicalType string)
 const artifactSelect = `SELECT artifact_id, COALESCE(producing_run_id,''), logical_type,
 	COALESCE(file_type,''), COALESCE(path,''),
 	COALESCE(size, 0), COALESCE(checksum,''), COALESCE(checksum_algo,''),
-	COALESCE(validation_status,''), availability, created_at
+	COALESCE(checksum_source,''), COALESCE(validation_status,''), availability, created_at
 FROM artifacts`
 
 func scanArtifact(s scanner) (*ArtifactRecord, error) {
 	var a ArtifactRecord
 	if err := s.Scan(&a.ArtifactID, &a.ProducingRunID, &a.LogicalType,
 		&a.FileType, &a.Path, &a.Size, &a.Checksum, &a.ChecksumAlgo,
-		&a.ValidationStatus, &a.Availability, &a.CreatedAt); err != nil {
+		&a.ChecksumSource, &a.ValidationStatus, &a.Availability, &a.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}

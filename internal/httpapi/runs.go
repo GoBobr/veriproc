@@ -27,6 +27,9 @@ type runHandler struct {
 type runWire struct {
 	RunID                   string     `json:"run_id"`
 	TaskID                  string     `json:"task_id"`
+	StationID               string     `json:"station_id,omitempty"`
+	Start                   time.Time  `json:"start"`
+	End                     time.Time  `json:"end"`
 	StationRevisionID       string     `json:"station_revision_id"`
 	State                   string     `json:"state"`          // simplified public state
 	InternalState           string     `json:"internal_state"` // raw lifecycle state
@@ -45,8 +48,8 @@ type runWire struct {
 
 type runDetailWire struct {
 	runWire
-	ActiveJob *jobWire    `json:"active_job,omitempty"`
-	Jobs      []jobWire   `json:"jobs"`
+	ActiveJob *jobWire       `json:"active_job,omitempty"`
+	Jobs      []jobWire      `json:"jobs"`
 	Artifacts []artifactWire `json:"artifacts"`
 }
 
@@ -63,27 +66,28 @@ type jobWire struct {
 }
 
 type artifactWire struct {
-	ArtifactID         string                `json:"artifact_id"`
-	ProducingRunID     string                `json:"producing_run_id"`
-	LogicalType        string                `json:"logical_type"`
-	FileType           string                `json:"file_type,omitempty"`
-	Path               string                `json:"path,omitempty"`
-	Size               int64                 `json:"size,omitempty"`
-	Checksum           string                `json:"checksum,omitempty"`
-	ChecksumAlgo       string                `json:"checksum_algorithm,omitempty"`
-	ValidationStatus   string                `json:"validation_status,omitempty"`
-	Availability       string                `json:"availability"`
-	CreatedAt          time.Time             `json:"created_at"`
-	PublicationSummary *publicationSummary   `json:"publication_summary,omitempty"`
+	ArtifactID         string              `json:"artifact_id"`
+	ProducingRunID     string              `json:"producing_run_id"`
+	LogicalType        string              `json:"logical_type"`
+	FileType           string              `json:"file_type,omitempty"`
+	Path               string              `json:"path,omitempty"`
+	Size               int64               `json:"size,omitempty"`
+	Checksum           string              `json:"checksum,omitempty"`
+	ChecksumAlgo       string              `json:"checksum_algorithm,omitempty"`
+	ChecksumSource     string              `json:"checksum_source,omitempty"`
+	ValidationStatus   string              `json:"validation_status,omitempty"`
+	Availability       string              `json:"availability"`
+	CreatedAt          time.Time           `json:"created_at"`
+	PublicationSummary *publicationSummary `json:"publication_summary,omitempty"`
 }
 
 // publicationSummary surfaces rolling-archive publication state on artifacts
 // (Spec §5.5.6).
 type publicationSummary struct {
-	Publications  []publicationWire `json:"publications"`
-	PublishedCount int              `json:"published_count"`
-	PendingCount   int              `json:"pending_count"`
-	FailedCount    int              `json:"failed_count"`
+	Publications   []publicationWire `json:"publications"`
+	PublishedCount int               `json:"published_count"`
+	PendingCount   int               `json:"pending_count"`
+	FailedCount    int               `json:"failed_count"`
 }
 
 type publicationWire struct {
@@ -92,6 +96,10 @@ type publicationWire struct {
 	TargetPath       string     `json:"target_path"`
 	PublicationMode  string     `json:"publication_mode"`
 	PublicationState string     `json:"publication_state"`
+	Size             int64      `json:"size,omitempty"`
+	Checksum         string     `json:"checksum,omitempty"`
+	ChecksumAlgo     string     `json:"checksum_algorithm,omitempty"`
+	ChecksumSource   string     `json:"checksum_source,omitempty"`
 	FailureReason    string     `json:"failure_reason,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	PublishedAt      *time.Time `json:"published_at,omitempty"`
@@ -116,7 +124,8 @@ func (h *runHandler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	jobs, _ := h.svc.ListJobsForRun(r.Context(), id)
 	arts, _ := h.svc.ListArtifacts(r.Context(), id, "")
-	detail := runDetailWire{runWire: toRunWire(rec)}
+	task, _ := h.svc.GetTask(r.Context(), rec.TaskID)
+	detail := runDetailWire{runWire: toRunWire(rec, task)}
 	for _, j := range jobs {
 		detail.Jobs = append(detail.Jobs, toJobWire(j))
 	}
@@ -197,8 +206,9 @@ func (h *runHandler) list(w http.ResponseWriter, r *http.Request) {
 	if resp.PageSize == 0 {
 		resp.PageSize = 50
 	}
-	for _, r := range page.Items {
-		resp.Items = append(resp.Items, toRunWire(r))
+	for _, rec := range page.Items {
+		task, _ := h.svc.GetTask(r.Context(), rec.TaskID)
+		resp.Items = append(resp.Items, toRunWire(rec, task))
 	}
 	if page.HasMore {
 		resp.NextCursor = encodeCursor(page.NextCreatedAt, page.NextRunID)
@@ -266,6 +276,10 @@ func buildPublicationSummary(pubs []*store.PublicationRecord) *publicationSummar
 			TargetPath:       p.TargetPath,
 			PublicationMode:  p.PublicationMode,
 			PublicationState: p.PublicationState,
+			Size:             p.Size,
+			Checksum:         p.Checksum,
+			ChecksumAlgo:     p.ChecksumAlgo,
+			ChecksumSource:   p.ChecksumSource,
 			FailureReason:    p.FailureReason,
 			CreatedAt:        p.CreatedAt.UTC(),
 			PublishedAt:      nullableTime(p.PublishedAt),
@@ -345,11 +359,11 @@ func (h *runHandler) promote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{
-		"run_id":             out.Run.RunID,
-		"fingerprint_id":     out.FingerprintID,
-		"previous_run_id":    out.PreviousRunID,
-		"already_canonical":  out.AlreadyCanonical,
-		"canonicality":       out.Run.Canonicality,
+		"run_id":            out.Run.RunID,
+		"fingerprint_id":    out.FingerprintID,
+		"previous_run_id":   out.PreviousRunID,
+		"already_canonical": out.AlreadyCanonical,
+		"canonicality":      out.Run.Canonicality,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -401,7 +415,7 @@ func publicState(internal string) string {
 	}
 }
 
-func toRunWire(r *store.RunRecord) runWire {
+func toRunWire(r *store.RunRecord, t *store.TaskRecord) runWire {
 	w := runWire{
 		RunID:                 r.RunID,
 		TaskID:                r.TaskID,
@@ -414,6 +428,11 @@ func toRunWire(r *store.RunRecord) runWire {
 		ProcessingFingerprint: r.ProcessingFingerprint,
 		FailureReason:         r.FailureReason,
 		CreatedAt:             r.CreatedAt.UTC(),
+	}
+	if t != nil {
+		w.StationID = t.DestinationStationID
+		w.Start = t.WindowStart.UTC()
+		w.End = t.WindowEnd.UTC()
 	}
 	w.PreparedAt = nullableTime(r.PreparedAt)
 	w.DispatchedAt = nullableTime(r.DispatchedAt)
@@ -447,6 +466,7 @@ func toArtifactWire(a *store.ArtifactRecord) artifactWire {
 		Size:             a.Size,
 		Checksum:         a.Checksum,
 		ChecksumAlgo:     a.ChecksumAlgo,
+		ChecksumSource:   a.ChecksumSource,
 		ValidationStatus: a.ValidationStatus,
 		Availability:     a.Availability,
 		CreatedAt:        a.CreatedAt.UTC(),

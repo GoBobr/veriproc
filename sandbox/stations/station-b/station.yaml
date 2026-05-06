@@ -13,10 +13,11 @@ inputs:
   - file_type: A_RESULT
     category: product
     pattern: "STATION-A/result-a.json"
+    mandatory: true
 outputs:
   - file_type: B_TRACK
     name: track.csv
-    required: true
+    mandatory: true
 metadata:
   owner: sandbox
   cadence: 15m

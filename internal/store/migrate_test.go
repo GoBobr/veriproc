@@ -23,6 +23,11 @@ func TestMigrate_FreshDB_7_3_2_M1(t *testing.T) {
 		"resolved_input_manifests",
 		"resolved_input_entries",
 		"artifacts",
+		"rolling_archive_publications",
+		"deduplication_records",
+		"canonicality_audit",
+		"split_groups",
+		"split_group_members",
 	}
 	for _, tbl := range wantTables {
 		var name string
@@ -46,8 +51,8 @@ func TestMigrate_Idempotent_M1(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if n != 7 {
-		t.Errorf("schema_migrations rows = %d, want 7", n)
+	if n != 1 {
+		t.Errorf("schema_migrations rows = %d, want 1", n)
 	}
 }
 

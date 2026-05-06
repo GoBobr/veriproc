@@ -20,8 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
 )
@@ -33,10 +32,10 @@ const IdempotencyScope = "tasks.submit"
 // Sentinel errors returned by the Service. Callers (HTTP handlers) translate
 // these into apierr codes and statuses.
 var (
-	ErrInvalidRequest        = errors.New("tasks: invalid request")
-	ErrUnknownStation        = errors.New("tasks: unknown station")
-	ErrIdempotencyConflict   = errors.New("tasks: idempotency conflict")
-	ErrTaskNotFound          = errors.New("tasks: task not found")
+	ErrInvalidRequest      = errors.New("tasks: invalid request")
+	ErrUnknownStation      = errors.New("tasks: unknown station")
+	ErrIdempotencyConflict = errors.New("tasks: idempotency conflict")
+	ErrTaskNotFound        = errors.New("tasks: task not found")
 )
 
 // SubmitInput is the canonical, transport-independent submission payload.
@@ -78,11 +77,12 @@ type SubmitResult struct {
 
 // Service implements the task-submission and query domain.
 type Service struct {
-	store           *store.Store
-	stations        stations.Resolver
-	now             func() time.Time
-	idFactory       func() string
-	idempotencyTTL  time.Duration
+	store          *store.Store
+	stations       stations.Resolver
+	now            func() time.Time
+	idFactory      func() string
+	naming         policy.Naming
+	idempotencyTTL time.Duration
 }
 
 // NewService constructs a Service. now and idFactory are injected for tests;
@@ -91,11 +91,10 @@ func NewService(s *store.Store, r stations.Resolver, now func() time.Time, idFac
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	if idFactory == nil {
-		idFactory = defaultTaskID
-	}
-	return &Service{store: s, stations: r, now: now, idFactory: idFactory, idempotencyTTL: 24 * time.Hour}
+	return &Service{store: s, stations: r, now: now, idFactory: idFactory, naming: policy.DefaultNaming(), idempotencyTTL: 24 * time.Hour}
 }
+
+func (s *Service) SetNaming(n policy.Naming) { s.naming = n.WithDefaults() }
 
 // SetIdempotencyTTL overrides the default 24h retention window for newly
 // inserted idempotency_records (Spec §3.3 retention). A non-positive value
@@ -105,13 +104,11 @@ func (s *Service) SetIdempotencyTTL(d time.Duration) { s.idempotencyTTL = d }
 // IdempotencyTTL reports the currently configured retention window.
 func (s *Service) IdempotencyTTL() time.Duration { return s.idempotencyTTL }
 
-func defaultTaskID() string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		// Fall back to v4; uuid.NewV7 only fails if reading entropy fails.
-		id = uuid.New()
+func (s *Service) newTaskID(now time.Time, window Window) string {
+	if s.idFactory != nil {
+		return s.idFactory()
 	}
-	return "task-" + strings.ReplaceAll(id.String(), "-", "")
+	return policy.GenerateTaskID(s.naming, window.Start, now)
 }
 
 // Submit validates the request, applies idempotency, and persists a new task
@@ -156,8 +153,8 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 		}
 	}
 
-	taskID := s.idFactory()
 	now := s.now().UTC()
+	taskID := s.newTaskID(now, in.Window)
 
 	task := &store.TaskRecord{
 		TaskID:               taskID,

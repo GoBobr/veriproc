@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/canonjson"
+	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
 )
@@ -183,7 +183,6 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord, path 
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(body)
 	return &store.ArtifactRecord{
 		ArtifactID:       "art-" + sha12(run.RunID+":joborder"),
 		ProducingRunID:   run.RunID,
@@ -191,8 +190,6 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord, path 
 		FileType:         "JOB_ORDER",
 		Path:             path,
 		Size:             int64(len(body)),
-		Checksum:         hex.EncodeToString(sum[:]),
-		ChecksumAlgo:     "sha256",
 		ValidationStatus: "validated",
 		Availability:     "available",
 		CreatedAt:        s.clock().UTC(),
@@ -219,20 +216,21 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 			name = out.FileType
 		}
 		path := filepath.Join(dir, name)
-		body, err := os.ReadFile(path)
+		info, err := os.Stat(path)
 		if err != nil {
 			return nil, fmt.Errorf("mandatory output %s missing at %s", out.FileType, path)
 		}
-		sum := sha256.Sum256(body)
+		checksum, algo, source := availableChecksum(path, s.integrity)
 		arts = append(arts, &store.ArtifactRecord{
 			ArtifactID:       "art-" + sha12(run.RunID+":output:"+name),
 			ProducingRunID:   run.RunID,
 			LogicalType:      "output",
 			FileType:         out.FileType,
 			Path:             path,
-			Size:             int64(len(body)),
-			Checksum:         hex.EncodeToString(sum[:]),
-			ChecksumAlgo:     "sha256",
+			Size:             info.Size(),
+			Checksum:         checksum,
+			ChecksumAlgo:     algo,
+			ChecksumSource:   source,
 			ValidationStatus: "validated",
 			Availability:     "available",
 			CreatedAt:        s.clock().UTC(),
@@ -255,7 +253,6 @@ func (s *Service) collectRunLog(run *store.RunRecord) (*store.ArtifactRecord, er
 			return nil, err
 		}
 	}
-	sum := sha256.Sum256(body)
 	return &store.ArtifactRecord{
 		ArtifactID:       "art-" + sha12(run.RunID+":log"),
 		ProducingRunID:   run.RunID,
@@ -263,8 +260,6 @@ func (s *Service) collectRunLog(run *store.RunRecord) (*store.ArtifactRecord, er
 		FileType:         "RUN_LOG",
 		Path:             path,
 		Size:             int64(len(body)),
-		Checksum:         hex.EncodeToString(sum[:]),
-		ChecksumAlgo:     "sha256",
 		ValidationStatus: "validated",
 		Availability:     "available",
 		CreatedAt:        s.clock().UTC(),
@@ -300,16 +295,8 @@ func declaredOutputs(rev *store.StationRevisionRecord) ([]stations.OutputDefinit
 		return nil, nil
 	}
 	var outputs []stations.OutputDefinition
-	if err := json.Unmarshal([]byte(rev.DeclaredOutputs), &outputs); err == nil {
-		return outputs, nil
-	}
-	var names []string
-	if err := json.Unmarshal([]byte(rev.DeclaredOutputs), &names); err != nil {
+	if err := json.Unmarshal([]byte(rev.DeclaredOutputs), &outputs); err != nil {
 		return nil, fmt.Errorf("parse declared_outputs: %w", err)
-	}
-	outputs = make([]stations.OutputDefinition, 0, len(names))
-	for _, name := range names {
-		outputs = append(outputs, stations.OutputDefinition{Name: name, FileType: name, Required: true})
 	}
 	return outputs, nil
 }
@@ -388,7 +375,7 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 			return nil, err
 		}
 		now := s.clock().UTC()
-		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, PublicationMode: policy.Mode, PublicationState: store.PublicationStatePublished, CreatedAt: now, PublishedAt: nullTime(now)})
+		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, PublicationMode: policy.Mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
 	}
 	return records, nil
 }
@@ -424,19 +411,21 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 		return nil, fmt.Errorf("parse downstream: %w", err)
 	}
 	children := make([]*store.TaskRecord, 0, len(routes))
+	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
 		resolved, err := s.resolver.Resolve(ctx, route.StationID, route.ProcType)
 		if err != nil {
 			return nil, fmt.Errorf("resolve downstream: %w", err)
 		}
-		taskID := fmt.Sprintf("task-%s-downstream-%02d-%s", run.RunID, idx, strings.ToLower(resolved.StationID))
+		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
+		taskID := policy.GenerateTaskID(s.naming, parent.WindowStart, created)
 		routing := map[string]any{"schema_version": parent.SchemaVersion, "destination": map[string]any{"station_id": resolved.StationID}, "window": map[string]any{"start": parent.WindowStart.UTC().Format(time.RFC3339Nano), "end": parent.WindowEnd.UTC().Format(time.RFC3339Nano)}, "force": false, "parent": map[string]any{"task_id": parent.TaskID, "run_id": run.RunID}}
 		raw, err := canonjson.Marshal(routing)
 		if err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(raw)
-		children = append(children, &store.TaskRecord{TaskID: taskID, SchemaVersion: parent.SchemaVersion, DestinationStationID: resolved.StationID, WindowStart: parent.WindowStart, WindowEnd: parent.WindowEnd, ParentTaskID: parent.TaskID, ParentRunID: run.RunID, RoutingContent: raw, RoutingContentHash: hex.EncodeToString(sum[:]), SubmissionOrigin: "backend", State: "accepted", CreatedAt: s.clock().UTC()})
+		children = append(children, &store.TaskRecord{TaskID: taskID, SchemaVersion: parent.SchemaVersion, DestinationStationID: resolved.StationID, WindowStart: parent.WindowStart, WindowEnd: parent.WindowEnd, ParentTaskID: parent.TaskID, ParentRunID: run.RunID, RoutingContent: raw, RoutingContentHash: hex.EncodeToString(sum[:]), SubmissionOrigin: "backend", State: "accepted", CreatedAt: created})
 	}
 	return children, nil
 }

@@ -45,7 +45,7 @@ func TestSmoke_StartShutdown_M0(t *testing.T) {
 		"--instance-id", "smoke-test",
 		"--log-level", "warn",
 	)
-	cmd.Env = append(os.Environ(), "VERIPROC_STATION_DIR="+stationRoot)
+	cmd.Env = append(os.Environ(), "VERIPROC_STATION_CONFIG_ROOT="+stationRoot)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 

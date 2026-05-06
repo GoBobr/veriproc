@@ -1,2 +1,0 @@
-AUX_A fixture version 2 selected by lexical tie-break
-calibration: refined

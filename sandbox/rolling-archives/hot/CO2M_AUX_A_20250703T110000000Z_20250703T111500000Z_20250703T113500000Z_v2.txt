@@ -1,0 +1,2 @@
+AUX_A fixture version 2 selected by deterministic tie-break
+calibration: refined

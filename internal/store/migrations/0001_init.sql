@@ -1,9 +1,8 @@
 -- +migrate Up 0001 init
 --
--- Initial schema for VeriProc M1 (core MVP, stub-executor profile).
--- Tables follow Spec Chapter 4. Indexes and constraints listed are the
--- minimum required to support M1–M6; later migrations may add denormalized
--- summary columns or additional secondary indexes.
+-- Authoritative VeriProc baseline schema. This is a clean baseline for the
+-- current specification; superseded model-generation migrations are not kept
+-- in the embedded migration set.
 
 CREATE TABLE station_revisions (
     revision_id     TEXT PRIMARY KEY,
@@ -13,6 +12,12 @@ CREATE TABLE station_revisions (
     label           TEXT,
     effective_at    TIMESTAMP NOT NULL,
     created_at      TIMESTAMP NOT NULL,
+    declared_inputs TEXT NOT NULL DEFAULT '',
+    declared_outputs TEXT NOT NULL DEFAULT '',
+    declared_downstream TEXT NOT NULL DEFAULT '',
+    publication_policy TEXT NOT NULL DEFAULT '',
+    rolling_folders TEXT NOT NULL DEFAULT '',
+    declared_scripts TEXT NOT NULL DEFAULT '',
     UNIQUE (station_id, content_hash)
 );
 
@@ -118,6 +123,8 @@ CREATE TABLE runs (
     dispatched_at         TIMESTAMP,
     started_at            TIMESTAMP,
     terminal_at           TIMESTAMP,
+    cancellation_requested_at TIMESTAMP,
+    reconciliation_started_at TIMESTAMP,
     UNIQUE (task_id, retry_index),
     FOREIGN KEY (task_id) REFERENCES tasks(task_id),
     FOREIGN KEY (station_revision_id) REFERENCES station_revisions(revision_id)
@@ -128,6 +135,8 @@ CREATE INDEX idx_runs_station_revision  ON runs (station_revision_id);
 CREATE INDEX idx_runs_state             ON runs (state);
 CREATE INDEX idx_runs_fingerprint       ON runs (processing_fingerprint);
 CREATE INDEX idx_runs_created_at        ON runs (created_at DESC);
+CREATE INDEX idx_runs_cancel_requested  ON runs (cancellation_requested_at);
+CREATE INDEX idx_runs_reconciliation    ON runs (reconciliation_started_at);
 
 CREATE TABLE jobs (
     job_id            TEXT PRIMARY KEY,
@@ -163,12 +172,19 @@ CREATE TABLE resolved_input_entries (
     optional       INTEGER NOT NULL DEFAULT 0,
     present        INTEGER NOT NULL DEFAULT 0,
     size           INTEGER,
+    mtime          TIMESTAMP,
     checksum       TEXT,
     checksum_algo  TEXT,
+    checksum_source TEXT,
+    source_archive_id TEXT,
+    source_precedence INTEGER,
+    version_metadata TEXT,
+    selection_reason TEXT,
     FOREIGN KEY (manifest_id) REFERENCES resolved_input_manifests(manifest_id)
 );
 
 CREATE INDEX idx_input_entries_manifest ON resolved_input_entries (manifest_id);
+CREATE INDEX idx_input_entries_archive ON resolved_input_entries (source_archive_id);
 
 CREATE TABLE artifacts (
     artifact_id        TEXT PRIMARY KEY,
@@ -179,6 +195,7 @@ CREATE TABLE artifacts (
     size               INTEGER,
     checksum           TEXT,
     checksum_algo      TEXT,
+    checksum_source    TEXT,
     validation_status  TEXT,
     availability       TEXT,
     created_at         TIMESTAMP NOT NULL,
@@ -186,3 +203,107 @@ CREATE TABLE artifacts (
 );
 
 CREATE INDEX idx_artifacts_run ON artifacts (producing_run_id);
+
+CREATE TABLE rolling_archive_publications (
+    publication_id        TEXT PRIMARY KEY,
+    artifact_id           TEXT NOT NULL,
+    producing_run_id      TEXT,
+    archive_id            TEXT NOT NULL,
+    target_path           TEXT NOT NULL,
+    publication_mode      TEXT NOT NULL,
+    publication_state     TEXT NOT NULL,
+    size                  INTEGER,
+    checksum              TEXT,
+    checksum_algo         TEXT,
+    checksum_source       TEXT,
+    failure_reason        TEXT,
+    created_at            TIMESTAMP NOT NULL,
+    published_at          TIMESTAMP,
+    UNIQUE (artifact_id, archive_id, target_path),
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id),
+    FOREIGN KEY (producing_run_id) REFERENCES runs(run_id)
+);
+
+CREATE INDEX idx_publications_artifact ON rolling_archive_publications (artifact_id);
+CREATE INDEX idx_publications_run      ON rolling_archive_publications (producing_run_id);
+CREATE INDEX idx_publications_state    ON rolling_archive_publications (publication_state);
+
+CREATE TABLE deduplication_records (
+    fingerprint_id        TEXT PRIMARY KEY,
+    canonical_run_id      TEXT NOT NULL,
+    superseded_by_run_id  TEXT,
+    promotion_reason      TEXT,
+    created_at            TIMESTAMP NOT NULL,
+    promoted_at           TIMESTAMP,
+    FOREIGN KEY (fingerprint_id) REFERENCES processing_fingerprints(fingerprint_id),
+    FOREIGN KEY (canonical_run_id) REFERENCES runs(run_id)
+);
+
+CREATE INDEX idx_dedup_run ON deduplication_records (canonical_run_id);
+
+CREATE TABLE canonicality_audit (
+    audit_id              TEXT PRIMARY KEY,
+    fingerprint_id        TEXT NOT NULL,
+    previous_run_id       TEXT,
+    new_run_id            TEXT NOT NULL,
+    action                TEXT NOT NULL,
+    reason                TEXT,
+    actor                 TEXT,
+    occurred_at           TIMESTAMP NOT NULL,
+    FOREIGN KEY (fingerprint_id) REFERENCES processing_fingerprints(fingerprint_id),
+    FOREIGN KEY (new_run_id) REFERENCES runs(run_id)
+);
+
+CREATE INDEX idx_canonaudit_fp ON canonicality_audit (fingerprint_id);
+CREATE INDEX idx_canonaudit_at ON canonicality_audit (occurred_at);
+
+CREATE TABLE split_groups (
+    split_group_id   TEXT PRIMARY KEY,
+    label            TEXT,
+    description      TEXT,
+    state            TEXT NOT NULL DEFAULT 'open',
+    expected_members INTEGER,
+    canonical_count  INTEGER NOT NULL DEFAULT 0,
+    failed_count     INTEGER NOT NULL DEFAULT 0,
+    summary          TEXT,
+    created_at       TIMESTAMP NOT NULL,
+    closed_at        TIMESTAMP,
+    aggregated_at    TIMESTAMP
+);
+
+CREATE INDEX idx_split_groups_state ON split_groups (state);
+CREATE INDEX idx_split_groups_created_at ON split_groups (created_at DESC);
+
+CREATE TABLE split_group_members (
+    split_group_id   TEXT NOT NULL,
+    run_id           TEXT NOT NULL,
+    task_id          TEXT NOT NULL,
+    role             TEXT,
+    added_at         TIMESTAMP NOT NULL,
+    PRIMARY KEY (split_group_id, run_id),
+    FOREIGN KEY (split_group_id) REFERENCES split_groups(split_group_id),
+    FOREIGN KEY (run_id) REFERENCES runs(run_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+);
+
+CREATE INDEX idx_sgm_run  ON split_group_members (run_id);
+CREATE INDEX idx_sgm_task ON split_group_members (task_id);
+
+CREATE TABLE api_credentials (
+    credential_id   TEXT PRIMARY KEY,
+    token_hash      TEXT NOT NULL UNIQUE,
+    subject         TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    quota_per_min   INTEGER NOT NULL DEFAULT 600,
+    daily_submit_quota INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP NOT NULL,
+    disabled_at     TIMESTAMP
+);
+
+CREATE TABLE rate_limit_buckets (
+    credential_id TEXT NOT NULL,
+    bucket_key    TEXT NOT NULL,
+    count         INTEGER NOT NULL DEFAULT 0,
+    window_start  TIMESTAMP NOT NULL,
+    PRIMARY KEY (credential_id, bucket_key)
+);

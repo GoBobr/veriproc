@@ -43,18 +43,21 @@ type Execution struct {
 }
 
 type InputDefinition struct {
-	FileType string `yaml:"file_type" json:"file_type"`
-	Category string `yaml:"category" json:"category"`
-	Pattern  string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	FileType  string `yaml:"file_type" json:"file_type"`
+	Category  string `yaml:"category" json:"category"`
+	Pattern   string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Margins   []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
+	Mandatory bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Optional  bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type OutputDefinition struct {
-	Name     string `yaml:"name,omitempty" json:"name,omitempty"`
-	FileType string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
-	Pattern  string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	Required bool   `yaml:"required,omitempty" json:"required,omitempty"`
-	Publish  bool   `yaml:"publish,omitempty" json:"publish,omitempty"`
+	Name      string `yaml:"name,omitempty" json:"name,omitempty"`
+	FileType  string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
+	Pattern   string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Required  bool   `yaml:"required,omitempty" json:"required,omitempty"`
+	Mandatory bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Publish   any    `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
 
 type OutputDefinitions []OutputDefinition
@@ -65,24 +68,20 @@ func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
 	}
 	out := make([]OutputDefinition, 0, len(value.Content))
 	for _, item := range value.Content {
-		switch item.Kind {
-		case yaml.ScalarNode:
-			out = append(out, OutputDefinition{Name: item.Value, FileType: item.Value, Required: true})
-		case yaml.MappingNode:
-			var def OutputDefinition
-			if err := item.Decode(&def); err != nil {
-				return err
-			}
-			if def.Name == "" && def.Pattern == "" {
-				def.Name = def.FileType
-			}
-			if def.FileType == "" {
-				def.FileType = def.Name
-			}
-			out = append(out, def)
-		default:
-			return fmt.Errorf("outputs entries must be strings or mappings")
+		if item.Kind != yaml.MappingNode {
+			return fmt.Errorf("outputs entries must be mappings")
 		}
+		var def OutputDefinition
+		if err := item.Decode(&def); err != nil {
+			return err
+		}
+		if def.Name == "" && def.Pattern == "" {
+			def.Name = def.FileType
+		}
+		if def.FileType == "" {
+			def.FileType = def.Name
+		}
+		out = append(out, def)
 	}
 	*o = out
 	return nil
@@ -244,6 +243,9 @@ func normalizeDefinition(def Definition) Definition {
 		def.Inputs[i].FileType = strings.TrimSpace(def.Inputs[i].FileType)
 		def.Inputs[i].Category = strings.TrimSpace(def.Inputs[i].Category)
 		def.Inputs[i].Pattern = strings.TrimSpace(def.Inputs[i].Pattern)
+		if def.Inputs[i].Mandatory {
+			def.Inputs[i].Optional = false
+		}
 	}
 	for i := range def.Outputs {
 		def.Outputs[i].Name = strings.TrimSpace(def.Outputs[i].Name)
@@ -254,6 +256,9 @@ func normalizeDefinition(def Definition) Definition {
 		}
 		if def.Outputs[i].FileType == "" {
 			def.Outputs[i].FileType = def.Outputs[i].Name
+		}
+		if def.Outputs[i].Mandatory {
+			def.Outputs[i].Required = true
 		}
 		if !def.Outputs[i].Required {
 			def.Outputs[i].Required = true

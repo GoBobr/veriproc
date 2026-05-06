@@ -230,6 +230,11 @@ func TestAPI_TaskGetRoundTrip_5_4_1_M2(t *testing.T) {
 	if out["state"] != "accepted" {
 		t.Errorf("state = %v", out["state"])
 	}
+	for _, key := range []string{"station_id", "start", "end"} {
+		if out[key] == nil || out[key] == "" {
+			t.Errorf("missing readable context field %s in %#v", key, out)
+		}
+	}
 }
 
 // TestAPI_TaskList_Pagination_5_4_2_M2 — returns next_cursor and is consistent

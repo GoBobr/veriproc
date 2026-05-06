@@ -49,15 +49,15 @@ import (
 
 // Spec §6.10 exit codes.
 const (
-	ExitOK             = 0
-	ExitGeneric        = 1
-	ExitUsage          = 2
-	ExitValidation     = 3
-	ExitNotFound       = 4
-	ExitConflict       = 5
-	ExitAuth           = 6
-	ExitUnavailable    = 7
-	ExitIndeterminate  = 8
+	ExitOK            = 0
+	ExitGeneric       = 1
+	ExitUsage         = 2
+	ExitValidation    = 3
+	ExitNotFound      = 4
+	ExitConflict      = 5
+	ExitAuth          = 6
+	ExitUnavailable   = 7
+	ExitIndeterminate = 8
 )
 
 const cliVersion = "0.7.0-m7"
@@ -528,7 +528,7 @@ func (c *client) cmdSubmit(args []string) int {
 	}
 	task, _ := m["task"].(map[string]any)
 	c.renderResource(raw, map[string]any{"task": task, "links": m["links"]},
-		[]string{"task_id", "state", "latest_run_id", "canonical_run_id", "split_group_id"})
+		[]string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "split_group_id"})
 	return ExitOK
 }
 
@@ -545,7 +545,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"task_id", "state", "latest_run_id", "canonical_run_id", "split_group_id", "created_at"})
+		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "split_group_id", "created_at"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"station_id", "proc_type", "state", "split_group_id", "parent_task_id", "limit", "cursor"})
@@ -553,7 +553,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"task_id", "state", "latest_run_id", "canonical_run_id", "created_at"})
+		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "created_at"})
 		return ExitOK
 	default:
 		fmt.Fprintln(c.stderr, "veriproc task {get|list}")
@@ -574,7 +574,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"run_id", "task_id", "state", "canonicality", "retry_index", "created_at"})
+		c.renderResource(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "canonicality", "retry_index", "created_at", "working_root"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
@@ -582,7 +582,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_id", "task_id", "state", "canonicality", "retry_index", "created_at"})
+		c.renderList(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "canonicality", "retry_index", "created_at", "working_root"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
@@ -625,7 +625,7 @@ func (c *client) cmdArtifact(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"artifact_id", "logical_type", "availability", "size", "created_at"})
+		c.renderList(raw, m, []string{"artifact_id", "logical_type", "availability", "size", "checksum_source", "created_at"})
 		return ExitOK
 	default:
 		fmt.Fprintln(c.stderr, "veriproc artifact {list}")

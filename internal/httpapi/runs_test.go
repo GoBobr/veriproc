@@ -122,7 +122,7 @@ func TestAPI_RunGet_5_4_3_5_5_4_M4(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body=%v", resp.StatusCode, body)
 	}
-	required := []string{"run_id", "task_id", "station_revision_id", "state",
+	required := []string{"run_id", "task_id", "station_id", "start", "end", "station_revision_id", "state",
 		"canonicality", "retry_index", "created_at"}
 	for _, k := range required {
 		if _, ok := body[k]; !ok {
