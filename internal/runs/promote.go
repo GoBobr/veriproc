@@ -72,7 +72,7 @@ func (s *Service) PromoteCanonical(ctx context.Context, runID, reason, actor str
 			return err
 		}
 		// Update tasks.canonical_run_id.
-		if err := tx.Tasks().SetCanonicalRun(ctx, run.TaskID, run.RunID, now); err != nil {
+		if err := tx.Tasks().SetCanonicalRun(ctx, run.TaskID, run.RetryIndex, now); err != nil {
 			return err
 		}
 		// Record audit.

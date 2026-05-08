@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"fmt"
 	"testing"
 	"time"
 
@@ -57,10 +58,11 @@ func TestRuns_LocalExecutionJobOrderArchiveDownstream_2_8_2_12_2_13(t *testing.T
 set -eu
 test -n "$VERIPROC_WORKING_ROOT"
 test -n "$VERIPROC_STATION_ID"
-test -n "$VERIPROC_RUN_ID"
+test -n "$VERIPROC_RUN_REF"
 test -n "$VERIPROC_TASK_ID"
+test -n "$VERIPROC_RETRY_INDEX"
 test -f "$VERIPROC_JOBORDER_PATH"
-printf '{"station":"%s","run":"%s"}\n' "$VERIPROC_STATION_ID" "$VERIPROC_RUN_ID" > "$VERIPROC_RUN_DIR/result-a.json"
+printf '{"station":"%s","run_ref":"%s"}\n' "$VERIPROC_STATION_ID" "$VERIPROC_RUN_REF" > "$VERIPROC_RUN_DIR/result-a.json"
 `)
 	scriptB := writeExecutable(t, dir, "station-b.sh", `#!/bin/sh
 set -eu
@@ -70,12 +72,12 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 
 	reg := stations.NewRegistry()
 	if err := reg.Seed(ctx, st,
-		stations.Spec{StationID: "STATION-A", ProcType: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Scripts: map[string]string{"run": scriptA}},
-		stations.Spec{StationID: "STATION-B", ProcType: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
+		stations.Spec{StationID: "STATION-A", StationName: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Scripts: map[string]string{"run": scriptA}},
+		stations.Spec{StationID: "STATION-B", StationName: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tsvc := tasks.NewService(st, reg, nil, func() string { return "task-a" })
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "00000a" })
 	runN := 0
 	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), InstanceID: "test-instance", Facility: map[string]string{"environment": "TEST"}, RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, Generators: map[string]string{"job_order": "test-generator-v1"}, IDFactory: func() string { runN++; return "run-local-" + strconv.Itoa(runN) }})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
@@ -142,7 +144,7 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 		t.Fatalf("published output missing: %v", err)
 	}
 	waitForTaskCount(t, ctx, st, disp, 2)
-	page, _ := st.Tasks().List(ctx, store.ListFilter{ParentRunID: runA.RunID, Limit: 10})
+	page, _ := st.Tasks().List(ctx, store.ListFilter{ParentTaskID: runA.TaskID, Limit: 10})
 	if len(page.Items) != 1 || page.Items[0].DestinationStationID != "STATION-B" {
 		t.Fatalf("downstream tasks = %#v", page.Items)
 	}
@@ -162,10 +164,10 @@ func TestRuns_LocalExecutionMissingOutputFails_5_6_7_5_4(t *testing.T) {
 	}
 	script := writeExecutable(t, dir, "no-output.sh", "#!/bin/sh\nset -eu\necho no output created\n")
 	reg := stations.NewRegistry()
-	if err := reg.Seed(ctx, st, stations.Spec{StationID: "BROKEN", ProcType: "BROKEN", ContentHash: "sha256:broken", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "required.json", FileType: "REQUIRED", Required: true}}, Scripts: map[string]string{"run": script}}); err != nil {
+	if err := reg.Seed(ctx, st, stations.Spec{StationID: "BROKEN", StationName: "BROKEN", ContentHash: "sha256:broken", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "required.json", FileType: "REQUIRED", Required: true}}, Scripts: map[string]string{"run": script}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tsvc := tasks.NewService(st, reg, nil, func() string { return "task-broken" })
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "0b0b0b" })
 	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), IDFactory: func() string { return "run-broken" }})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
 	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "BROKEN"}, Window: tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()}})
@@ -200,7 +202,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatalf("write input: %v", err)
 	}
 	if err := reg.Seed(context.Background(), st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_INPUT", Category: "product"}}},
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_INPUT", Category: "product"}}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -208,7 +210,7 @@ func newFixture(t *testing.T) *fixture {
 	taskN := 0
 	taskIDs := func() string {
 		taskN++
-		return "task-" + strconv.Itoa(taskN)
+		return fmt.Sprintf("%06x", taskN)
 	}
 	runN := 0
 	runIDs := func() string {

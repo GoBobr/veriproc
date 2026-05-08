@@ -23,7 +23,7 @@ const DefaultSchemaVersion = "veriproc.station/v1"
 // loader computes the revision identity from the rest of the definition.
 type Definition struct {
 	StationID      string              `yaml:"station_id" json:"station_id"`
-	ProcType       string              `yaml:"proc_type" json:"proc_type"`
+	StationName    string              `yaml:"station_name" json:"station_name"`
 	SchemaVersion  string              `yaml:"schema_version,omitempty" json:"schema_version"`
 	ContentHash    string              `yaml:"content_hash,omitempty" json:"-"`
 	Description    string              `yaml:"description,omitempty" json:"description,omitempty"`
@@ -89,7 +89,6 @@ func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
 
 type DownstreamTarget struct {
 	StationID string `yaml:"station_id" json:"station_id"`
-	ProcType  string `yaml:"proc_type,omitempty" json:"proc_type,omitempty"`
 }
 
 type PublicationPolicy struct {
@@ -195,7 +194,7 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 	}
 	return Spec{
 		StationID:      def.StationID,
-		ProcType:       def.ProcType,
+		StationName:    def.StationName,
 		ContentHash:    computed,
 		SchemaVersion:  def.SchemaVersion,
 		Inputs:         def.Inputs,
@@ -206,8 +205,8 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 	}, nil
 }
 
-func SpecFromSeed(stationID, procType string) (Spec, error) {
-	return SpecFromDefinition(Definition{StationID: stationID, ProcType: procType})
+func SpecFromSeed(stationID, stationName string) (Spec, error) {
+	return SpecFromDefinition(Definition{StationID: stationID, StationName: stationName})
 }
 
 func ComputeContentHash(def Definition) (string, error) {
@@ -223,7 +222,7 @@ func ComputeContentHash(def Definition) (string, error) {
 
 func normalizeDefinition(def Definition) Definition {
 	def.StationID = strings.TrimSpace(def.StationID)
-	def.ProcType = strings.TrimSpace(def.ProcType)
+	def.StationName = strings.TrimSpace(def.StationName)
 	def.SchemaVersion = strings.TrimSpace(def.SchemaVersion)
 	if def.SchemaVersion == "" {
 		def.SchemaVersion = DefaultSchemaVersion
@@ -269,7 +268,6 @@ func normalizeDefinition(def Definition) Definition {
 	}
 	for i := range def.Downstream {
 		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)
-		def.Downstream[i].ProcType = strings.TrimSpace(def.Downstream[i].ProcType)
 	}
 	def.Publication.ArchiveID = strings.TrimSpace(def.Publication.ArchiveID)
 	def.Publication.Mode = strings.TrimSpace(def.Publication.Mode)
@@ -283,8 +281,8 @@ func validateDefinition(def Definition) error {
 	if def.StationID == "" {
 		return errors.New("station_id must not be empty")
 	}
-	if def.ProcType == "" {
-		return errors.New("proc_type must not be empty")
+	if def.StationName == "" {
+		return errors.New("station_name must not be empty")
 	}
 	if def.SchemaVersion == "" {
 		return errors.New("schema_version must not be empty")
@@ -306,8 +304,8 @@ func validateDefinition(def Definition) error {
 		}
 	}
 	for _, down := range def.Downstream {
-		if down.StationID == "" && down.ProcType == "" {
-			return errors.New("downstream target must define station_id or proc_type")
+		if down.StationID == "" {
+			return errors.New("downstream target must define station_id")
 		}
 	}
 	if def.Publication.Enabled && def.Publication.ArchiveID == "" {

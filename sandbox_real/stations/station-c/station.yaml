@@ -1,5 +1,5 @@
 station_id: STATION-C
-proc_type: AGG_DAILY
+station_name: Daily aggregator
 description: |
   Sandbox station C - daily aggregator. Use with --split-group to exercise
   M7 split-group aggregation across multiple windows.

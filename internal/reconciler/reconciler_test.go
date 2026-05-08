@@ -37,7 +37,7 @@ func newHarness(t *testing.T, clock func() time.Time) *harness {
 	}
 	reg := stations.NewRegistry()
 	if err := reg.Seed(context.Background(), st, stations.Spec{
-		StationID: "STA", ProcType: "P", ContentHash: "sha256:x",
+		StationID: "STA", StationName: "P", ContentHash: "sha256:x",
 		SchemaVersion: "veriproc.station/v1",
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

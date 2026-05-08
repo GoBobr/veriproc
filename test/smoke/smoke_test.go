@@ -87,7 +87,7 @@ func writeSmokeStation(t *testing.T, root string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir station: %v", err)
 	}
-	content := []byte("station_id: SMOKE-STATION\nproc_type: SMOKE_PROC\nscripts:\n  run: ./scripts/run.sh\n")
+	content := []byte("station_id: SMOKE-STATION\nstation_name: Smoke Station\nscripts:\n  run: ./scripts/run.sh\n")
 	if err := os.WriteFile(filepath.Join(dir, "station.yaml"), content, 0o644); err != nil {
 		t.Fatalf("write station: %v", err)
 	}

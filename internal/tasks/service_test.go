@@ -3,6 +3,7 @@ package tasks_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,12 +16,15 @@ import (
 // fixedClock returns a deterministic time source.
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
-// seqIDs returns sequential synthetic task ids.
-func seqIDs(prefix string) func() string {
+// seqIDs returns sequential 6-hex suffix factories suitable for the new task
+// ID grammar: the tasks service now treats the idFactory return value as the
+// HEX6 suffix portion (the station prefix and timestamp are added by
+// policy.GenerateTaskID).
+func seqIDs(_ string) func() string {
 	n := 0
 	return func() string {
 		n++
-		return prefix + "-" + itoa(n)
+		return fmt.Sprintf("%06x", n)
 	}
 }
 
@@ -54,8 +58,8 @@ func newSvc(t *testing.T) (*tasks.Service, *store.Store) {
 	}
 	reg := stations.NewRegistry()
 	if err := reg.Seed(context.Background(), st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
-		stations.Spec{StationID: "INGEST", ProcType: "INGEST", ContentHash: "sha256:ingest", SchemaVersion: "veriproc.station/v1"},
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
+		stations.Spec{StationID: "INGEST", StationName: "INGEST", ContentHash: "sha256:ingest", SchemaVersion: "veriproc.station/v1"},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

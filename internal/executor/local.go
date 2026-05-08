@@ -51,18 +51,21 @@ func (e *LocalExecutor) Type() string { return "local" }
 func (e *LocalExecutor) SupportsCancellation() bool { return false }
 
 // Submit launches the script described by desc.ScriptPath and returns
-// immediately. The script is executed with:
+// immediately. The script is executed with the runtime contract from
+// Spec §3.6.2 / §6.5:
 //
-//	VERIPROC_RUN_DIR        = {WorkingRoot}/output   (where outputs are written)
-//	VERIPROC_RUN_ID         = desc.RunID
+//	VERIPROC_RUN_DIR        = {WorkingRoot}/output
 //	VERIPROC_TASK_ID        = desc.TaskID
+//	VERIPROC_RETRY_INDEX    = desc.RetryIndex (decimal)
+//	VERIPROC_RUN_REF        = desc.RunRef ("<task_id>/r<retry_index>")
 //	VERIPROC_STATION_ID     = desc.StationID
 //	VERIPROC_WORKING_ROOT   = desc.WorkingRoot
 //	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath
-//	VERIPROC_WINDOW_START   = desc.WindowStart  (YYYYMMDDTHHmmSS, UTC, no Z)
-//	VERIPROC_WINDOW_END     = desc.WindowEnd    (YYYYMMDDTHHmmSS, UTC, no Z)
+//	VERIPROC_WINDOW_START   = desc.WindowStart  (YYYYMMDDTHHmmSS, UTC)
+//	VERIPROC_WINDOW_END     = desc.WindowEnd    (YYYYMMDDTHHmmSS, UTC)
 //
-// All other env vars are inherited from the daemon process.
+// VERIPROC_RUN_ID is intentionally NOT exposed: the surrogate run_id is
+// internal-only per Spec §3.6.1.
 func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, error) {
 	if desc.ScriptPath == "" {
 		return "", fmt.Errorf("local executor: ScriptPath is empty for run %s (station has no run script?)", desc.RunID)
@@ -93,8 +96,9 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 		cmd.Dir = desc.WorkingRoot
 		cmd.Env = append(os.Environ(),
 			"VERIPROC_RUN_DIR="+outDir,
-			"VERIPROC_RUN_ID="+desc.RunID,
 			"VERIPROC_TASK_ID="+desc.TaskID,
+			"VERIPROC_RETRY_INDEX="+fmt.Sprintf("%d", desc.RetryIndex),
+			"VERIPROC_RUN_REF="+desc.RunRef,
 			"VERIPROC_STATION_ID="+desc.StationID,
 			"VERIPROC_WORKING_ROOT="+desc.WorkingRoot,
 			"VERIPROC_JOBORDER_PATH="+desc.JobOrderPath,

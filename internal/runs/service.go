@@ -157,7 +157,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 		}
 		return nil, err
 	}
-	rev, err := s.resolver.Resolve(ctx, task.DestinationStationID, task.DestinationProcType)
+	rev, err := s.resolver.Resolve(ctx, task.DestinationStationID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnknownStation, err)
 	}
@@ -177,7 +177,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 
 	runID := s.idFactory()
 	now := s.clock().UTC()
-	workingRoot := s.workingRootPath(rev, task, runID, now)
+	workingRoot := s.workingRootPath(rev, task, runID, retryIndex, now)
 
 	run := &store.RunRecord{
 		RunID:             runID,
@@ -213,7 +213,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 		if err := tx.Runs().MarkPrepared(ctx, runID, fingerprintValue, now); err != nil {
 			return err
 		}
-		return tx.Tasks().SetLatestRun(ctx, taskID, runID)
+		return tx.Tasks().SetLatestRun(ctx, taskID, retryIndex)
 	})
 	if err != nil {
 		return nil, err
@@ -275,6 +275,8 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		JobOrderPath: jobOrderPath,
 		StationID:    rev.StationID,
 		TaskID:       run.TaskID,
+		RetryIndex:   run.RetryIndex,
+		RunRef:       fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
 		Command:      "run",
 		ScriptPath:   scriptPath,
 		WindowStart:  task.WindowStart,
@@ -646,12 +648,13 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 	return files, nil
 }
 
-func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, created time.Time) string {
+func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, retryIndex int, created time.Time) string {
 	// taskValues uses the task's own CreatedAt so that all retries of the same
 	// task share the same task-level directory. runValues uses the run's
 	// creation time for the run-level sub-directory.
 	taskValues := map[string]string{
 		"station_id":   rev.StationID,
+		"task_id":      task.TaskID,
 		"start":        policy.CompactTaskWindow(task.WindowStart),
 		"end":          policy.CompactTaskWindow(task.WindowEnd),
 		"created":      policy.CompactRuntimeEvent(task.CreatedAt),
@@ -659,6 +662,8 @@ func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.
 	}
 	runValues := map[string]string{
 		"station_id":   rev.StationID,
+		"task_id":      task.TaskID,
+		"retry_index":  fmt.Sprintf("%d", retryIndex),
 		"start":        policy.CompactTaskWindow(task.WindowStart),
 		"end":          policy.CompactTaskWindow(task.WindowEnd),
 		"created":      policy.CompactRuntimeEvent(created),

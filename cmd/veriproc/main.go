@@ -478,7 +478,6 @@ func (c *client) cmdSubmit(args []string) int {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	station := fs.String("station", "", "destination station id")
-	procType := fs.String("proc-type", "", "destination proc_type")
 	start := fs.String("start", "", "window start (RFC3339)")
 	end := fs.String("end", "", "window end (RFC3339)")
 	idem := fs.String("idempotency-key", "", "Idempotency-Key")
@@ -488,8 +487,8 @@ func (c *client) cmdSubmit(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
-	if *station == "" && *procType == "" {
-		fmt.Fprintln(c.stderr, "veriproc submit: --station or --proc-type required")
+	if *station == "" {
+		fmt.Fprintln(c.stderr, "veriproc submit: --station is required")
 		return ExitUsage
 	}
 	if *start == "" || *end == "" {
@@ -499,7 +498,6 @@ func (c *client) cmdSubmit(args []string) int {
 	body := map[string]any{
 		"destination": map[string]any{
 			"station_id": *station,
-			"proc_type":  *procType,
 		},
 		"window": map[string]any{
 			"start": *start,
@@ -531,7 +529,7 @@ func (c *client) cmdSubmit(args []string) int {
 	}
 	task, _ := m["task"].(map[string]any)
 	c.renderResource(raw, map[string]any{"task": task, "links": m["links"]},
-		[]string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "split_group_id"})
+		[]string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id"})
 	return ExitOK
 }
 
@@ -548,15 +546,15 @@ func (c *client) cmdTask(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "split_group_id", "created_at"})
+		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id", "created_at"})
 		return ExitOK
 	case "list":
-		q := buildQuery(args, []string{"station_id", "proc_type", "state", "split_group_id", "parent_task_id", "limit", "cursor"})
+		q := buildQuery(args, []string{"station_id", "state", "split_group_id", "parent_task_id", "limit", "cursor"})
 		m, raw, err := c.do(http.MethodGet, "/api/v1/tasks"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_id", "canonical_run_id", "created_at"})
+		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "created_at"})
 		return ExitOK
 	case "retry":
 		if len(args) < 1 {

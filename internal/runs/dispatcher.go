@@ -75,7 +75,7 @@ func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
 		return err
 	}
 	for _, t := range page.Items {
-		if t.LatestRunID != "" {
+		if t.LatestRetryIndex.Valid {
 			continue
 		}
 		if _, err := d.svc.PrepareRun(ctx, t.TaskID); err != nil {

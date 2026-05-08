@@ -13,6 +13,7 @@ func mkStation(t *testing.T, s *Store, id string) string {
 	rev := &StationRevisionRecord{
 		RevisionID:    "rev-" + id,
 		StationID:     id,
+		StationName:   "Name " + id,
 		ContentHash:   "sha256:test-" + id,
 		SchemaVersion: "veriproc.station/v1",
 	}

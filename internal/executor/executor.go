@@ -47,8 +47,12 @@ func (s Status) IsTerminal() bool {
 // time. The lifecycle has already prepared the working root and frozen the
 // input manifest; the executor's job is purely to dispatch.
 type JobDescription struct {
+	// RunID is the internal surrogate, retained for executor bookkeeping
+	// (scheduler IDs, log paths) but NOT exposed to the workload via env.
 	RunID        string
 	TaskID       string
+	RetryIndex   int
+	RunRef       string
 	StationID    string
 	WorkingRoot  string
 	JobOrderPath string

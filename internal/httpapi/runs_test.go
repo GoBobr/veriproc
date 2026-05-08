@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"fmt"
 	"testing"
 	"time"
 
@@ -41,13 +42,13 @@ func newRunAPI(t *testing.T) *runAPI {
 	}
 	reg := stations.NewRegistry()
 	if err := reg.Seed(context.Background(), st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2",
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2",
 			ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	taskN := 0
-	taskIDs := func() string { taskN++; return "task-" + strconv.Itoa(taskN) }
+	taskIDs := func() string { taskN++; return fmt.Sprintf("%06x", taskN) }
 	runN := 0
 	runIDs := func() string { runN++; return "run-" + strconv.Itoa(runN) }
 	now := time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC)
@@ -280,7 +281,8 @@ func TestAPI_ArtifactContent_M4(t *testing.T) {
 }
 
 // TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4 — after finalization the task
-// representation exposes both latest_run_id and canonical_run_id (Spec §5.5.1).
+// representation exposes both latest_retry_index/latest_run_ref and
+// canonical_retry_index/canonical_run_ref (Spec §3.6.1, §5.5.1 updated).
 func TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
@@ -289,11 +291,17 @@ func TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	if body["latest_run_id"] == nil {
-		t.Errorf("missing latest_run_id: %v", body)
+	if body["latest_retry_index"] == nil {
+		t.Errorf("missing latest_retry_index: %v", body)
 	}
-	if body["canonical_run_id"] == nil {
-		t.Errorf("missing canonical_run_id: %v", body)
+	if body["latest_run_ref"] == nil {
+		t.Errorf("missing latest_run_ref: %v", body)
+	}
+	if body["canonical_retry_index"] == nil {
+		t.Errorf("missing canonical_retry_index: %v", body)
+	}
+	if body["canonical_run_ref"] == nil {
+		t.Errorf("missing canonical_run_ref: %v", body)
 	}
 }
 

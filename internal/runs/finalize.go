@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -126,11 +127,11 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		if err := tx.Runs().MarkComplete(ctx, runID, canonicality, now); err != nil {
 			return err
 		}
-		if err := tx.Tasks().SetLatestRun(ctx, run.TaskID, run.RunID); err != nil {
+		if err := tx.Tasks().SetLatestRun(ctx, run.TaskID, run.RetryIndex); err != nil {
 			return err
 		}
 		if canonicality == "canonical" {
-			if err := tx.Tasks().SetCanonicalRun(ctx, run.TaskID, run.RunID, now); err != nil {
+			if err := tx.Tasks().SetCanonicalRun(ctx, run.TaskID, run.RetryIndex, now); err != nil {
 				return err
 			}
 			if err := tx.Tasks().SetState(ctx, run.TaskID, "completed", ""); err != nil {
@@ -402,8 +403,9 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 		"schema_version": "veriproc.joborder/v1",
 		"joborder_id":    "joborder-" + run.RunID,
 		"task_id":        run.TaskID,
-		"run_id":         run.RunID,
-		"station":        map[string]any{"station_id": rev.StationID, "revision": rev.RevisionID},
+		"retry_index":    run.RetryIndex,
+		"run_ref":        fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
+		"station":        map[string]any{"station_id": rev.StationID, "station_name": rev.StationName, "revision": rev.RevisionID},
 		"generator":      generator,
 		"order":          map[string]any{"start": task.WindowStart.UTC().Format(time.RFC3339Nano), "end": task.WindowEnd.UTC().Format(time.RFC3339Nano)},
 		"facility":       s.facility,
@@ -519,19 +521,40 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 	children := make([]*store.TaskRecord, 0, len(routes))
 	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
-		resolved, err := s.resolver.Resolve(ctx, route.StationID, route.ProcType)
+		resolved, err := s.resolver.Resolve(ctx, route.StationID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve downstream: %w", err)
 		}
 		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
-		taskID := policy.GenerateTaskID(s.naming, parent.WindowStart, created)
-		routing := map[string]any{"schema_version": parent.SchemaVersion, "destination": map[string]any{"station_id": resolved.StationID}, "window": map[string]any{"start": parent.WindowStart.UTC().Format(time.RFC3339Nano), "end": parent.WindowEnd.UTC().Format(time.RFC3339Nano)}, "force": false, "parent": map[string]any{"task_id": parent.TaskID, "run_id": run.RunID}}
+		hashSeed := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", run.RunID, resolved.StationID, idx)))
+		hex6 := hex.EncodeToString(hashSeed[:3])
+		taskID := policy.GenerateTaskID(resolved.StationID, created, hex6)
+		routing := map[string]any{
+			"schema_version": parent.SchemaVersion,
+			"destination":    map[string]any{"station_id": resolved.StationID},
+			"window":         map[string]any{"start": parent.WindowStart.UTC().Format(time.RFC3339Nano), "end": parent.WindowEnd.UTC().Format(time.RFC3339Nano)},
+			"force":          false,
+			"parent":         map[string]any{"task_id": parent.TaskID, "retry_index": run.RetryIndex},
+		}
 		raw, err := canonjson.Marshal(routing)
 		if err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(raw)
-		children = append(children, &store.TaskRecord{TaskID: taskID, SchemaVersion: parent.SchemaVersion, DestinationStationID: resolved.StationID, WindowStart: parent.WindowStart, WindowEnd: parent.WindowEnd, ParentTaskID: parent.TaskID, ParentRunID: run.RunID, RoutingContent: raw, RoutingContentHash: hex.EncodeToString(sum[:]), SubmissionOrigin: "backend", State: "accepted", CreatedAt: created})
+		children = append(children, &store.TaskRecord{
+			TaskID:               taskID,
+			SchemaVersion:        parent.SchemaVersion,
+			DestinationStationID: resolved.StationID,
+			WindowStart:          parent.WindowStart,
+			WindowEnd:            parent.WindowEnd,
+			ParentTaskID:         parent.TaskID,
+			ParentRunRetryIndex:  sql.NullInt64{Int64: int64(run.RetryIndex), Valid: true},
+			RoutingContent:       raw,
+			RoutingContentHash:   hex.EncodeToString(sum[:]),
+			SubmissionOrigin:     "backend",
+			State:                "accepted",
+			CreatedAt:            created,
+		})
 	}
 	return children, nil
 }

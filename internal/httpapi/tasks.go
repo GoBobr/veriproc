@@ -36,19 +36,21 @@ type submitRequest struct {
 }
 
 type taskWire struct {
-	TaskID         string            `json:"task_id"`
-	StationID      string            `json:"station_id,omitempty"`
-	Start          time.Time         `json:"start"`
-	End            time.Time         `json:"end"`
-	Destination    tasks.Destination `json:"destination"`
-	Window         tasks.Window      `json:"window"`
-	Force          bool              `json:"force"`
-	State          string            `json:"state"`
-	CreatedAt      time.Time         `json:"created_at"`
-	LatestRunID    *string           `json:"latest_run_id"`
-	CanonicalRunID *string           `json:"canonical_run_id"`
-	Parent         *tasks.Parent     `json:"parent,omitempty"`
-	SplitGroupID   string            `json:"split_group_id,omitempty"`
+	TaskID              string            `json:"task_id"`
+	StationID           string            `json:"station_id,omitempty"`
+	Start               time.Time         `json:"start"`
+	End                 time.Time         `json:"end"`
+	Destination         tasks.Destination `json:"destination"`
+	Window              tasks.Window      `json:"window"`
+	Force               bool              `json:"force"`
+	State               string            `json:"state"`
+	CreatedAt           time.Time         `json:"created_at"`
+	LatestRetryIndex    *int64            `json:"latest_retry_index"`
+	LatestRunRef        *string           `json:"latest_run_ref"`
+	CanonicalRetryIndex *int64            `json:"canonical_retry_index"`
+	CanonicalRunRef     *string           `json:"canonical_run_ref"`
+	Parent              *tasks.Parent     `json:"parent,omitempty"`
+	SplitGroupID        string            `json:"split_group_id,omitempty"`
 }
 
 type submitResponse struct {
@@ -128,10 +130,8 @@ func (h *taskHandler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.ListFilter{
 		DestinationStationID: q.Get("station_id"),
-		DestinationProcType:  q.Get("proc_type"),
 		State:                q.Get("state"),
 		ParentTaskID:         q.Get("parent_task_id"),
-		ParentRunID:          q.Get("parent_run_id"),
 		SplitGroupID:         q.Get("split_group_id"),
 	}
 	if v := q.Get("limit"); v != "" {
@@ -193,7 +193,6 @@ func toWire(t *store.TaskRecord) taskWire {
 		End:       t.WindowEnd.UTC(),
 		Destination: tasks.Destination{
 			StationID: t.DestinationStationID,
-			ProcType:  t.DestinationProcType,
 		},
 		Window: tasks.Window{
 			Start: t.WindowStart.UTC(),
@@ -203,16 +202,26 @@ func toWire(t *store.TaskRecord) taskWire {
 		State:     t.State,
 		CreatedAt: t.CreatedAt.UTC(),
 	}
-	if t.LatestRunID != "" {
-		v := t.LatestRunID
-		w.LatestRunID = &v
+	if t.LatestRetryIndex.Valid {
+		v := t.LatestRetryIndex.Int64
+		w.LatestRetryIndex = &v
+		ref := runRef(t.TaskID, int(v))
+		w.LatestRunRef = &ref
 	}
-	if t.CanonicalRunID != "" {
-		v := t.CanonicalRunID
-		w.CanonicalRunID = &v
+	if t.CanonicalRetryIndex.Valid {
+		v := t.CanonicalRetryIndex.Int64
+		w.CanonicalRetryIndex = &v
+		ref := runRef(t.TaskID, int(v))
+		w.CanonicalRunRef = &ref
 	}
-	if t.ParentTaskID != "" || t.ParentRunID != "" {
-		w.Parent = &tasks.Parent{TaskID: t.ParentTaskID, RunID: t.ParentRunID}
+	if t.ParentTaskID != "" || t.ParentRunRetryIndex.Valid {
+		p := &tasks.Parent{TaskID: t.ParentTaskID}
+		if t.ParentRunRetryIndex.Valid {
+			ri := int(t.ParentRunRetryIndex.Int64)
+			p.RetryIndex = &ri
+			p.RunRef = runRef(t.ParentTaskID, ri)
+		}
+		w.Parent = p
 	}
 	if t.SplitGroupID != "" {
 		w.SplitGroupID = t.SplitGroupID
@@ -220,10 +229,14 @@ func toWire(t *store.TaskRecord) taskWire {
 	return w
 }
 
+func runRef(taskID string, retryIndex int) string {
+	return taskID + "/r" + strconv.Itoa(retryIndex)
+}
+
 func linksFor(taskID string) map[string]string {
 	return map[string]string{
 		"self": "/api/v1/tasks/" + taskID,
-		"runs": "/api/v1/runs?task_id=" + taskID,
+		"runs": "/api/v1/tasks/" + taskID + "/runs",
 	}
 }
 

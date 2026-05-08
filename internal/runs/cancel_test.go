@@ -109,7 +109,7 @@ func TestRuns_CancelUnsupported_5_8_M5(t *testing.T) {
 	}
 	reg := stations.NewRegistry()
 	if err := reg.Seed(context.Background(), f.st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
 	); err != nil {
 		t.Fatalf("reseed: %v", err)
 	}

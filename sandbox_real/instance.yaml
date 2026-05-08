@@ -21,8 +21,8 @@ naming:
     runtime_event: compact-utc-micros
   working_root:
     station_segment: "{station_id}"
-    task_segment: "task-{start}-{created}"
-    run_segment: "run-{created}"
+    task_segment: "{task-id}"
+    run_segment: "r{retry_index}"
     collision_suffix: "-{short_run_id}"
   filenames:
     allowed_charset: "A-Z a-z 0-9 - _ ."

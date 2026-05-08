@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
 		}
 		reg := stations.NewRegistry()
 		if err := reg.Seed(context.Background(), st,
-			stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2",
+			stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2",
 				ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
 		); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -40,7 +41,7 @@ func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
 		taskN := 0
 		runN := 0
 		clk := func() time.Time { return time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC) }
-		ts := tasks.NewService(st, reg, clk, func() string { taskN++; return "task-" + strconv.Itoa(taskN) })
+			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("%06x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
 			Store: st, Executor: exec, Resolver: reg,
@@ -106,7 +107,7 @@ func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5(t *testing.T) {
 		}
 		reg := stations.NewRegistry()
 		if err := reg.Seed(context.Background(), st,
-			stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2",
+			stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2",
 				ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
 		); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -114,7 +115,7 @@ func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5(t *testing.T) {
 		clk := func() time.Time { return time.Date(2025, 7, 3, 12, 0, 0, 0, time.UTC) }
 		taskN := 0
 		runN := 0
-		ts := tasks.NewService(st, reg, clk, func() string { taskN++; return "tk-" + strconv.Itoa(taskN) })
+			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("00%04x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
 			Store: st, Executor: exec, Resolver: reg,

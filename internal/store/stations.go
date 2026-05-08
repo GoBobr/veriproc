@@ -12,9 +12,9 @@ import (
 type StationRevisionRecord struct {
 	RevisionID    string
 	StationID     string
+	StationName   string
 	ContentHash   string
 	SchemaVersion string
-	Label         string
 	EffectiveAt   time.Time
 	CreatedAt     time.Time
 	// DeclaredOutputs is a JSON-encoded []string of output filenames declared
@@ -45,11 +45,11 @@ func (r *StationRevisionRepo) Insert(ctx context.Context, rec *StationRevisionRe
 	}
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO station_revisions
-			(revision_id, station_id, content_hash, schema_version, label, effective_at, created_at,
+			(revision_id, station_id, content_hash, schema_version, station_name, effective_at, created_at,
 			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders, declared_scripts)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.RevisionID, rec.StationID, rec.ContentHash, rec.SchemaVersion,
-		nullStr(rec.Label), rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
+		rec.StationName, rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
 		rec.DeclaredInputs, rec.DeclaredOutputs, rec.DeclaredDownstream,
 		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredScripts)
 	if err != nil {
@@ -76,10 +76,11 @@ func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRe
 	}
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO station_revisions
-			(revision_id, station_id, content_hash, schema_version, label, effective_at, created_at,
+			(revision_id, station_id, content_hash, schema_version, station_name, effective_at, created_at,
 			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders, declared_scripts)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(revision_id) DO UPDATE SET
+			station_name        = excluded.station_name,
 			declared_inputs     = excluded.declared_inputs,
 			declared_outputs    = excluded.declared_outputs,
 			declared_downstream = excluded.declared_downstream,
@@ -87,7 +88,7 @@ func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRe
 			rolling_folders     = excluded.rolling_folders,
 			declared_scripts    = excluded.declared_scripts`,
 		rec.RevisionID, rec.StationID, rec.ContentHash, rec.SchemaVersion,
-		nullStr(rec.Label), rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
+		rec.StationName, rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
 		rec.DeclaredInputs, rec.DeclaredOutputs, rec.DeclaredDownstream,
 		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredScripts)
 	return err
@@ -97,14 +98,14 @@ func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRe
 func (r *StationRevisionRepo) Get(ctx context.Context, revisionID string) (*StationRevisionRecord, error) {
 	row := r.q.QueryRowContext(ctx, `
 		SELECT revision_id, station_id, content_hash, schema_version,
-		       COALESCE(label, ''), effective_at, created_at,
+		       station_name, effective_at, created_at,
 		       COALESCE(declared_inputs, ''), COALESCE(declared_outputs, ''),
 		       COALESCE(declared_downstream, ''), COALESCE(publication_policy, ''),
 		       COALESCE(rolling_folders, ''), COALESCE(declared_scripts, '')
 		FROM station_revisions WHERE revision_id = ?`, revisionID)
 	var rec StationRevisionRecord
 	if err := row.Scan(&rec.RevisionID, &rec.StationID, &rec.ContentHash,
-		&rec.SchemaVersion, &rec.Label, &rec.EffectiveAt, &rec.CreatedAt,
+		&rec.SchemaVersion, &rec.StationName, &rec.EffectiveAt, &rec.CreatedAt,
 		&rec.DeclaredInputs, &rec.DeclaredOutputs, &rec.DeclaredDownstream,
 		&rec.PublicationPolicy, &rec.RollingFolders, &rec.DeclaredScripts); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

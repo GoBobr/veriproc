@@ -7,9 +7,9 @@
 CREATE TABLE station_revisions (
     revision_id     TEXT PRIMARY KEY,
     station_id      TEXT NOT NULL,
+    station_name    TEXT NOT NULL,
     content_hash    TEXT NOT NULL,
     schema_version  TEXT NOT NULL,
-    label           TEXT,
     effective_at    TIMESTAMP NOT NULL,
     created_at      TIMESTAMP NOT NULL,
     declared_inputs TEXT NOT NULL DEFAULT '',
@@ -22,6 +22,7 @@ CREATE TABLE station_revisions (
 );
 
 CREATE INDEX idx_station_revisions_station ON station_revisions (station_id);
+CREATE UNIQUE INDEX uq_station_revisions_name ON station_revisions (station_name);
 
 CREATE TABLE idempotency_records (
     idempotency_record_id TEXT PRIMARY KEY,
@@ -39,13 +40,12 @@ CREATE INDEX idx_idempotency_task ON idempotency_records (task_id);
 CREATE TABLE tasks (
     task_id                  TEXT PRIMARY KEY,
     schema_version           TEXT NOT NULL,
-    destination_station_id   TEXT,
-    destination_proc_type    TEXT,
+    destination_station_id   TEXT NOT NULL,
     window_start             TIMESTAMP NOT NULL,
     window_end               TIMESTAMP NOT NULL,
     force                    INTEGER NOT NULL DEFAULT 0,
     parent_task_id           TEXT,
-    parent_run_id            TEXT,
+    parent_run_retry_index   INTEGER,
     split_group_id           TEXT,
     priority                 TEXT,
     client_metadata          TEXT,        -- JSON-encoded
@@ -54,8 +54,8 @@ CREATE TABLE tasks (
     submission_origin        TEXT NOT NULL, -- 'client' | 'backend'
     state                    TEXT NOT NULL, -- 'accepted' | 'preparing' | ...
     failure_summary          TEXT,
-    latest_run_id            TEXT,
-    canonical_run_id         TEXT,
+    latest_retry_index       INTEGER,
+    canonical_retry_index    INTEGER,
     idempotency_record_id    TEXT,
     created_at               TIMESTAMP NOT NULL,
     completed_at             TIMESTAMP,
@@ -64,14 +64,11 @@ CREATE TABLE tasks (
 );
 
 CREATE INDEX idx_tasks_dest_station ON tasks (destination_station_id);
-CREATE INDEX idx_tasks_proc_type    ON tasks (destination_proc_type);
 CREATE INDEX idx_tasks_state        ON tasks (state);
 CREATE INDEX idx_tasks_window       ON tasks (window_start, window_end);
 CREATE INDEX idx_tasks_created_at   ON tasks (created_at DESC);
 CREATE INDEX idx_tasks_parent_task  ON tasks (parent_task_id);
-CREATE INDEX idx_tasks_parent_run   ON tasks (parent_run_id);
 CREATE INDEX idx_tasks_split_group  ON tasks (split_group_id);
-CREATE INDEX idx_tasks_canonical    ON tasks (canonical_run_id);
 
 CREATE TABLE task_history_entries (
     task_id          TEXT NOT NULL,

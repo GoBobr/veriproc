@@ -14,7 +14,7 @@ import (
 func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 	def := stations.Definition{
 		StationID:   "STATION-A",
-		ProcType:    "SCE_2",
+		StationName: "SCE_2",
 		Description: "demo station",
 		Scripts:     map[string]string{"run": "./scripts/run.sh"},
 		Outputs:     stations.OutputDefinitions{{Name: "result.json", FileType: "RESULT", Required: true}},
@@ -33,12 +33,12 @@ func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 
 func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 	left := stations.Definition{
-		StationID: "STATION-A", ProcType: "SCE_2",
+		StationID: "STATION-A", StationName: "SCE_2",
 		Scripts:  map[string]string{"run": "./scripts/run.sh", "validate": "./scripts/validate.sh"},
 		Metadata: map[string]string{"owner": "science", "tier": "sandbox"},
 	}
 	right := stations.Definition{
-		ProcType: "SCE_2", StationID: "STATION-A",
+		StationName: "SCE_2", StationID: "STATION-A",
 		Metadata: map[string]string{"tier": "sandbox", "owner": "science"},
 		Scripts:  map[string]string{"validate": "./scripts/validate.sh", "run": "./scripts/run.sh"},
 	}
@@ -57,7 +57,7 @@ func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 
 func TestLoader_RejectsMismatchedExplicitHash_M7Refined(t *testing.T) {
 	_, err := stations.SpecFromDefinition(stations.Definition{
-		StationID: "STATION-A", ProcType: "SCE_2", ContentHash: "sha256:wrong",
+		StationID: "STATION-A", StationName: "SCE_2", ContentHash: "sha256:wrong",
 	})
 	if err == nil {
 		t.Fatal("expected mismatch error")
@@ -67,13 +67,13 @@ func TestLoader_RejectsMismatchedExplicitHash_M7Refined(t *testing.T) {
 func TestLoader_LoadsMultipleStationsFromDirectory_M7Refined(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "station-a", `station_id: STATION-A
-proc_type: SCE_2
+station_name: Scenario 2
 description: first
 scripts:
   run: ./scripts/run.sh
 `)
 	writeStation(t, root, "station-b", `station_id: STATION-B
-proc_type: TRACK_L1
+station_name: Track L1
 outputs:
   - file_type: TRACK
     name: track.csv
@@ -88,21 +88,21 @@ outputs:
 	if len(specs) != 2 {
 		t.Fatalf("loaded %d stations, want 2", len(specs))
 	}
-	if _, err := reg.Resolve(context.Background(), "STATION-A", ""); err != nil {
+	if _, err := reg.Resolve(context.Background(), "STATION-A"); err != nil {
 		t.Fatalf("resolve STATION-A: %v", err)
 	}
-	if _, err := reg.Resolve(context.Background(), "", "TRACK_L1"); err != nil {
-		t.Fatalf("resolve TRACK_L1: %v", err)
+	if _, err := reg.Resolve(context.Background(), "STATION-B"); err != nil {
+		t.Fatalf("resolve STATION-B: %v", err)
 	}
 }
 
 func TestLoader_DuplicateStationDetection_M7Refined(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "one", `station_id: DUP
-proc_type: A
+station_name: Alpha
 `)
 	writeStation(t, root, "two", `station_id: DUP
-proc_type: B
+station_name: Beta
 `)
 	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
 	if !errors.Is(err, stations.ErrDuplicateStation) {
@@ -113,7 +113,7 @@ proc_type: B
 func TestRegistry_RejectsConflictingSeedAfterLoad_M7Refined(t *testing.T) {
 	reg := stations.NewRegistry()
 	ctx := context.Background()
-	first, err := stations.SpecFromSeed("STATION-A", "SCE_2")
+	first, err := stations.SpecFromSeed("STATION-A", "Scenario 2")
 	if err != nil {
 		t.Fatalf("seed spec: %v", err)
 	}

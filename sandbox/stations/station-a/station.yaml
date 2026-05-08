@@ -1,5 +1,5 @@
 station_id: STATION-A
-proc_type: SCE_2
+station_name: Scenario 2 ingest
 schema_version: veriproc.station/v1
 description: |
   Sandbox station A selects two rolling-archive inputs, writes a JSON output,

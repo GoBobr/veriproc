@@ -15,12 +15,13 @@ type TaskRecord struct {
 	TaskID                 string
 	SchemaVersion          string
 	DestinationStationID   string
-	DestinationProcType    string
 	WindowStart            time.Time
 	WindowEnd              time.Time
 	Force                  bool
 	ParentTaskID           string
-	ParentRunID            string
+	// ParentRunRetryIndex references the contributing run via task-scoped
+	// composite identity (task_id, retry_index). Spec §3.7 / §3.6.1.
+	ParentRunRetryIndex    sql.NullInt64
 	SplitGroupID           string
 	Priority               string
 	ClientMetadata         json.RawMessage
@@ -29,11 +30,26 @@ type TaskRecord struct {
 	SubmissionOrigin       string // "client" | "backend"
 	State                  string
 	FailureSummary         string
-	LatestRunID            string
-	CanonicalRunID         string
+	// LatestRetryIndex is the retry_index of the most recent run for this
+	// task; nil until a run has been prepared.
+	LatestRetryIndex       sql.NullInt64
+	// CanonicalRetryIndex is the retry_index of the run currently elected
+	// canonical for this task (Spec §3.10).
+	CanonicalRetryIndex    sql.NullInt64
 	IdempotencyRecordID    string
 	CreatedAt              time.Time
 	CompletedAt            sql.NullTime
+
+	// LatestRunID and CanonicalRunID are non-persisted convenience fields
+	// populated by Get/List via JOIN onto runs(task_id, retry_index). They
+	// expose the internal surrogate run_id and exist solely for backend code
+	// that still resolves runs by surrogate (e.g. job/artifact lookups). The
+	// external contract is task-scoped retry_index / run_ref (Spec §3.6.1).
+	LatestRunID    string
+	CanonicalRunID string
+	// ParentRunID is similarly a non-persisted convenience derived from
+	// (parent_task_id, parent_run_retry_index) for backend lookups.
+	ParentRunID string
 }
 
 // TaskRepo persists and queries task records.
@@ -52,25 +68,25 @@ func (r *TaskRepo) Insert(ctx context.Context, t *TaskRecord) error {
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO tasks (
 			task_id, schema_version,
-			destination_station_id, destination_proc_type,
+			destination_station_id,
 			window_start, window_end,
 			force,
-			parent_task_id, parent_run_id, split_group_id,
+			parent_task_id, parent_run_retry_index, split_group_id,
 			priority, client_metadata,
 			routing_content, routing_content_hash,
 			submission_origin, state,
-			failure_summary, latest_run_id, canonical_run_id,
+			failure_summary, latest_retry_index, canonical_retry_index,
 			idempotency_record_id, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TaskID, t.SchemaVersion,
-		nullStr(t.DestinationStationID), nullStr(t.DestinationProcType),
+		t.DestinationStationID,
 		t.WindowStart.UTC(), t.WindowEnd.UTC(),
 		boolInt(t.Force),
-		nullStr(t.ParentTaskID), nullStr(t.ParentRunID), nullStr(t.SplitGroupID),
+		nullStr(t.ParentTaskID), nullableInt(t.ParentRunRetryIndex), nullStr(t.SplitGroupID),
 		nullStr(t.Priority), nullJSON(t.ClientMetadata),
 		string(t.RoutingContent), t.RoutingContentHash,
 		t.SubmissionOrigin, t.State,
-		nullStr(t.FailureSummary), nullStr(t.LatestRunID), nullStr(t.CanonicalRunID),
+		nullStr(t.FailureSummary), nullableInt(t.LatestRetryIndex), nullableInt(t.CanonicalRetryIndex),
 		nullStr(t.IdempotencyRecordID), t.CreatedAt.UTC(), nullTime(t.CompletedAt),
 	)
 	if err != nil {
@@ -89,7 +105,44 @@ func (r *TaskRepo) Get(ctx context.Context, taskID string) (*TaskRecord, error) 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return t, err
+	if err != nil {
+		return t, err
+	}
+	r.populateRunRefs(ctx, t)
+	return t, nil
+}
+
+// populateRunRefs fills the non-persisted LatestRunID / CanonicalRunID
+// convenience fields by looking up the surrogate run_id for the persisted
+// retry_index projections. Errors are ignored (best-effort backend helper).
+func (r *TaskRepo) populateRunRefs(ctx context.Context, t *TaskRecord) {
+	if t == nil {
+		return
+	}
+	if t.LatestRetryIndex.Valid {
+		var id string
+		if err := r.q.QueryRowContext(ctx,
+			`SELECT run_id FROM runs WHERE task_id = ? AND retry_index = ?`,
+			t.TaskID, t.LatestRetryIndex.Int64).Scan(&id); err == nil {
+			t.LatestRunID = id
+		}
+	}
+	if t.CanonicalRetryIndex.Valid {
+		var id string
+		if err := r.q.QueryRowContext(ctx,
+			`SELECT run_id FROM runs WHERE task_id = ? AND retry_index = ?`,
+			t.TaskID, t.CanonicalRetryIndex.Int64).Scan(&id); err == nil {
+			t.CanonicalRunID = id
+		}
+	}
+	if t.ParentTaskID != "" && t.ParentRunRetryIndex.Valid {
+		var id string
+		if err := r.q.QueryRowContext(ctx,
+			`SELECT run_id FROM runs WHERE task_id = ? AND retry_index = ?`,
+			t.ParentTaskID, t.ParentRunRetryIndex.Int64).Scan(&id); err == nil {
+			t.ParentRunID = id
+		}
+	}
 }
 
 // SetState updates the task's state and (optionally) failure summary. No
@@ -109,31 +162,28 @@ func (r *TaskRepo) SetState(ctx context.Context, taskID, state, failureSummary s
 	return nil
 }
 
-// SetLatestRun records the latest run id for a task (Spec §5.6: latest_run
-// follows backend-defined ordering; the service is responsible for ordering).
-func (r *TaskRepo) SetLatestRun(ctx context.Context, taskID, runID string) error {
+// SetLatestRun records the latest run's retry_index for a task.
+func (r *TaskRepo) SetLatestRun(ctx context.Context, taskID string, retryIndex int) error {
 	_, err := r.q.ExecContext(ctx,
-		`UPDATE tasks SET latest_run_id = ? WHERE task_id = ?`, runID, taskID)
+		`UPDATE tasks SET latest_retry_index = ? WHERE task_id = ?`, retryIndex, taskID)
 	return err
 }
 
-// SetCanonicalRun records the canonical run id for a task and stamps
+// SetCanonicalRun records the canonical retry_index for a task and stamps
 // completed_at if not already set.
-func (r *TaskRepo) SetCanonicalRun(ctx context.Context, taskID, runID string, completedAt time.Time) error {
+func (r *TaskRepo) SetCanonicalRun(ctx context.Context, taskID string, retryIndex int, completedAt time.Time) error {
 	_, err := r.q.ExecContext(ctx,
-		`UPDATE tasks SET canonical_run_id = ?,
+		`UPDATE tasks SET canonical_retry_index = ?,
 		 completed_at = COALESCE(completed_at, ?) WHERE task_id = ?`,
-		runID, completedAt.UTC(), taskID)
+		retryIndex, completedAt.UTC(), taskID)
 	return err
 }
 
 // ListFilter constrains List queries. Zero values mean "no filter".
 type ListFilter struct {
 	DestinationStationID string
-	DestinationProcType  string
 	State                string
 	ParentTaskID         string
-	ParentRunID          string
 	SplitGroupID         string
 	Force                *bool
 	CreatedBefore        time.Time
@@ -173,10 +223,6 @@ func (r *TaskRepo) List(ctx context.Context, f ListFilter) (*ListPage, error) {
 		conds = append(conds, "destination_station_id = ?")
 		args = append(args, f.DestinationStationID)
 	}
-	if f.DestinationProcType != "" {
-		conds = append(conds, "destination_proc_type = ?")
-		args = append(args, f.DestinationProcType)
-	}
 	if f.State != "" {
 		conds = append(conds, "state = ?")
 		args = append(args, f.State)
@@ -184,10 +230,6 @@ func (r *TaskRepo) List(ctx context.Context, f ListFilter) (*ListPage, error) {
 	if f.ParentTaskID != "" {
 		conds = append(conds, "parent_task_id = ?")
 		args = append(args, f.ParentTaskID)
-	}
-	if f.ParentRunID != "" {
-		conds = append(conds, "parent_run_id = ?")
-		args = append(args, f.ParentRunID)
 	}
 	if f.SplitGroupID != "" {
 		conds = append(conds, "split_group_id = ?")
@@ -240,6 +282,9 @@ func (r *TaskRepo) List(ctx context.Context, f ListFilter) (*ListPage, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	for _, t := range page.Items {
+		r.populateRunRefs(ctx, t)
+	}
 	if len(page.Items) > f.Limit {
 		page.HasMore = true
 		last := page.Items[f.Limit-1]
@@ -252,20 +297,19 @@ func (r *TaskRepo) List(ctx context.Context, f ListFilter) (*ListPage, error) {
 
 const taskSelectColumns = `SELECT
 	task_id, schema_version,
-	COALESCE(destination_station_id, ''),
-	COALESCE(destination_proc_type, ''),
+	destination_station_id,
 	window_start, window_end,
 	force,
 	COALESCE(parent_task_id, ''),
-	COALESCE(parent_run_id, ''),
+	parent_run_retry_index,
 	COALESCE(split_group_id, ''),
 	COALESCE(priority, ''),
 	COALESCE(client_metadata, ''),
 	routing_content, routing_content_hash,
 	submission_origin, state,
 	COALESCE(failure_summary, ''),
-	COALESCE(latest_run_id, ''),
-	COALESCE(canonical_run_id, ''),
+	latest_retry_index,
+	canonical_retry_index,
 	COALESCE(idempotency_record_id, ''),
 	created_at, completed_at`
 
@@ -283,14 +327,14 @@ func scanTask(s rowScanner) (*TaskRecord, error) {
 	)
 	if err := s.Scan(
 		&t.TaskID, &t.SchemaVersion,
-		&t.DestinationStationID, &t.DestinationProcType,
+		&t.DestinationStationID,
 		&t.WindowStart, &t.WindowEnd,
 		&force,
-		&t.ParentTaskID, &t.ParentRunID, &t.SplitGroupID,
+		&t.ParentTaskID, &t.ParentRunRetryIndex, &t.SplitGroupID,
 		&t.Priority, &clientMd,
 		&routing, &t.RoutingContentHash,
 		&t.SubmissionOrigin, &t.State,
-		&t.FailureSummary, &t.LatestRunID, &t.CanonicalRunID,
+		&t.FailureSummary, &t.LatestRetryIndex, &t.CanonicalRetryIndex,
 		&t.IdempotencyRecordID,
 		&t.CreatedAt, &t.CompletedAt,
 	); err != nil {
@@ -330,4 +374,11 @@ func nullTime(t sql.NullTime) any {
 		return nil
 	}
 	return t.Time.UTC()
+}
+
+func nullableInt(n sql.NullInt64) any {
+	if !n.Valid {
+		return nil
+	}
+	return n.Int64
 }

@@ -92,3 +92,20 @@ func (r *RunRepo) Get(ctx context.Context, runID string) (*RunRecord, error) {
 	rec.CreatedAt = rec.CreatedAt.UTC()
 	return &rec, nil
 }
+
+// GetByTaskRetry returns the run identified by the task-scoped composite
+// (task_id, retry_index). This is the canonical run identity per Spec
+// §3.7. Returns ErrNotFound when no matching row exists.
+func (r *RunRepo) GetByTaskRetry(ctx context.Context, taskID string, retryIndex int) (*RunRecord, error) {
+	var runID string
+	if err := r.q.QueryRowContext(ctx,
+		`SELECT run_id FROM runs WHERE task_id = ? AND retry_index = ?`,
+		taskID, retryIndex).Scan(&runID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return r.Get(ctx, runID)
+}
+

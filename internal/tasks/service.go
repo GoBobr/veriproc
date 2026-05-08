@@ -10,6 +10,7 @@ package tasks
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -53,8 +54,7 @@ type SubmitInput struct {
 
 // Destination identifies a target station.
 type Destination struct {
-	StationID string `json:"station_id,omitempty"`
-	ProcType  string `json:"proc_type,omitempty"`
+	StationID string `json:"station_id"`
 }
 
 // Window is the processing window.
@@ -63,10 +63,14 @@ type Window struct {
 	End   time.Time `json:"end"`
 }
 
-// Parent references an upstream task and (optionally) the contributing run.
+// Parent references an upstream task and (optionally) the contributing run
+// via task-scoped composite identity (task_id, retry_index). Spec §3.6.1.
 type Parent struct {
-	TaskID string `json:"task_id,omitempty"`
-	RunID  string `json:"run_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
+	RetryIndex *int   `json:"retry_index,omitempty"`
+	// RunRef is the readable form "<task_id>/r<retry_index>" provided for
+	// presentation only; not durable identity.
+	RunRef string `json:"run_ref,omitempty"`
 }
 
 // SubmitResult describes the outcome of a SubmitTask call.
@@ -104,11 +108,20 @@ func (s *Service) SetIdempotencyTTL(d time.Duration) { s.idempotencyTTL = d }
 // IdempotencyTTL reports the currently configured retention window.
 func (s *Service) IdempotencyTTL() time.Duration { return s.idempotencyTTL }
 
-func (s *Service) newTaskID(now time.Time, window Window) string {
+func (s *Service) newTaskID(now time.Time, stationID string) string {
+	hex6 := randomHex6()
 	if s.idFactory != nil {
-		return s.idFactory()
+		hex6 = s.idFactory()
 	}
-	return policy.GenerateTaskID(s.naming, window.Start, now)
+	return policy.GenerateTaskID(stationID, now, hex6)
+}
+
+func randomHex6() string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "000000"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // Submit validates the request, applies idempotency, and persists a new task
@@ -119,7 +132,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 		return nil, err
 	}
 
-	rev, err := s.stations.Resolve(ctx, in.Destination.StationID, in.Destination.ProcType)
+	rev, err := s.stations.Resolve(ctx, in.Destination.StationID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownStation, err.Error())
 	}
@@ -154,7 +167,10 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 	}
 
 	now := s.now().UTC()
-	taskID := s.newTaskID(now, in.Window)
+	taskID := s.newTaskID(now, rev.StationID)
+	if err := policy.ValidateTaskID(taskID, rev.StationID); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRequest, err.Error())
+	}
 
 	task := &store.TaskRecord{
 		TaskID:               taskID,
@@ -173,7 +189,9 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 	}
 	if in.Parent != nil {
 		task.ParentTaskID = in.Parent.TaskID
-		task.ParentRunID = in.Parent.RunID
+		if in.Parent.RetryIndex != nil {
+			task.ParentRunRetryIndex = sql.NullInt64{Int64: int64(*in.Parent.RetryIndex), Valid: true}
+		}
 	}
 	if in.SplitGroupID != "" {
 		task.SplitGroupID = in.SplitGroupID
@@ -228,8 +246,8 @@ func (s *Service) List(ctx context.Context, f store.ListFilter) (*store.ListPage
 // validateSubmit enforces the submission rules from Spec §5.3.1–§5.3.4.
 func validateSubmit(in SubmitInput) error {
 	var fields []string
-	if in.Destination.StationID == "" && in.Destination.ProcType == "" {
-		fields = append(fields, "destination: station_id or proc_type required")
+	if strings.TrimSpace(in.Destination.StationID) == "" {
+		fields = append(fields, "destination.station_id required")
 	}
 	if in.Window.Start.IsZero() || in.Window.End.IsZero() {
 		fields = append(fields, "window: start and end required")
@@ -257,19 +275,16 @@ func canonicalRouting(in SubmitInput, rev *store.StationRevisionRecord) (json.Ra
 		},
 		"force": in.Force,
 	}
-	if in.Destination.ProcType != "" {
-		m["destination"].(map[string]any)["proc_type"] = in.Destination.ProcType
-	}
 	if in.Priority != "" {
 		m["priority"] = in.Priority
 	}
-	if in.Parent != nil && (in.Parent.TaskID != "" || in.Parent.RunID != "") {
+	if in.Parent != nil && (in.Parent.TaskID != "" || in.Parent.RetryIndex != nil) {
 		p := map[string]any{}
 		if in.Parent.TaskID != "" {
 			p["task_id"] = in.Parent.TaskID
 		}
-		if in.Parent.RunID != "" {
-			p["run_id"] = in.Parent.RunID
+		if in.Parent.RetryIndex != nil {
+			p["retry_index"] = *in.Parent.RetryIndex
 		}
 		m["parent"] = p
 	}

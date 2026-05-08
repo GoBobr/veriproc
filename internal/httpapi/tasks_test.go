@@ -34,7 +34,7 @@ func newAPI(t *testing.T) (*httptest.Server, *store.Store) {
 	}
 	reg := stations.NewRegistry()
 	if err := reg.Seed(context.Background(), st,
-		stations.Spec{StationID: "SCENE-L2", ProcType: "SCE_2",
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2",
 			ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
 	); err != nil {
 		t.Fatalf("seed: %v", err)

@@ -1,5 +1,5 @@
 station_id: STATION-B
-proc_type: TRACK_L1
+station_name: Track L1 processor
 schema_version: veriproc.station/v1
 description: |
   Sandbox station B consumes STATION-A's published output from the rolling

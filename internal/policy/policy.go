@@ -57,7 +57,7 @@ type Integrity struct {
 func DefaultNaming() Naming {
 	return Naming{
 		TimestampFormat: TimestampFormat{TaskWindow: "compact-utc-millis", RuntimeEvent: "compact-utc-micros"},
-		WorkingRoot:     WorkingRoot{StationSegment: "{station_id}", TaskSegment: "task-{start}-{created}", RunSegment: "run-{created}", CollisionSuffix: "-{short_run_id}"},
+		WorkingRoot:     WorkingRoot{StationSegment: "{station_id}", TaskSegment: "{task_id}", RunSegment: "r{retry_index}", CollisionSuffix: "-{short_run_id}"},
 		Filenames:       Filenames{AllowedCharset: "A-Z a-z 0-9 - _ .", ReplaceInvalid: "_", MaxSegmentLength: 128, StationCase: "preserve"},
 	}
 }
@@ -273,13 +273,59 @@ func milli(t time.Time) string { return t.Format(".000")[1:] }
 
 func micro(t time.Time) string { return t.Format(".000000")[1:] }
 
-func GenerateTaskID(n Naming, start, created time.Time) string {
-	n = n.WithDefaults()
-	segment := expand(n.WorkingRoot.TaskSegment, map[string]string{
-		"start":   CompactTaskWindow(start),
-		"created": CompactRuntimeEvent(created),
-	})
-	return NormalizeSegment(segment, n)
+// TaskIDTimestampLayout is the deterministic format used by GenerateTaskID:
+// YYYYMMDDThhmmssmillis (no separator before millis, no trailing Z).
+const TaskIDTimestampLayout = "20060102T150405"
+
+// taskIDPattern enforces the task ID grammar:
+//
+//	<station_id>-YYYYMMDDThhmmssmillis-HEX6suffix
+//
+// The station_id token is greedy (may contain '-'); the timestamp and 6-hex
+// suffix are anchored on the right and parsed unambiguously by length.
+var taskIDPattern = regexp.MustCompile(`^(.+)-([0-9]{8}T[0-9]{6}[0-9]{3})-([a-f0-9]{6})$`)
+
+// GenerateTaskID emits a task ID following the new spec grammar:
+//
+//	stationid-YYYYMMDDThhmmssmillis-HEX6suffix
+//
+// stationID is mandatory; the suffix must be a six-character lowercase hex
+// string supplied by the caller (for determinism in tests, derive it from a
+// random source or from a hash of the routing payload).
+func GenerateTaskID(stationID string, created time.Time, hex6Suffix string) string {
+	u := created.UTC()
+	ts := u.Format(TaskIDTimestampLayout) + milli(u)
+	return fmt.Sprintf("%s-%s-%s", stationID, ts, hex6Suffix)
+}
+
+// ValidateTaskID enforces the task ID grammar and (when stationID is
+// non-empty) checks that the prefix matches the destination. A bare
+// station_id is not a valid task ID. Returns nil on success.
+func ValidateTaskID(taskID, stationID string) error {
+	if taskID == "" {
+		return fmt.Errorf("task_id must not be empty")
+	}
+	if stationID != "" && taskID == stationID {
+		return fmt.Errorf("task_id %q is the bare station_id; full task_id required", taskID)
+	}
+	m := taskIDPattern.FindStringSubmatch(taskID)
+	if m == nil {
+		return fmt.Errorf("task_id %q does not match grammar stationid-YYYYMMDDThhmmssmillis-HEX6suffix", taskID)
+	}
+	if stationID != "" && m[1] != stationID {
+		return fmt.Errorf("task_id prefix %q does not match destination station_id %q", m[1], stationID)
+	}
+	return nil
+}
+
+// TaskIDStationPrefix returns the operator-readable station prefix encoded in
+// a task ID, or an empty string if taskID does not match the grammar.
+func TaskIDStationPrefix(taskID string) string {
+	m := taskIDPattern.FindStringSubmatch(taskID)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 func ExpandWorkingRootSegment(template string, values map[string]string, n Naming) string {
