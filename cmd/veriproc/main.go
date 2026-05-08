@@ -570,7 +570,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 			}
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "retry_index", "created_at"})
+		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "state", "created_at"})
 		return ExitOK
 	default:
 		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry}")
@@ -580,18 +580,66 @@ func (c *client) cmdTask(sub string, args []string) int {
 
 // --- subcommand: run --------------------------------------------------------
 
+// resolveRunID converts an operator-facing run locator to an internal run_id.
+// It accepts either a raw run_id (e.g. "run-019e078e-...") or a composite
+// task-scoped locator of the form TASK_ID/rN (e.g. "task-abc/r2").
+func (c *client) resolveRunID(arg string) (string, error) {
+	if idx := strings.LastIndex(arg, "/r"); idx > 0 {
+		tail := arg[idx+2:]
+		if allDigits(tail) {
+			taskID := arg[:idx]
+			retryIndex := tail
+			m, _, err := c.do(http.MethodGet, "/api/v1/runs?task_id="+taskID+"&limit=100", nil)
+			if err != nil {
+				return "", err
+			}
+			items, _ := m["items"].([]any)
+			for _, it := range items {
+				run, ok := it.(map[string]any)
+				if !ok {
+					continue
+				}
+				ri := formatCell(run["retry_index"])
+				if ri == retryIndex {
+					if id, ok := run["run_id"].(string); ok && id != "" {
+						return id, nil
+					}
+				}
+			}
+			return "", &apiError{StatusCode: 404, Code: "not_found", Message: "run " + arg + " not found"}
+		}
+	}
+	return arg, nil
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *client) cmdRun(sub string, args []string) int {
 	switch sub {
 	case "get":
 		if len(args) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc run get RUN_ID")
+			fmt.Fprintln(c.stderr, "veriproc run get TASK_ID/rN")
 			return ExitUsage
 		}
-		m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+args[0], nil)
+		runID, err := c.resolveRunID(args[0])
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "canonicality", "retry_index", "created_at", "working_root"})
+		m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+runID, nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "station_id", "start", "end", "state", "canonicality", "created_at", "working_root"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
@@ -599,14 +647,18 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_id", "task_id", "station_id", "start", "end", "state", "canonicality", "retry_index", "created_at", "working_root"})
+		c.renderList(raw, m, []string{"run_ref", "task_id", "retry_index", "state", "canonicality", "working_root", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc run jobs RUN_ID")
+			fmt.Fprintln(c.stderr, "veriproc run jobs TASK_ID/rN")
 			return ExitUsage
 		}
-		m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+args[0]+"/jobs", nil)
+		runID, err := c.resolveRunID(args[0])
+		if err != nil {
+			return c.reportErr(err)
+		}
+		m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+runID+"/jobs", nil)
 		if err != nil {
 			return c.reportErr(err)
 		}
@@ -625,16 +677,20 @@ func (c *client) cmdArtifact(sub string, args []string) int {
 	case "list":
 		fs := flag.NewFlagSet("artifact list", flag.ContinueOnError)
 		fs.SetOutput(c.stderr)
-		runID := fs.String("run", "", "run id")
+		runID := fs.String("run", "", "run locator (TASK_ID/rN or internal run_id)")
 		logical := fs.String("type", "", "logical_type filter")
 		if err := fs.Parse(args); err != nil {
 			return ExitUsage
 		}
 		if *runID == "" {
-			fmt.Fprintln(c.stderr, "veriproc artifact list --run RUN_ID")
+			fmt.Fprintln(c.stderr, "veriproc artifact list --run TASK_ID/rN")
 			return ExitUsage
 		}
-		path := "/api/v1/runs/" + *runID + "/artifacts"
+		resolvedID, err := c.resolveRunID(*runID)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		path := "/api/v1/runs/" + resolvedID + "/artifacts"
 		if *logical != "" {
 			path += "?logical_type=" + *logical
 		}
@@ -654,10 +710,14 @@ func (c *client) cmdArtifact(sub string, args []string) int {
 
 func (c *client) cmdLogs(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(c.stderr, "veriproc logs RUN_ID")
+		fmt.Fprintln(c.stderr, "veriproc logs TASK_ID/rN")
 		return ExitUsage
 	}
-	m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+args[0]+"/logs", nil)
+	runID, err := c.resolveRunID(args[0])
+	if err != nil {
+		return c.reportErr(err)
+	}
+	m, raw, err := c.do(http.MethodGet, "/api/v1/runs/"+runID+"/logs", nil)
 	if err != nil {
 		return c.reportErr(err)
 	}
@@ -675,7 +735,7 @@ func (c *client) cmdCancel(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		fmt.Fprintln(c.stderr, "veriproc cancel [--yes] [--reason TEXT] RUN_ID")
+		fmt.Fprintln(c.stderr, "veriproc cancel [--yes] [--reason TEXT] TASK_ID/rN")
 		return ExitUsage
 	}
 	if !*yes {
@@ -686,7 +746,11 @@ func (c *client) cmdCancel(args []string) int {
 	if *reason != "" {
 		body["reason"] = *reason
 	}
-	m, raw, err := c.do(http.MethodPost, "/api/v1/runs/"+rest[0]+"/cancel", body)
+	runID, err := c.resolveRunID(rest[0])
+	if err != nil {
+		return c.reportErr(err)
+	}
+	m, raw, err := c.do(http.MethodPost, "/api/v1/runs/"+runID+"/cancel", body)
 	if err != nil {
 		var ae *apiError
 		if !errors.As(err, &ae) {
@@ -695,7 +759,7 @@ func (c *client) cmdCancel(args []string) int {
 		}
 		return c.reportErr(err)
 	}
-	c.renderResource(raw, m, []string{"run_id", "state", "accepted", "cancellation_complete"})
+	c.renderResource(raw, m, []string{"state", "accepted", "cancellation_complete"})
 	return ExitOK
 }
 
@@ -709,7 +773,7 @@ func (c *client) cmdPromote(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		fmt.Fprintln(c.stderr, "veriproc promote --reason R --actor A RUN_ID")
+		fmt.Fprintln(c.stderr, "veriproc promote --reason R --actor A TASK_ID/rN")
 		return ExitUsage
 	}
 	if *reason == "" || *actor == "" {
@@ -717,7 +781,11 @@ func (c *client) cmdPromote(args []string) int {
 		return ExitUsage
 	}
 	body := map[string]any{"reason": *reason, "actor": *actor}
-	m, raw, err := c.do(http.MethodPost, "/api/v1/runs/"+rest[0]+"/promote", body)
+	runID, err := c.resolveRunID(rest[0])
+	if err != nil {
+		return c.reportErr(err)
+	}
+	m, raw, err := c.do(http.MethodPost, "/api/v1/runs/"+runID+"/promote", body)
 	if err != nil {
 		var ae *apiError
 		if !errors.As(err, &ae) {
@@ -726,7 +794,7 @@ func (c *client) cmdPromote(args []string) int {
 		}
 		return c.reportErr(err)
 	}
-	c.renderResource(raw, m, []string{"run_id", "canonicality", "previous_run_id"})
+	c.renderResource(raw, m, []string{"canonicality"})
 	return ExitOK
 }
 
@@ -861,13 +929,13 @@ Commands:
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
   task retry    TASK_ID
-  run  get      RUN_ID
+  run  get      TASK_ID/rN
   run  list     [--task TASK_ID] [--state S]
-  run  jobs     RUN_ID
-  artifact list --run RUN_ID [--type LOGICAL]
-  logs          RUN_ID
-  cancel        --yes [--reason TEXT] RUN_ID
-  promote       --reason R --actor A RUN_ID
+  run  jobs     TASK_ID/rN
+  artifact list --run TASK_ID/rN [--type LOGICAL]
+  logs          TASK_ID/rN
+  cancel        --yes [--reason TEXT] TASK_ID/rN
+  promote       --reason R --actor A TASK_ID/rN
   group list    [--state open|aggregating|complete|failed]
   group get     GROUP_ID
   group close   GROUP_ID

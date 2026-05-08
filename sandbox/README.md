@@ -35,7 +35,7 @@ mkdir -p sandbox/data
 ./bin/veriprocd --config sandbox/instance.yaml
 ```
 
-The instance file selects the `local` executor. Station scripts are actually run as OS processes and receive the runtime variables required by the spec, including `VERIPROC_WORKING_ROOT`, `VERIPROC_STATION_ID`, `VERIPROC_RUN_ID`, `VERIPROC_TASK_ID`, and `VERIPROC_JOBORDER_PATH`.
+The instance file selects the `local` executor. Station scripts are actually run as OS processes and receive the runtime variables required by the spec, including `VERIPROC_WORKING_ROOT`, `VERIPROC_STATION_ID`, `VERIPROC_RUN_REF`, `VERIPROC_TASK_ID`, `VERIPROC_RETRY_INDEX`, and `VERIPROC_JOBORDER_PATH`.
 
 In another terminal:
 
@@ -63,10 +63,10 @@ Inspect state:
 ```bash
 ./bin/veriproc task list
 ./bin/veriproc run list --task <task-id>
-./bin/veriproc run get <run-id>
-./bin/veriproc run jobs <run-id>
-./bin/veriproc artifact list --run <run-id>
-./bin/veriproc logs <run-id>
+./bin/veriproc run get <task-id>/r0
+./bin/veriproc run jobs <task-id>/r0
+./bin/veriproc artifact list --run <task-id>/r0
+./bin/veriproc logs <task-id>/r0
 ```
 
 Check the filesystem record:

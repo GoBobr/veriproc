@@ -63,6 +63,66 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		f.cancelHits["run-conflict"]++
 		writeJSON(w, 409, map[string]any{"error": map[string]any{"code": "reconciliation_in_progress", "message": "busy"}})
 	})
+	// runs list/get handlers for composite identity tests
+	mux.HandleFunc("/api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.URL.Query().Get("task_id")
+		sampleRun := map[string]any{
+			"run_id":      "run-internal-001",
+			"run_ref":     "task-1/r0",
+			"task_id":     "task-1",
+			"retry_index": 0,
+			"state":       "complete",
+			"canonicality": "canonical",
+			"working_root": "/data/work/STATION-A/task-1/r0",
+			"created_at":  "2025-07-03T11:00:00Z",
+		}
+		items := []any{}
+		if taskID == "" || taskID == "task-1" {
+			items = append(items, sampleRun)
+			f.runs["run-internal-001"] = sampleRun
+		}
+		writeJSON(w, 200, map[string]any{"items": items, "page_size": 50})
+	})
+	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
+		// Handle /cancel and /promote sub-paths for known runs.
+		if strings.HasSuffix(path, "/cancel") && r.Method == http.MethodPost {
+			id := strings.TrimSuffix(path, "/cancel")
+			if id == "run-internal-001" {
+				writeJSON(w, 200, map[string]any{"run_id": id, "state": "cancelled", "accepted": true, "cancellation_complete": true})
+				return
+			}
+			writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "not_found", "message": "run not found"}})
+			return
+		}
+		if strings.HasSuffix(path, "/promote") && r.Method == http.MethodPost {
+			id := strings.TrimSuffix(path, "/promote")
+			if id == "run-internal-001" {
+				writeJSON(w, 200, map[string]any{"run_id": id, "canonicality": "canonical"})
+				return
+			}
+			writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "not_found", "message": "run not found"}})
+			return
+		}
+		if strings.HasSuffix(path, "/jobs") {
+			writeJSON(w, 200, map[string]any{"items": []any{}})
+			return
+		}
+		if strings.HasSuffix(path, "/logs") {
+			writeJSON(w, 200, map[string]any{"items": []any{}})
+			return
+		}
+		if strings.HasSuffix(path, "/artifacts") {
+			writeJSON(w, 200, map[string]any{"items": []any{}})
+			return
+		}
+		// Direct GET by run_id
+		if run, ok := f.runs[path]; ok {
+			writeJSON(w, 200, run)
+			return
+		}
+		writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "not_found", "message": "run not found"}})
+	})
 	mux.HandleFunc("/api/v1/groups", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"items": []any{
@@ -210,5 +270,109 @@ func TestCLI_OutputFormatYAML_M7(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "split_group_id: g1") {
 		t.Errorf("yaml output missing key: %s", stdout.String())
+	}
+}
+
+// TestCLI_RunList_ShowsRunRef_M10 — run list output must include run_ref and
+// must not surface raw run_id as the primary locator in table output.
+func TestCLI_RunList_ShowsRunRef_M10(t *testing.T) {
+	api := newFakeAPI(t)
+	// table output
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"--api-url", api.server.URL, "--output", "table",
+		"run", "list",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("run list exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	// Table header must contain RUN REF (from run_ref column), not RUN ID.
+	if !strings.Contains(out, "RUN REF") {
+		t.Errorf("run list table should have RUN REF header; got:\n%s", out)
+	}
+	if strings.Contains(out, "RUN ID") {
+		t.Errorf("run list table must not foreground RUN ID header; got:\n%s", out)
+	}
+	// Must contain the run_ref value.
+	if !strings.Contains(out, "task-1/r0") {
+		t.Errorf("run list should show run_ref value task-1/r0; got:\n%s", out)
+	}
+}
+
+// TestCLI_RunList_JSON_ShowsRunRef_M10 — run list JSON output includes run_ref.
+func TestCLI_RunList_JSON_ShowsRunRef_M10(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "run", "list")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "run_ref") {
+		t.Errorf("JSON output missing run_ref field: %s", out)
+	}
+	if !strings.Contains(out, "task-1/r0") {
+		t.Errorf("JSON output missing run_ref value: %s", out)
+	}
+}
+
+// TestCLI_RunGet_CompositeIdentity_M10 — run get TASK_ID/rN resolves via list.
+func TestCLI_RunGet_CompositeIdentity_M10(t *testing.T) {
+	api := newFakeAPI(t)
+	// Pre-populate the runs map so direct GET by run_id works after resolution.
+	api.runs["run-internal-001"] = map[string]any{
+		"run_id":       "run-internal-001",
+		"run_ref":      "task-1/r0",
+		"task_id":      "task-1",
+		"retry_index":  float64(0),
+		"state":        "complete",
+		"canonicality": "canonical",
+		"working_root": "/data/work/STATION-A/task-1/r0",
+		"created_at":   "2025-07-03T11:00:00Z",
+	}
+	code, out, errs := runCLI(t, api.server.URL, "run", "get", "task-1/r0")
+	if code != ExitOK {
+		t.Fatalf("run get exit = %d (stderr=%s)", code, errs)
+	}
+	// JSON output must contain run_ref and the task_id/r0 composite locator.
+	if !strings.Contains(out, "run_ref") {
+		t.Errorf("output missing run_ref field: %s", out)
+	}
+	if !strings.Contains(out, "task-1/r0") {
+		t.Errorf("output missing composite run locator value: %s", out)
+	}
+	// Raw run_id must still be present in the JSON (internal field), but it's
+	// not the primary operator-facing identifier shown in the table rendering.
+	if !strings.Contains(out, "run-internal-001") {
+		t.Errorf("output should still carry internal run_id for traceability: %s", out)
+	}
+}
+
+// TestCLI_RunGet_MissingArg_M10 — run get with no arg returns usage error.
+func TestCLI_RunGet_MissingArg_M10(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, _ := runCLI(t, api.server.URL, "run", "get")
+	if code != ExitUsage {
+		t.Errorf("exit = %d, want %d", code, ExitUsage)
+	}
+}
+
+// TestCLI_Cancel_CompositeIdentity_M10 — cancel accepts TASK_ID/rN locator.
+func TestCLI_Cancel_CompositeIdentity_M10(t *testing.T) {
+	api := newFakeAPI(t)
+	api.runs["run-internal-001"] = map[string]any{
+		"run_id":       "run-internal-001",
+		"run_ref":      "task-1/r0",
+		"task_id":      "task-1",
+		"retry_index":  float64(0),
+		"state":        "running",
+		"canonicality": "pending",
+		"created_at":   "2025-07-03T11:00:00Z",
+	}
+	code, out, errs := runCLI(t, api.server.URL, "cancel", "--yes", "task-1/r0")
+	if code != ExitOK {
+		t.Fatalf("cancel exit = %d (stderr=%s out=%s)", code, errs, out)
+	}
+	if !strings.Contains(out, "cancelled") {
+		t.Errorf("expected cancelled state in output: %s", out)
 	}
 }

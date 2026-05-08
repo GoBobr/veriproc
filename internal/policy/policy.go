@@ -25,6 +25,7 @@ type TimestampFormat struct {
 }
 
 type WorkingRoot struct {
+	PathTemplate    string `yaml:"path_template"`
 	StationSegment  string `yaml:"station_segment"`
 	TaskSegment     string `yaml:"task_segment"`
 	RunSegment      string `yaml:"run_segment"`
@@ -57,8 +58,14 @@ type Integrity struct {
 func DefaultNaming() Naming {
 	return Naming{
 		TimestampFormat: TimestampFormat{TaskWindow: "compact-utc-millis", RuntimeEvent: "compact-utc-micros"},
-		WorkingRoot:     WorkingRoot{StationSegment: "{station_id}", TaskSegment: "{task_id}", RunSegment: "r{retry_index}", CollisionSuffix: "-{short_run_id}"},
-		Filenames:       Filenames{AllowedCharset: "A-Z a-z 0-9 - _ .", ReplaceInvalid: "_", MaxSegmentLength: 128, StationCase: "preserve"},
+		WorkingRoot: WorkingRoot{
+			PathTemplate:    "{station}/{task}/{run}",
+			StationSegment:  "{station_id}",
+			TaskSegment:     "{task_id}",
+			RunSegment:      "r{retry_index}",
+			CollisionSuffix: "-{short_run_id}",
+		},
+		Filenames: Filenames{AllowedCharset: "A-Z a-z 0-9 - _ .", ReplaceInvalid: "_", MaxSegmentLength: 128, StationCase: "preserve"},
 	}
 }
 
@@ -73,6 +80,9 @@ func (n Naming) WithDefaults() Naming {
 	}
 	if n.TimestampFormat.RuntimeEvent == "" {
 		n.TimestampFormat.RuntimeEvent = d.TimestampFormat.RuntimeEvent
+	}
+	if n.WorkingRoot.PathTemplate == "" {
+		n.WorkingRoot.PathTemplate = d.WorkingRoot.PathTemplate
 	}
 	if n.WorkingRoot.StationSegment == "" {
 		n.WorkingRoot.StationSegment = d.WorkingRoot.StationSegment
@@ -367,3 +377,51 @@ func expand(template string, values map[string]string) string {
 }
 
 var invalidSegmentChars = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+
+// placeholderPattern matches all {xxx} tokens in a template string.
+var placeholderPattern = regexp.MustCompile(`\{([^}]*)\}`)
+
+// ValidatePathTemplate validates that a working-root path_template is
+// acceptable: relative, uses only supported placeholders, and produces no
+// dot-segment or empty path components after a dummy expansion.
+func ValidatePathTemplate(tmpl string) error {
+	if strings.TrimSpace(tmpl) == "" {
+		return fmt.Errorf("path_template must not be empty")
+	}
+	if strings.HasPrefix(tmpl, "/") {
+		return fmt.Errorf("path_template must be relative, not absolute: %q", tmpl)
+	}
+	// Only {station}, {task}, {run} are supported.
+	for _, m := range placeholderPattern.FindAllStringSubmatch(tmpl, -1) {
+		switch m[1] {
+		case "station", "task", "run":
+			// supported
+		default:
+			return fmt.Errorf("path_template contains unsupported placeholder %q; supported: {station}, {task}, {run}", m[0])
+		}
+	}
+	// Expand with safe dummy values and validate the resulting path structure.
+	dummy := ExpandWorkingRootTemplate(tmpl, "s", "t", "r")
+	parts := strings.Split(dummy, "/")
+	for _, p := range parts {
+		if p == "" {
+			return fmt.Errorf("path_template %q produces empty path component after expansion", tmpl)
+		}
+		if p == "." || p == ".." {
+			return fmt.Errorf("path_template %q produces dot-segment component after expansion", tmpl)
+		}
+	}
+	return nil
+}
+
+// ExpandWorkingRootTemplate expands the three supported placeholders
+// {station}, {task}, and {run} in the path template with the pre-normalized
+// segment strings.
+func ExpandWorkingRootTemplate(tmpl, stationSeg, taskSeg, runSeg string) string {
+	r := strings.NewReplacer(
+		"{station}", stationSeg,
+		"{task}", taskSeg,
+		"{run}", runSeg,
+	)
+	return r.Replace(tmpl)
+}

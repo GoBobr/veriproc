@@ -46,6 +46,11 @@ var (
 	// the reconciler currently holds soft ownership of the run (Spec §3.13 /
 	// §7.8). The HTTP layer maps this to 409 reconciliation_in_progress.
 	ErrReconciliationInProgress = errors.New("runs: reconciliation in progress")
+	// ErrFatalPrepare is returned by PrepareRun when the failure is permanent
+	// and the task must not be retried automatically. The dispatcher uses this
+	// to transition the task to "failed" instead of looping indefinitely.
+	// Examples: mandatory input not found, working root cannot be created.
+	ErrFatalPrepare = errors.New("runs: fatal preparation error")
 )
 
 // Service drives the run lifecycle. It is safe for concurrent use; per-run
@@ -191,12 +196,12 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	}
 
 	if err := materializeWorkingRoot(workingRoot); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
 	}
 	manifest, err := s.resolveManifest(ctx, runID, task, rev, workingRoot)
 	if err != nil {
 		_ = os.RemoveAll(workingRoot)
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
 	}
 	fingerprintValue := computeFingerprint(rev, manifest, task.Force)
 
@@ -650,8 +655,8 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 
 func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, retryIndex int, created time.Time) string {
 	// taskValues uses the task's own CreatedAt so that all retries of the same
-	// task share the same task-level directory. runValues uses the run's
-	// creation time for the run-level sub-directory.
+	// task share the same task-level segment. runValues uses the run's
+	// creation time for the run-level segment.
 	taskValues := map[string]string{
 		"station_id":   rev.StationID,
 		"task_id":      task.TaskID,
@@ -672,12 +677,28 @@ func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.
 	station := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.StationSegment, taskValues, s.naming)
 	taskSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.TaskSegment, taskValues, s.naming)
 	runSegment := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.RunSegment, runValues, s.naming)
-	path := filepath.Join(s.workingRootBase, station, taskSegment, runSegment)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return path
+
+	// Expand path template with the normalized segment values.
+	tmpl := s.naming.WorkingRoot.PathTemplate
+	relative := policy.ExpandWorkingRootTemplate(tmpl, station, taskSegment, runSegment)
+	relative = filepath.Clean(relative)
+
+	// Containment safety: if the cleaned relative path escapes the base
+	// (e.g. due to a misconfigured template), fall back to a safe nested layout.
+	if relative == ".." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
+		relative = filepath.Join(station, taskSegment, runSegment)
 	}
+
+	full := filepath.Join(s.workingRootBase, relative)
+	if _, err := os.Stat(full); errors.Is(err, os.ErrNotExist) {
+		return full
+	}
+	// Collision disambiguation: append suffix to the final expanded path
+	// component only, preserving all readable tokens in their original order.
 	suffix := policy.ExpandWorkingRootSegment(s.naming.WorkingRoot.CollisionSuffix, runValues, s.naming)
-	return filepath.Join(s.workingRootBase, station, taskSegment, runSegment+suffix)
+	dir := filepath.Dir(full)
+	base := filepath.Base(full)
+	return filepath.Join(dir, base+suffix)
 }
 
 func (s *Service) resolveFolderRef(ref string) (string, string, error) {

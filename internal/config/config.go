@@ -236,6 +236,9 @@ func (c *Config) Validate() error {
 	}
 	c.Naming = c.Naming.WithDefaults()
 	c.Integrity = c.Integrity.WithDefaults()
+	if err := policy.ValidatePathTemplate(c.Naming.WorkingRoot.PathTemplate); err != nil {
+		return fmt.Errorf("config: naming.working_root.%w", err)
+	}
 	switch c.Integrity.ChecksumPolicy {
 	case policy.ChecksumAvailableOnly, policy.ChecksumNone, policy.ChecksumRequired:
 	default:

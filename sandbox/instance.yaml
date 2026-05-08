@@ -20,9 +20,10 @@ naming:
     task_window: compact-utc-millis
     runtime_event: compact-utc-micros
   working_root:
+    path_template: "{station}/{task}/{run}"
     station_segment: "{station_id}"
-    task_segment: "task-{start}-{created}"
-    run_segment: "run-{created}"
+    task_segment: "{task_id}"
+    run_segment: "r{retry_index}"
     collision_suffix: "-{short_run_id}"
   filenames:
     allowed_charset: "A-Z a-z 0-9 - _ ."

@@ -30,6 +30,7 @@ const (
 	CodeCancellationUnsupported Code = "cancellation_unsupported"
 	CodeReconciliationInProgress Code = "reconciliation_in_progress"
 	CodeDependencyUnavailable  Code = "dependency_unavailable"
+	CodeInputUnavailable       Code = "input_unavailable"
 	CodeUnauthenticated        Code = "unauthenticated"
 	CodeUnauthorized           Code = "unauthorized"
 	CodeQuotaExceeded          Code = "quota_exceeded"

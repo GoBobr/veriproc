@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -26,6 +27,7 @@ type runHandler struct {
 
 type runWire struct {
 	RunID                   string     `json:"run_id"`
+	RunRef                  string     `json:"run_ref"`
 	TaskID                  string     `json:"task_id"`
 	StationID               string     `json:"station_id,omitempty"`
 	Start                   time.Time  `json:"start"`
@@ -429,6 +431,7 @@ func publicState(internal string) string {
 func toRunWire(r *store.RunRecord, t *store.TaskRecord) runWire {
 	w := runWire{
 		RunID:                 r.RunID,
+		RunRef:                fmt.Sprintf("%s/r%d", r.TaskID, r.RetryIndex),
 		TaskID:                r.TaskID,
 		StationRevisionID:     r.StationRevisionID,
 		State:                 publicState(r.State),
@@ -512,6 +515,8 @@ func writeRunErr(w http.ResponseWriter, r *http.Request, err error) {
 		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, err.Error())
 	case errors.Is(err, runs.ErrRetryIneligible):
 		apierr.Write(w, r, http.StatusConflict, apierr.CodeInvalidStateTransition, err.Error())
+	case errors.Is(err, runs.ErrFatalPrepare):
+		apierr.Write(w, r, http.StatusUnprocessableEntity, apierr.CodeInputUnavailable, err.Error())
 	default:
 		apierr.Write(w, r, http.StatusInternalServerError, apierr.CodeInternal, "internal error")
 	}

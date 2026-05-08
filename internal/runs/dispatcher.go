@@ -86,6 +86,13 @@ func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
 				Time("window_end", t.WindowEnd).
 				Err(err).
 				Msg("prepare run failed")
+			if errors.Is(err, ErrFatalPrepare) {
+				if ferr := d.svc.store.Tasks().SetState(ctx, t.TaskID, "failed", err.Error()); ferr != nil {
+					d.logger.Error().Str("task_id", t.TaskID).Err(ferr).Msg("could not mark task failed after fatal prepare error")
+				} else {
+					d.logger.Error().Str("task_id", t.TaskID).Err(err).Msg("task failed due to fatal prepare error")
+				}
+			}
 		}
 	}
 	return nil
