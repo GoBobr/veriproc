@@ -45,6 +45,7 @@ type Execution struct {
 type InputDefinition struct {
 	FileType        string `yaml:"file_type" json:"file_type"`
 	Category        string `yaml:"category" json:"category"`
+	ObjectKind      string `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
 	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
 	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
 	WindowMatch     string `yaml:"window_match,omitempty" json:"window_match,omitempty"`
@@ -56,6 +57,7 @@ type InputDefinition struct {
 type OutputDefinition struct {
 	Name            string `yaml:"name,omitempty" json:"name,omitempty"`
 	FileType        string `yaml:"file_type,omitempty" json:"file_type,omitempty"`
+	ObjectKind      string `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
 	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
 	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
 	Required        bool   `yaml:"required,omitempty" json:"required,omitempty"`
@@ -242,6 +244,7 @@ func normalizeDefinition(def Definition) Definition {
 	for i := range def.Inputs {
 		def.Inputs[i].FileType = strings.TrimSpace(def.Inputs[i].FileType)
 		def.Inputs[i].Category = strings.TrimSpace(def.Inputs[i].Category)
+		def.Inputs[i].ObjectKind = strings.TrimSpace(strings.ToLower(def.Inputs[i].ObjectKind))
 		def.Inputs[i].Pattern = strings.TrimSpace(def.Inputs[i].Pattern)
 		if def.Inputs[i].Mandatory {
 			def.Inputs[i].Optional = false
@@ -250,6 +253,7 @@ func normalizeDefinition(def Definition) Definition {
 	for i := range def.Outputs {
 		def.Outputs[i].Name = strings.TrimSpace(def.Outputs[i].Name)
 		def.Outputs[i].FileType = strings.TrimSpace(def.Outputs[i].FileType)
+		def.Outputs[i].ObjectKind = strings.TrimSpace(strings.ToLower(def.Outputs[i].ObjectKind))
 		def.Outputs[i].Pattern = strings.TrimSpace(def.Outputs[i].Pattern)
 		// Name is intentionally NOT defaulted to FileType: when neither Name
 		// nor Pattern is set, resolveOutputPath falls through to filename-pattern
@@ -294,10 +298,16 @@ func validateDefinition(def Definition) error {
 		if input.Category == "" {
 			return fmt.Errorf("input %s category must not be empty", input.FileType)
 		}
+		if !validObjectKind(input.ObjectKind) {
+			return fmt.Errorf("input %s object_kind must be regular_file or directory", input.FileType)
+		}
 	}
 	for _, out := range def.Outputs {
 		if out.FileType == "" {
 			return errors.New("output file_type must not be empty")
+		}
+		if !validObjectKind(out.ObjectKind) {
+			return fmt.Errorf("output %s object_kind must be regular_file or directory", out.FileType)
 		}
 		if out.Name == "" && out.Pattern == "" && out.FileType == "" {
 			return errors.New("output must define file_type, name, or pattern")
@@ -312,4 +322,13 @@ func validateDefinition(def Definition) error {
 		return errors.New("publication archive_id must not be empty when enabled")
 	}
 	return nil
+}
+
+func validObjectKind(kind string) bool {
+	switch kind {
+	case "", "regular_file", "directory":
+		return true
+	default:
+		return false
+	}
 }

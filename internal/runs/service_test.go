@@ -3,10 +3,10 @@ package runs_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
-	"fmt"
 	"testing"
 	"time"
 
@@ -149,6 +149,83 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 		t.Fatalf("downstream tasks = %#v", page.Items)
 	}
 	waitForTaskState(t, ctx, st, disp, page.Items[0].TaskID, "completed")
+}
+
+func TestRuns_DirectoryInputsOutputsAndPublication(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "dirs.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	inputDir := filepath.Join(archive, "20250703_AUX_DIR_v1")
+	if err := os.MkdirAll(inputDir, 0o755); err != nil {
+		t.Fatalf("mkdir input dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "data.nc"), []byte("aux directory payload\n"), 0o644); err != nil {
+		t.Fatalf("write input dir payload: %v", err)
+	}
+
+	script := writeExecutable(t, dir, "dir-station.sh", `#!/bin/sh
+set -eu
+test -d input/20250703_AUX_DIR_v1
+test -f input/20250703_AUX_DIR_v1/data.nc
+mkdir -p "$VERIPROC_RUN_DIR/dir-output"
+cp input/20250703_AUX_DIR_v1/data.nc "$VERIPROC_RUN_DIR/dir-output/data.nc"
+`)
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "DIR-STATION",
+		StationName:   "DIR-STATION",
+		ContentHash:   "sha256:dir-station",
+		SchemaVersion: "veriproc.station/v1",
+		Inputs:        []stations.InputDefinition{{FileType: "AUX_DIR", Category: "product", ObjectKind: store.ObjectKindDirectory}},
+		Outputs:       []stations.OutputDefinition{{Name: "dir-output", FileType: "DIR_OUTPUT", ObjectKind: store.ObjectKindDirectory, Required: true}},
+		Publication:   stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"dir-output"}},
+		Scripts:       map[string]string{"run": script},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "00d1a0" })
+	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, IDFactory: func() string { return "run-dir" }})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "DIR-STATION"}, Window: tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()}})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+	mf, err := st.Manifests().GetByRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	if len(mf.Entries) != 1 || mf.Entries[0].ObjectKind != store.ObjectKindDirectory || mf.Entries[0].Size != 0 || mf.Entries[0].Checksum != "" {
+		t.Fatalf("manifest directory entry = %#v", mf.Entries)
+	}
+	linkTarget, err := os.Readlink(filepath.Join(run.WorkingRoot, "input", filepath.Base(inputDir)))
+	if err != nil {
+		t.Fatalf("input directory should be symlinked: %v", err)
+	}
+	if linkTarget != inputDir {
+		t.Fatalf("input symlink target = %q, want %q", linkTarget, inputDir)
+	}
+	arts, _ := st.Artifacts().ListByRun(ctx, run.RunID, "output")
+	if len(arts) != 1 || arts[0].ObjectKind != store.ObjectKindDirectory || arts[0].Size != 0 || arts[0].Checksum != "" {
+		t.Fatalf("directory output artifact = %#v", arts)
+	}
+	pubs, _ := st.Publications().ListByRun(ctx, run.RunID)
+	if len(pubs) != 1 || pubs[0].ObjectKind != store.ObjectKindDirectory || pubs[0].PublicationState != store.PublicationStatePublished {
+		t.Fatalf("directory publication = %#v", pubs)
+	}
+	if got, err := os.ReadFile(filepath.Join(archive, "dir-output", "data.nc")); err != nil || string(got) != "aux directory payload\n" {
+		t.Fatalf("published directory payload = %q, err=%v", got, err)
+	}
 }
 
 func TestRuns_LocalExecutionMissingOutputFails_5_6_7_5_4(t *testing.T) {

@@ -22,6 +22,7 @@ type PublicationRecord struct {
 	ProducingRunID   string
 	ArchiveID        string
 	TargetPath       string
+	ObjectKind       string
 	PublicationMode  string
 	PublicationState string
 	Size             int64
@@ -51,14 +52,17 @@ func (r *PublicationRepo) Insert(ctx context.Context, p *PublicationRecord) erro
 	if p.PublicationMode == "" {
 		p.PublicationMode = "copy"
 	}
+	if p.ObjectKind == "" {
+		p.ObjectKind = ObjectKindRegularFile
+	}
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO rolling_archive_publications
 			(publication_id, artifact_id, producing_run_id, archive_id, target_path,
-			 publication_mode, publication_state, size, checksum, checksum_algo, checksum_source,
+			 object_kind, publication_mode, publication_state, size, checksum, checksum_algo, checksum_source,
 			 failure_reason, created_at, published_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.PublicationID, p.ArtifactID, nullStr(p.ProducingRunID), p.ArchiveID, p.TargetPath,
-		p.PublicationMode, p.PublicationState, nullInt(p.Size), nullStr(p.Checksum),
+		p.ObjectKind, p.PublicationMode, p.PublicationState, nullInt(p.Size), nullStr(p.Checksum),
 		nullStr(p.ChecksumAlgo), nullStr(p.ChecksumSource), nullStr(p.FailureReason),
 		p.CreatedAt.UTC(), nullTime(p.PublishedAt))
 	if err != nil {
@@ -104,7 +108,7 @@ func (r *PublicationRepo) ListPending(ctx context.Context, limit int) ([]*Public
 	}
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
-		       target_path, publication_mode, publication_state,
+		       target_path, COALESCE(object_kind,'regular_file'), publication_mode, publication_state,
 		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
@@ -121,7 +125,7 @@ func (r *PublicationRepo) ListPending(ctx context.Context, limit int) ([]*Public
 func (r *PublicationRepo) ListByRun(ctx context.Context, runID string) ([]*PublicationRecord, error) {
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
-		       target_path, publication_mode, publication_state,
+		       target_path, COALESCE(object_kind,'regular_file'), publication_mode, publication_state,
 		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
@@ -138,7 +142,7 @@ func (r *PublicationRepo) ListByRun(ctx context.Context, runID string) ([]*Publi
 func (r *PublicationRepo) ListByArtifact(ctx context.Context, artifactID string) ([]*PublicationRecord, error) {
 	rows, err := r.q.QueryContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
-		       target_path, publication_mode, publication_state,
+		       target_path, COALESCE(object_kind,'regular_file'), publication_mode, publication_state,
 		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications
@@ -155,13 +159,13 @@ func (r *PublicationRepo) ListByArtifact(ctx context.Context, artifactID string)
 func (r *PublicationRepo) Get(ctx context.Context, id string) (*PublicationRecord, error) {
 	row := r.q.QueryRowContext(ctx, `
 		SELECT publication_id, artifact_id, COALESCE(producing_run_id, ''), archive_id,
-		       target_path, publication_mode, publication_state,
+		       target_path, COALESCE(object_kind,'regular_file'), publication_mode, publication_state,
 		       COALESCE(size, 0), COALESCE(checksum, ''), COALESCE(checksum_algo, ''), COALESCE(checksum_source, ''),
 		       COALESCE(failure_reason, ''), created_at, published_at
 		FROM rolling_archive_publications WHERE publication_id = ?`, id)
 	var p PublicationRecord
 	if err := row.Scan(&p.PublicationID, &p.ArtifactID, &p.ProducingRunID, &p.ArchiveID,
-		&p.TargetPath, &p.PublicationMode, &p.PublicationState,
+		&p.TargetPath, &p.ObjectKind, &p.PublicationMode, &p.PublicationState,
 		&p.Size, &p.Checksum, &p.ChecksumAlgo, &p.ChecksumSource,
 		&p.FailureReason, &p.CreatedAt, &p.PublishedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -178,7 +182,7 @@ func scanPublications(rows *sql.Rows) ([]*PublicationRecord, error) {
 	for rows.Next() {
 		var p PublicationRecord
 		if err := rows.Scan(&p.PublicationID, &p.ArtifactID, &p.ProducingRunID, &p.ArchiveID,
-			&p.TargetPath, &p.PublicationMode, &p.PublicationState,
+			&p.TargetPath, &p.ObjectKind, &p.PublicationMode, &p.PublicationState,
 			&p.Size, &p.Checksum, &p.ChecksumAlgo, &p.ChecksumSource,
 			&p.FailureReason, &p.CreatedAt, &p.PublishedAt); err != nil {
 			return nil, err

@@ -1,6 +1,5 @@
-// Package publisher implements rolling-archive publication: it copies
-// canonical artifacts from each run's working root to a configured archive
-// base path and updates publication state.
+// Package publisher implements rolling-archive publication for regular-file
+// and directory artifacts.
 //
 // Spec references: §2.5.6, §4.3.12, §4.6.6, §5.5.6.
 package publisher
@@ -9,18 +8,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/eum/veriproc/internal/fileops"
 	"github.com/eum/veriproc/internal/store"
 )
 
-// Service publishes pending publications by copying their source artifact
-// bytes into the configured archive base directory.
+// Service publishes pending publications into the configured archive base directory.
 type Service struct {
 	store       *store.Store
 	archiveBase string
@@ -33,7 +30,7 @@ type Service struct {
 // Config configures a publisher Service.
 type Config struct {
 	Store       *store.Store
-	ArchiveBase string        // root directory under which archive files are written
+	ArchiveBase string // root directory under which archive files are written
 	Clock       func() time.Time
 	Logger      zerolog.Logger
 	Interval    time.Duration // poll interval; default 5s
@@ -107,32 +104,9 @@ func (s *Service) publishOne(ctx context.Context, p *store.PublicationRecord) er
 	if art.Path == "" {
 		return errors.New("source artifact has no path")
 	}
-	src, err := os.Open(art.Path)
-	if err != nil {
-		return fmt.Errorf("open source: %w", err)
-	}
-	defer src.Close()
-
 	dst := filepath.Join(s.archiveBase, p.TargetPath)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("mkdir target: %w", err)
-	}
-	tmp := dst + ".part"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("create target: %w", err)
-	}
-	if _, err := io.Copy(out, src); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("copy: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("close target: %w", err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return fmt.Errorf("rename target: %w", err)
+	if err := fileops.PublishObject(art.Path, dst, p.PublicationMode); err != nil {
+		return err
 	}
 	now := s.clock().UTC()
 	return s.store.Publications().MarkPublished(ctx, p.PublicationID, now)

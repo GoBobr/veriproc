@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -482,6 +481,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 	for idx, input := range inputs {
 		entry := store.ManifestEntry{
 			EntryID:                  fmt.Sprintf("ent-%s-%02d", sha12(runID+":"+input.FileType), idx),
+			ObjectSequence:           idx,
 			FileType:                 input.FileType,
 			Category:                 input.Category,
 			Optional:                 input.Optional,
@@ -497,6 +497,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 			return nil, err
 		}
 		entry.SourceArchiveID = selected.ArchiveID
+		entry.ObjectKind = selected.ObjectKind
 		entry.SourcePrecedence = selected.Precedence
 		entry.SelectionReason = selected.Reason
 		entry.EffectiveFilenamePattern = selected.EffectivePattern
@@ -521,9 +522,13 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 		}
 		entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
 		entry.Present = true
-		entry.Size = info.Size()
+		if selected.ObjectKind == store.ObjectKindRegularFile {
+			entry.Size = info.Size()
+		}
 		entry.MTime = nullTime(info.ModTime().UTC())
-		entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(selected.Path, s.integrity)
+		if selected.ObjectKind == store.ObjectKindRegularFile {
+			entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(selected.Path, s.integrity)
+		}
 		entry.VersionMetadata = versionMetadata(selected.Path)
 		manifest.Entries = append(manifest.Entries, entry)
 	}
@@ -533,6 +538,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 
 type selectedInputCandidate struct {
 	Path               string
+	ObjectKind         string
 	ArchiveID          string
 	Precedence         int
 	Reason             string
@@ -556,15 +562,15 @@ func (s *Service) selectInputCandidate(input stations.InputDefinition, folders [
 		if err != nil {
 			return selected, err
 		}
-		files, err := s.inputCandidatesInFolder(folder, input, selected.EffectivePattern)
+		candidates, err := s.inputCandidatesInFolder(folder, input, selected.EffectivePattern)
 		if err != nil {
 			return selected, err
 		}
-		valid := make([]selectedInputCandidate, 0, len(files))
-		for _, file := range files {
-			candidate := selectedInputCandidate{Path: file, ArchiveID: archiveID, Precedence: precedence + 1, EffectivePattern: selected.EffectivePattern, WindowMatch: selected.WindowMatch}
+		valid := make([]selectedInputCandidate, 0, len(candidates))
+		for _, raw := range candidates {
+			candidate := selectedInputCandidate{Path: raw.Path, ObjectKind: raw.ObjectKind, ArchiveID: archiveID, Precedence: precedence + 1, EffectivePattern: selected.EffectivePattern, WindowMatch: selected.WindowMatch}
 			if selected.EffectivePattern != "" {
-				components, err := policy.ParseFilename(filepath.Base(file), selected.EffectivePattern, s.naming.Filenames.Components)
+				components, err := policy.ParseFilename(filepath.Base(raw.Path), selected.EffectivePattern, s.naming.Filenames.Components)
 				if err != nil {
 					continue
 				}
@@ -616,7 +622,12 @@ func (s *Service) inputPatternHasFileType(input stations.InputDefinition) bool {
 	return strings.Contains(pattern, "<FILE_TYPE>")
 }
 
-func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDefinition, effectivePattern string) ([]string, error) {
+type inputCandidate struct {
+	Path       string
+	ObjectKind string
+}
+
+func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDefinition, effectivePattern string) ([]inputCandidate, error) {
 	if effectivePattern == "" {
 		pattern := input.Pattern
 		if pattern == "" {
@@ -626,31 +637,43 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 		if err != nil {
 			return nil, err
 		}
-		files := matches[:0]
+		candidates := make([]inputCandidate, 0, len(matches))
 		for _, match := range matches {
-			if info, err := os.Stat(match); err == nil && !info.IsDir() && filenameMatchesInput(filepath.Base(match), input) {
-				files = append(files, match)
+			if strings.HasSuffix(match, ".sha256") {
+				continue
+			}
+			if info, err := os.Stat(match); err == nil && filenameMatchesInput(filepath.Base(match), input) {
+				kind := objectKindFromInfo(info)
+				if input.ObjectKind != "" && input.ObjectKind != kind {
+					continue
+				}
+				candidates = append(candidates, inputCandidate{Path: match, ObjectKind: kind})
 			}
 		}
-		return files, nil
+		return candidates, nil
 	}
-	files := []string{}
-	if err := filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if strings.HasSuffix(path, ".sha256") {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	}); err != nil {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
 		return nil, err
 	}
-	return files, nil
+	candidates := make([]inputCandidate, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".sha256") {
+			continue
+		}
+		path := filepath.Join(folder, name)
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		kind := objectKindFromInfo(info)
+		if input.ObjectKind != "" && input.ObjectKind != kind {
+			continue
+		}
+		candidates = append(candidates, inputCandidate{Path: path, ObjectKind: kind})
+	}
+	return candidates, nil
 }
 
 func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, retryIndex int, created time.Time) string {
@@ -797,6 +820,9 @@ func availableChecksum(path string, integrity policy.Integrity) (string, string,
 	if integrity.ChecksumPolicy == policy.ChecksumNone {
 		return "", "", ""
 	}
+	if info, err := os.Stat(path); err != nil || info.IsDir() {
+		return "", "", ""
+	}
 	for _, sidecar := range []string{path + ".sha256", strings.TrimSuffix(path, filepath.Ext(path)) + ".sha256"} {
 		body, err := os.ReadFile(sidecar)
 		if err != nil {
@@ -808,6 +834,13 @@ func availableChecksum(path string, integrity policy.Integrity) (string, string,
 		}
 	}
 	return "", "", ""
+}
+
+func objectKindFromInfo(info os.FileInfo) string {
+	if info != nil && info.IsDir() {
+		return store.ObjectKindDirectory
+	}
+	return store.ObjectKindRegularFile
 }
 
 func versionMetadata(path string) string {

@@ -163,6 +163,8 @@ CREATE TABLE resolved_input_manifests (
 CREATE TABLE resolved_input_entries (
     entry_id       TEXT PRIMARY KEY,
     manifest_id    TEXT NOT NULL,
+    object_sequence INTEGER NOT NULL DEFAULT 0,
+    object_kind    TEXT,
     file_type      TEXT NOT NULL,
     category       TEXT,
     path           TEXT,
@@ -190,6 +192,7 @@ CREATE TABLE artifacts (
     artifact_id        TEXT PRIMARY KEY,
     producing_run_id   TEXT,
     logical_type       TEXT NOT NULL, -- output | joborder | log | manifest_export | task_out
+    object_kind        TEXT NOT NULL DEFAULT 'regular_file',
     file_type          TEXT,
     path               TEXT,
     size               INTEGER,
@@ -210,6 +213,7 @@ CREATE TABLE rolling_archive_publications (
     producing_run_id      TEXT,
     archive_id            TEXT NOT NULL,
     target_path           TEXT NOT NULL,
+    object_kind           TEXT NOT NULL DEFAULT 'regular_file',
     publication_mode      TEXT NOT NULL,
     publication_state     TEXT NOT NULL,
     size                  INTEGER,

@@ -20,6 +20,12 @@ inputs:
     window_match: overlaps
     margins: [0, 0]
     mandatory: true
+  - file_type: SCE_2__CAMF___AX
+    category: aux
+    object_kind: directory
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
 outputs:
   - file_type: SCE_2__ICM______
     mandatory: true

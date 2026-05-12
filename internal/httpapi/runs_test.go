@@ -3,11 +3,12 @@ package httpapi_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
-	"fmt"
 	"testing"
 	"time"
 
@@ -277,6 +278,25 @@ func TestAPI_ArtifactContent_M4(t *testing.T) {
 	}
 	if len(body) == 0 {
 		t.Error("empty content")
+	}
+}
+
+func TestAPI_DirectoryArtifactContentRejected(t *testing.T) {
+	a := newRunAPI(t)
+	dir := filepath.Join(t.TempDir(), "dir-artifact")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir artifact dir: %v", err)
+	}
+	artifact := &store.ArtifactRecord{ArtifactID: "art-dir-content", LogicalType: "output", ObjectKind: store.ObjectKindDirectory, Path: dir, Availability: "available"}
+	if err := a.st.Artifacts().Insert(context.Background(), artifact); err != nil {
+		t.Fatalf("insert artifact: %v", err)
+	}
+	resp, body := getJSONMap(t, a.srv, "/api/v1/artifacts/"+artifact.ArtifactID+"/content")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, body=%v", resp.StatusCode, body)
+	}
+	if body["error"] == nil {
+		t.Fatalf("missing error envelope: %v", body)
 	}
 }
 

@@ -96,6 +96,45 @@ func TestPublisher_Happy_M6(t *testing.T) {
 	}
 }
 
+func TestPublisher_DirectoryArtifact(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	srcDir := filepath.Join(t.TempDir(), "dir-artifact")
+	if err := os.MkdirAll(filepath.Join(srcDir, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "nested", "data.nc"), []byte("directory payload"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	a := &store.ArtifactRecord{ArtifactID: "art-dir", LogicalType: "output", ObjectKind: store.ObjectKindDirectory, Path: srcDir, Availability: "available"}
+	if err := st.Artifacts().Insert(ctx, a); err != nil {
+		t.Fatalf("insert artifact: %v", err)
+	}
+	pub := &store.PublicationRecord{PublicationID: "pub-dir", ArtifactID: a.ArtifactID, ArchiveID: "archive-1", TargetPath: "published/dir-artifact", ObjectKind: store.ObjectKindDirectory, PublicationMode: "copy"}
+	if err := st.Publications().Insert(ctx, pub); err != nil {
+		t.Fatalf("insert pub: %v", err)
+	}
+	archive := t.TempDir()
+	svc := publisher.New(publisher.Config{Store: st, ArchiveBase: archive, Logger: zerolog.New(io.Discard)})
+	if _, err := svc.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := st.Publications().Get(ctx, "pub-dir")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PublicationState != store.PublicationStatePublished || got.ObjectKind != store.ObjectKindDirectory {
+		t.Fatalf("publication = %#v", got)
+	}
+	body, err := os.ReadFile(filepath.Join(archive, pub.TargetPath, "nested", "data.nc"))
+	if err != nil {
+		t.Fatalf("read archived dir payload: %v", err)
+	}
+	if string(body) != "directory payload" {
+		t.Fatalf("archived payload = %q", body)
+	}
+}
+
 // TestPublisher_FailureMissingSource_M6 — when the artifact's source file is
 // missing, the publication is marked failed with a recorded reason.
 func TestPublisher_FailureMissingSource_M6(t *testing.T) {

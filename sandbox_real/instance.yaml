@@ -65,11 +65,18 @@ rolling_archives:
     path: sandbox_real/rolling-archives/hot
     retention: keep-fixtures
     mode: read_write
+  aux:
+    path: sandbox_real/rolling-archives/aux
+    retention: keep-fixtures
+    mode: read_write
 
 product_categories:
   - name: product
     folders:
       - rolling:hot
+  - name: aux
+    folders:
+      - rolling:aux
 
 executor:
   type: local

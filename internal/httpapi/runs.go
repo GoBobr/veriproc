@@ -71,6 +71,7 @@ type artifactWire struct {
 	ArtifactID         string              `json:"artifact_id"`
 	ProducingRunID     string              `json:"producing_run_id"`
 	LogicalType        string              `json:"logical_type"`
+	ObjectKind         string              `json:"object_kind"`
 	FileType           string              `json:"file_type,omitempty"`
 	Path               string              `json:"path,omitempty"`
 	Size               int64               `json:"size,omitempty"`
@@ -96,6 +97,7 @@ type publicationWire struct {
 	PublicationID    string     `json:"publication_id"`
 	ArchiveID        string     `json:"archive_id"`
 	TargetPath       string     `json:"target_path"`
+	ObjectKind       string     `json:"object_kind"`
 	PublicationMode  string     `json:"publication_mode"`
 	PublicationState string     `json:"publication_state"`
 	Size             int64      `json:"size,omitempty"`
@@ -276,6 +278,7 @@ func buildPublicationSummary(pubs []*store.PublicationRecord) *publicationSummar
 			PublicationID:    p.PublicationID,
 			ArchiveID:        p.ArchiveID,
 			TargetPath:       p.TargetPath,
+			ObjectKind:       p.ObjectKind,
 			PublicationMode:  p.PublicationMode,
 			PublicationState: p.PublicationState,
 			Size:             p.Size,
@@ -392,6 +395,10 @@ func (h *runHandler) artifactContent(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, "artifact content unavailable")
 		return
 	}
+	if a.ObjectKind == store.ObjectKindDirectory {
+		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "directory artifact content access is not supported")
+		return
+	}
 	body, err := os.ReadFile(a.Path)
 	if err != nil {
 		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, "artifact file missing")
@@ -475,6 +482,7 @@ func toArtifactWire(a *store.ArtifactRecord) artifactWire {
 		ArtifactID:       a.ArtifactID,
 		ProducingRunID:   a.ProducingRunID,
 		LogicalType:      a.LogicalType,
+		ObjectKind:       a.ObjectKind,
 		FileType:         a.FileType,
 		Path:             a.Path,
 		Size:             a.Size,

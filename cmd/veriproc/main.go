@@ -698,7 +698,7 @@ func (c *client) cmdArtifact(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"artifact_id", "logical_type", "availability", "size", "checksum_source", "created_at"})
+		c.renderList(raw, m, []string{"artifact_id", "logical_type", "object_kind", "availability", "size", "checksum_source", "created_at"})
 		return ExitOK
 	default:
 		fmt.Fprintln(c.stderr, "veriproc artifact {list}")
@@ -721,7 +721,7 @@ func (c *client) cmdLogs(args []string) int {
 	if err != nil {
 		return c.reportErr(err)
 	}
-	c.renderList(raw, m, []string{"artifact_id", "logical_type", "availability", "created_at"})
+	c.renderList(raw, m, []string{"artifact_id", "logical_type", "object_kind", "availability", "created_at"})
 	return ExitOK
 }
 

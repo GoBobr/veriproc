@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// Filesystem object-kind constants used across manifests, artifacts, and
+// publication metadata.
+const (
+	ObjectKindRegularFile = "regular_file"
+	ObjectKindDirectory   = "directory"
+)
+
 // ManifestRecord is the resolved input manifest header (Spec §4.3.9).
 type ManifestRecord struct {
 	ManifestID string
@@ -19,6 +26,8 @@ type ManifestRecord struct {
 // ManifestEntry is one resolved input row.
 type ManifestEntry struct {
 	EntryID                  string
+	ObjectSequence           int
+	ObjectKind               string
 	FileType                 string
 	Category                 string
 	Path                     string
@@ -67,12 +76,12 @@ func (r *ManifestRepo) Insert(ctx context.Context, m *ManifestRecord) error {
 		for _, e := range m.Entries {
 			if _, err := q.ExecContext(ctx, `
 				INSERT INTO resolved_input_entries
-					(entry_id, manifest_id, file_type, category, path,
+					(entry_id, manifest_id, object_sequence, object_kind, file_type, category, path,
 					 optional, present, size, mtime, checksum, checksum_algo, checksum_source,
 					 source_archive_id, source_precedence, version_metadata,
 					 effective_filename_pattern, filename_components, window_match, selection_reason)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				e.EntryID, m.ManifestID, e.FileType, nullStr(e.Category), nullStr(e.Path),
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				e.EntryID, m.ManifestID, e.ObjectSequence, nullStr(e.ObjectKind), e.FileType, nullStr(e.Category), nullStr(e.Path),
 				boolInt(e.Optional), boolInt(e.Present),
 				nullInt(e.Size), nullTime(e.MTime), nullStr(e.Checksum), nullStr(e.ChecksumAlgo),
 				nullStr(e.ChecksumSource), nullStr(e.SourceArchiveID), nullInt(int64(e.SourcePrecedence)),
@@ -107,7 +116,7 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 	}
 	m.FrozenAt = m.FrozenAt.UTC()
 	rows, err := r.q.QueryContext(ctx, `
-		SELECT entry_id, file_type, COALESCE(category,''), COALESCE(path,''),
+		SELECT entry_id, COALESCE(object_sequence,0), COALESCE(object_kind,''), file_type, COALESCE(category,''), COALESCE(path,''),
 		       optional, present, COALESCE(size,0), mtime,
 		       COALESCE(checksum,''), COALESCE(checksum_algo,''), COALESCE(checksum_source,''),
 		       COALESCE(source_archive_id,''), COALESCE(source_precedence,0),
@@ -121,7 +130,7 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 	for rows.Next() {
 		var e ManifestEntry
 		var opt, pres int
-		if err := rows.Scan(&e.EntryID, &e.FileType, &e.Category, &e.Path,
+		if err := rows.Scan(&e.EntryID, &e.ObjectSequence, &e.ObjectKind, &e.FileType, &e.Category, &e.Path,
 			&opt, &pres, &e.Size, &e.MTime, &e.Checksum, &e.ChecksumAlgo,
 			&e.ChecksumSource, &e.SourceArchiveID, &e.SourcePrecedence,
 			&e.VersionMetadata, &e.EffectiveFilenamePattern, &e.FilenameComponents,

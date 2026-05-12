@@ -15,6 +15,7 @@ type ArtifactRecord struct {
 	ArtifactID       string
 	ProducingRunID   string
 	LogicalType      string // output | joborder | log | manifest_export | task_out
+	ObjectKind       string
 	FileType         string
 	Path             string
 	Size             int64
@@ -40,12 +41,16 @@ func (r *ArtifactRepo) Insert(ctx context.Context, a *ArtifactRecord) error {
 	if a.Availability == "" {
 		a.Availability = "available"
 	}
+	if a.ObjectKind == "" {
+		a.ObjectKind = ObjectKindRegularFile
+	}
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO artifacts
-			(artifact_id, producing_run_id, logical_type, file_type, path,
+			(artifact_id, producing_run_id, logical_type, object_kind, file_type, path,
 			 size, checksum, checksum_algo, checksum_source, validation_status, availability, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ArtifactID, nullStr(a.ProducingRunID), a.LogicalType,
+		a.ObjectKind,
 		nullStr(a.FileType), nullStr(a.Path),
 		nullInt(a.Size), nullStr(a.Checksum), nullStr(a.ChecksumAlgo),
 		nullStr(a.ChecksumSource), nullStr(a.ValidationStatus), a.Availability, a.CreatedAt.UTC())
@@ -89,7 +94,7 @@ func (r *ArtifactRepo) ListByRun(ctx context.Context, runID, logicalType string)
 	return out, rows.Err()
 }
 
-const artifactSelect = `SELECT artifact_id, COALESCE(producing_run_id,''), logical_type,
+const artifactSelect = `SELECT artifact_id, COALESCE(producing_run_id,''), logical_type, COALESCE(object_kind,'regular_file'),
 	COALESCE(file_type,''), COALESCE(path,''),
 	COALESCE(size, 0), COALESCE(checksum,''), COALESCE(checksum_algo,''),
 	COALESCE(checksum_source,''), COALESCE(validation_status,''), availability, created_at
@@ -98,6 +103,7 @@ FROM artifacts`
 func scanArtifact(s scanner) (*ArtifactRecord, error) {
 	var a ArtifactRecord
 	if err := s.Scan(&a.ArtifactID, &a.ProducingRunID, &a.LogicalType,
+		&a.ObjectKind,
 		&a.FileType, &a.Path, &a.Size, &a.Checksum, &a.ChecksumAlgo,
 		&a.ChecksumSource, &a.ValidationStatus, &a.Availability, &a.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

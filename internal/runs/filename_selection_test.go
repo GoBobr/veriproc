@@ -51,6 +51,40 @@ func TestSelectInputCandidateStructuredFilename(t *testing.T) {
 	}
 }
 
+func TestSelectInputCandidateStructuredDirectory(t *testing.T) {
+	folder := t.TempDir()
+	fileType := "AUX_DIR_________"
+	dirCandidate := filepath.Join(folder, "CDMA_"+fileType+"_20250703T110000_20250703T111500_20250703T113000_v1.CDM")
+	if err := os.MkdirAll(dirCandidate, 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirCandidate, "data.nc"), []byte("payload"), 0o644); err != nil {
+		t.Fatalf("write nested payload: %v", err)
+	}
+	fileCandidate := filepath.Join(folder, "CDMA_"+fileType+"_20250703T110000_20250703T111500_20250703T114000_v2.CDM")
+	if err := os.WriteFile(fileCandidate, []byte("regular file with newer mtime"), 0o644); err != nil {
+		t.Fatalf("write regular fixture: %v", err)
+	}
+	if err := os.Chtimes(dirCandidate, time.Time{}, time.Date(2025, 7, 3, 11, 30, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("chtimes dir: %v", err)
+	}
+	if err := os.Chtimes(fileCandidate, time.Time{}, time.Date(2025, 7, 3, 11, 40, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("chtimes file: %v", err)
+	}
+
+	svc := &Service{naming: structuredNaming()}
+	selected, err := svc.selectInputCandidate(stations.InputDefinition{FileType: fileType, Category: "product", ObjectKind: store.ObjectKindDirectory, WindowMatch: "overlaps"}, []string{folder}, &store.TaskRecord{
+		WindowStart: time.Date(2025, 7, 3, 11, 5, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2025, 7, 3, 11, 10, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("selectInputCandidate: %v", err)
+	}
+	if selected.Path != dirCandidate || selected.ObjectKind != store.ObjectKindDirectory {
+		t.Fatalf("selected = %#v, want directory %s", selected, dirCandidate)
+	}
+}
+
 func TestCandidateMatchesWindowPolicies(t *testing.T) {
 	task := &store.TaskRecord{
 		WindowStart: time.Date(2025, 7, 3, 11, 15, 0, 0, time.UTC),

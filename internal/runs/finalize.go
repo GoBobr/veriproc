@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/canonjson"
+	"github.com/eum/veriproc/internal/fileops"
 	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
@@ -190,6 +191,7 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord, path 
 		ArtifactID:       "art-" + sha12(run.RunID+":joborder"),
 		ProducingRunID:   run.RunID,
 		LogicalType:      "joborder",
+		ObjectKind:       store.ObjectKindRegularFile,
 		FileType:         "JOB_ORDER",
 		Path:             path,
 		Size:             int64(len(body)),
@@ -223,20 +225,30 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 			entries, _ := os.ReadDir(dir)
 			names := make([]string, 0, len(entries))
 			for _, e := range entries {
-				if !e.IsDir() {
-					names = append(names, e.Name())
-				}
+				names = append(names, e.Name())
 			}
 			return nil, fmt.Errorf("mandatory output %s missing at %s (output dir contains: %v)", out.FileType, path, names)
 		}
-		checksum, algo, source := availableChecksum(path, s.integrity)
+		objectKind := objectKindFromInfo(info)
+		if out.ObjectKind != "" && out.ObjectKind != objectKind {
+			return nil, fmt.Errorf("output %s at %s has object_kind %s, want %s", out.FileType, path, objectKind, out.ObjectKind)
+		}
+		var size int64
+		if objectKind == store.ObjectKindRegularFile {
+			size = info.Size()
+		}
+		checksum, algo, source := "", "", ""
+		if objectKind == store.ObjectKindRegularFile {
+			checksum, algo, source = availableChecksum(path, s.integrity)
+		}
 		arts = append(arts, &store.ArtifactRecord{
 			ArtifactID:       "art-" + sha12(run.RunID+":output:"+name),
 			ProducingRunID:   run.RunID,
 			LogicalType:      "output",
+			ObjectKind:       objectKind,
 			FileType:         out.FileType,
 			Path:             path,
-			Size:             info.Size(),
+			Size:             size,
 			Checksum:         checksum,
 			ChecksumAlgo:     algo,
 			ChecksumSource:   source,
@@ -269,11 +281,15 @@ func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (
 		}
 		var parseErrs []string
 		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
+			path := filepath.Join(dir, entry.Name())
+			if info, ierr := entry.Info(); ierr == nil {
+				kind := objectKindFromInfo(info)
+				if out.ObjectKind != "" && out.ObjectKind != kind {
+					continue
+				}
 			}
 			if _, perr := policy.ParseFilename(entry.Name(), effective, s.naming.Filenames.Components); perr == nil {
-				matches = append(matches, filepath.Join(dir, entry.Name()))
+				matches = append(matches, path)
 			} else {
 				parseErrs = append(parseErrs, entry.Name()+":"+perr.Error())
 			}
@@ -299,6 +315,22 @@ func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (
 		}
 		if len(matches) == 0 {
 			return "", "", fmt.Errorf("mandatory output %s missing matching pattern %s", out.FileType, out.Pattern)
+		}
+		if out.ObjectKind != "" {
+			filtered := matches[:0]
+			for _, match := range matches {
+				info, err := os.Stat(match)
+				if err != nil {
+					continue
+				}
+				if objectKindFromInfo(info) == out.ObjectKind {
+					filtered = append(filtered, match)
+				}
+			}
+			matches = filtered
+			if len(matches) == 0 {
+				return "", "", fmt.Errorf("mandatory output %s missing matching pattern %s with object_kind %s", out.FileType, out.Pattern, out.ObjectKind)
+			}
 		}
 		sort.Strings(matches)
 		path := matches[len(matches)-1]
@@ -328,6 +360,7 @@ func (s *Service) collectRunLog(run *store.RunRecord) (*store.ArtifactRecord, er
 		ArtifactID:       "art-" + sha12(run.RunID+":log"),
 		ProducingRunID:   run.RunID,
 		LogicalType:      "log",
+		ObjectKind:       store.ObjectKindRegularFile,
 		FileType:         "RUN_LOG",
 		Path:             path,
 		Size:             int64(len(body)),
@@ -450,11 +483,15 @@ func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRec
 		if subpath != "" {
 			targetPath = filepath.ToSlash(filepath.Join(subpath, name))
 		}
-		if err := copyArtifactToArchive(art.Path, filepath.Join(s.rollingArchives[policy.ArchiveID], targetPath)); err != nil {
+		mode := policy.Mode
+		if mode == "" {
+			mode = "copy"
+		}
+		if err := fileops.PublishObject(art.Path, filepath.Join(s.rollingArchives[policy.ArchiveID], targetPath), mode); err != nil {
 			return nil, err
 		}
 		now := s.clock().UTC()
-		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, PublicationMode: policy.Mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
+		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, ObjectKind: art.ObjectKind, PublicationMode: mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
 	}
 	return records, nil
 }
@@ -486,24 +523,6 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 		return "", fmt.Errorf("publication target_subpath %q escapes archive root", subpath)
 	}
 	return clean, nil
-}
-
-func copyArtifactToArchive(src, dst string) error {
-	body, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read publication source: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("mkdir publication target: %w", err)
-	}
-	tmp := dst + ".part"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
-		return fmt.Errorf("write publication target: %w", err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return fmt.Errorf("publish rename: %w", err)
-	}
-	return nil
 }
 
 func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord, parent *store.TaskRecord, canonicality string) ([]*store.TaskRecord, error) {
