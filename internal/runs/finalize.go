@@ -607,7 +607,11 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
 		hashSeed := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", run.RunID, resolved.StationID, idx)))
 		hex6 := hex.EncodeToString(hashSeed[:3])
-		taskID := policy.GenerateTaskID(resolved.StationID, created, hex6)
+		taskIDTimestamp := created
+		if s.naming.TaskIDTimestamp == policy.TaskIDTimestampStart {
+			taskIDTimestamp = parent.WindowStart.UTC()
+		}
+		taskID := policy.GenerateTaskID(resolved.StationID, taskIDTimestamp, hex6)
 		routing := map[string]any{
 			"schema_version": parent.SchemaVersion,
 			"destination":    map[string]any{"station_id": resolved.StationID},

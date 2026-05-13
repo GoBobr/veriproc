@@ -313,3 +313,147 @@ func errorCode(t *testing.T, body []byte) string {
 	}
 	return env.Error.Code
 }
+
+// --- Window timestamp parsing tests (Spec §5.3.1) ---
+
+// TestAPI_WindowTimestamp_RFC3339Seconds — "2025-07-03T11:12:39Z" is accepted.
+func TestAPI_WindowTimestamp_RFC3339Seconds(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "2025-07-03T11:12:39Z",
+		"end":   "2025-07-03T11:30:00Z",
+	}
+	resp, _ := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("RFC3339 seconds: status = %d", resp.StatusCode)
+	}
+}
+
+// TestAPI_WindowTimestamp_RFC3339Millis — "2025-07-03T11:12:39.000Z" is accepted.
+func TestAPI_WindowTimestamp_RFC3339Millis(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "2025-07-03T11:12:39.000Z",
+		"end":   "2025-07-03T11:15:38.100Z",
+	}
+	resp, _ := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("RFC3339 millis: status = %d", resp.StatusCode)
+	}
+}
+
+// TestAPI_WindowTimestamp_CompactSeconds — "20260513T131429" is accepted.
+func TestAPI_WindowTimestamp_CompactSeconds(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "20260513T131429",
+		"end":   "20260513T131529",
+	}
+	resp, _ := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("compact seconds: status = %d", resp.StatusCode)
+	}
+}
+
+// TestAPI_WindowTimestamp_CompactMillis — "20260513T131429000" is accepted.
+func TestAPI_WindowTimestamp_CompactMillis(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "20260513T131429000",
+		"end":   "20260513T131529100",
+	}
+	resp, _ := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("compact millis: status = %d", resp.StatusCode)
+	}
+}
+
+// TestAPI_WindowTimestamp_MalformedStart — unrecognized start format → 400.
+func TestAPI_WindowTimestamp_MalformedStart(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "not-a-timestamp",
+		"end":   "2025-07-03T11:30:00Z",
+	}
+	resp, raw := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed start: status = %d, body=%s", resp.StatusCode, raw)
+	}
+	if code := errorCode(t, raw); code != "invalid_request" {
+		t.Errorf("code = %q, want invalid_request", code)
+	}
+}
+
+// TestAPI_WindowTimestamp_MalformedEnd — unrecognized end format → 400.
+func TestAPI_WindowTimestamp_MalformedEnd(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "2025-07-03T11:12:39Z",
+		"end":   "20260513T131529999999", // too long for compact
+	}
+	resp, raw := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed end: status = %d, body=%s", resp.StatusCode, raw)
+	}
+	if code := errorCode(t, raw); code != "invalid_request" {
+		t.Errorf("code = %q, want invalid_request", code)
+	}
+}
+
+// TestAPI_WindowTimestamp_StartAfterEnd — compact timestamps with start > end → 400.
+func TestAPI_WindowTimestamp_StartAfterEnd(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "20260513T131529",
+		"end":   "20260513T131429",
+	}
+	resp, raw := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("start>end: status = %d, body=%s", resp.StatusCode, raw)
+	}
+	if code := errorCode(t, raw); code != "invalid_request" {
+		t.Errorf("code = %q, want invalid_request", code)
+	}
+}
+
+// TestAPI_WindowTimestamp_CompactNormalized — compact UTC timestamps are stored
+// and returned as UTC in the response.
+func TestAPI_WindowTimestamp_CompactNormalized(t *testing.T) {
+	srv, _ := newAPI(t)
+	b := validBody()
+	b["window"] = map[string]any{
+		"start": "20260513T131429000",
+		"end":   "20260513T131529000",
+	}
+	_, body := postJSON(t, srv, "/api/v1/tasks", b, nil)
+	id := taskIDFrom(t, body)
+
+	resp, raw := getJSON(t, srv, "/api/v1/tasks/"+id)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get status = %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	// window should be present and non-empty.
+	win, _ := out["window"].(map[string]any)
+	if win == nil {
+		t.Fatalf("window missing from response: %v", out)
+	}
+	startStr, _ := win["start"].(string)
+	if startStr == "" {
+		t.Errorf("window.start empty in response")
+	}
+	// must contain a Z (UTC).
+	if !strings.Contains(startStr, "Z") && !strings.Contains(startStr, "+00:00") {
+		t.Errorf("window.start %q does not appear to be UTC", startStr)
+	}
+}

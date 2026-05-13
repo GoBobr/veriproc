@@ -108,12 +108,16 @@ func (s *Service) SetIdempotencyTTL(d time.Duration) { s.idempotencyTTL = d }
 // IdempotencyTTL reports the currently configured retention window.
 func (s *Service) IdempotencyTTL() time.Duration { return s.idempotencyTTL }
 
-func (s *Service) newTaskID(now time.Time, stationID string) string {
+func (s *Service) newTaskID(now time.Time, stationID string, windowStart time.Time) string {
 	hex6 := randomHex6()
 	if s.idFactory != nil {
 		hex6 = s.idFactory()
 	}
-	return policy.GenerateTaskID(stationID, now, hex6)
+	ts := now
+	if s.naming.TaskIDTimestamp == policy.TaskIDTimestampStart {
+		ts = windowStart
+	}
+	return policy.GenerateTaskID(stationID, ts, hex6)
 }
 
 func randomHex6() string {
@@ -167,7 +171,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 	}
 
 	now := s.now().UTC()
-	taskID := s.newTaskID(now, rev.StationID)
+	taskID := s.newTaskID(now, rev.StationID, in.Window.Start)
 	if err := policy.ValidateTaskID(taskID, rev.StationID); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidRequest, err.Error())
 	}

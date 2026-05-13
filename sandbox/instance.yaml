@@ -16,6 +16,7 @@ storage:
   station_config_root: sandbox/stations
 
 naming:
+  task_id_timestamp: creation
   timestamp_format:
     task_window: compact-utc-millis
     runtime_event: compact-utc-micros

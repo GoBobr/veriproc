@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eum/veriproc/internal/httpapi/apierr"
+	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/store"
 	"github.com/eum/veriproc/internal/tasks"
 )
@@ -23,11 +24,18 @@ type taskHandler struct {
 
 // --- Wire types (transport-only; do not leak store types to clients) ---
 
+// windowSubmitWire accepts window timestamps as strings so the API can
+// support RFC 3339 and compact UTC forms (Spec §5.3.1).
+type windowSubmitWire struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
 type submitRequest struct {
 	SchemaVersion  string            `json:"schema_version,omitempty"`
 	IdempotencyKey string            `json:"idempotency_key,omitempty"`
 	Destination    tasks.Destination `json:"destination"`
-	Window         tasks.Window      `json:"window"`
+	Window         windowSubmitWire  `json:"window"`
 	Force          bool              `json:"force,omitempty"`
 	Priority       string            `json:"priority,omitempty"`
 	Parent         *tasks.Parent     `json:"parent,omitempty"`
@@ -87,11 +95,23 @@ func (h *taskHandler) submit(w http.ResponseWriter, r *http.Request) {
 		key = req.IdempotencyKey
 	}
 
+	// Parse window timestamps; accept RFC 3339 and compact UTC forms (Spec §5.3.1).
+	winStart, err := policy.ParseWindowTimestamp(req.Window.Start)
+	if err != nil {
+		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "window.start: "+err.Error())
+		return
+	}
+	winEnd, err := policy.ParseWindowTimestamp(req.Window.End)
+	if err != nil {
+		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "window.end: "+err.Error())
+		return
+	}
+
 	in := tasks.SubmitInput{
 		SchemaVersion:  req.SchemaVersion,
 		IdempotencyKey: key,
 		Destination:    req.Destination,
-		Window:         req.Window,
+		Window:         tasks.Window{Start: winStart, End: winEnd},
 		Force:          req.Force,
 		Priority:       req.Priority,
 		Parent:         req.Parent,

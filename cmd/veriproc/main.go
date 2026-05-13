@@ -45,6 +45,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/eum/veriproc/internal/policy"
 )
 
 // Spec §6.10 exit codes.
@@ -495,6 +497,15 @@ func (c *client) cmdSubmit(args []string) int {
 		fmt.Fprintln(c.stderr, "veriproc submit: --start and --end are required")
 		return ExitUsage
 	}
+	// Validate timestamp formats locally for fast feedback (Spec §6.5.1).
+	if _, err := policy.ParseWindowTimestamp(*start); err != nil {
+		fmt.Fprintf(c.stderr, "veriproc submit: --start: %v\n", err)
+		return ExitValidation
+	}
+	if _, err := policy.ParseWindowTimestamp(*end); err != nil {
+		fmt.Fprintf(c.stderr, "veriproc submit: --end: %v\n", err)
+		return ExitValidation
+	}
 	body := map[string]any{
 		"destination": map[string]any{
 			"station_id": *station,
@@ -554,7 +565,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "created_at"})
+		c.renderList(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_run_ref", "created_at"})
 		return ExitOK
 	case "retry":
 		if len(args) < 1 {
@@ -647,7 +658,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_ref", "task_id", "retry_index", "state", "canonicality", "working_root", "created_at"})
+		c.renderList(raw, m, []string{"run_ref", "state", "working_root", "canonicality", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
@@ -925,7 +936,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: veriproc [--api-url URL] [--token T] [--output table|json|yaml] CMD [ARGS]
 
 Commands:
-  submit        --station ID --start RFC3339 --end RFC3339 [--idempotency-key K] [--force] [--split-group GID]
+  submit        --station ID --start TIMESTAMP --end TIMESTAMP [--idempotency-key K] [--force] [--split-group GID]
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
   task retry    TASK_ID

@@ -376,3 +376,71 @@ func TestCLI_Cancel_CompositeIdentity_M10(t *testing.T) {
 		t.Errorf("expected cancelled state in output: %s", out)
 	}
 }
+
+// --- CLI window timestamp format tests (Spec §6.5.1) ---
+
+// TestCLI_Submit_CompactSeconds — compact UTC seconds accepted by CLI.
+func TestCLI_Submit_CompactSeconds(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL,
+		"submit", "--station", "S1",
+		"--start", "20260513T131429",
+		"--end", "20260513T131529")
+	if code != ExitOK {
+		t.Fatalf("compact seconds: exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "task-1") {
+		t.Errorf("missing task_id: %q", out)
+	}
+}
+
+// TestCLI_Submit_CompactMillis — compact UTC milliseconds accepted by CLI.
+func TestCLI_Submit_CompactMillis(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL,
+		"submit", "--station", "S1",
+		"--start", "20260513T131429000",
+		"--end", "20260513T131529100")
+	if code != ExitOK {
+		t.Fatalf("compact millis: exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "task-1") {
+		t.Errorf("missing task_id: %q", out)
+	}
+}
+
+// TestCLI_Submit_RFC3339Millis — RFC3339 milliseconds accepted by CLI.
+func TestCLI_Submit_RFC3339Millis(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, errs := runCLI(t, api.server.URL,
+		"submit", "--station", "S1",
+		"--start", "2025-07-03T11:12:39.000Z",
+		"--end", "2025-07-03T11:15:38.100Z")
+	if code != ExitOK {
+		t.Fatalf("RFC3339 millis: exit = %d (stderr=%s)", code, errs)
+	}
+}
+
+// TestCLI_Submit_InvalidStart — unrecognized --start format → exit 3 (validation).
+func TestCLI_Submit_InvalidStart(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, errs := runCLI(t, api.server.URL,
+		"submit", "--station", "S1",
+		"--start", "not-a-timestamp",
+		"--end", "2025-07-03T11:15:38Z")
+	if code != ExitValidation {
+		t.Fatalf("invalid start: exit = %d (want %d, stderr=%s)", code, ExitValidation, errs)
+	}
+}
+
+// TestCLI_Submit_InvalidEnd — unrecognized --end format → exit 3 (validation).
+func TestCLI_Submit_InvalidEnd(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, errs := runCLI(t, api.server.URL,
+		"submit", "--station", "S1",
+		"--start", "2025-07-03T11:12:39Z",
+		"--end", "BADEND")
+	if code != ExitValidation {
+		t.Fatalf("invalid end: exit = %d (want %d, stderr=%s)", code, ExitValidation, errs)
+	}
+}

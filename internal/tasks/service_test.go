@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
 	"github.com/eum/veriproc/internal/tasks"
@@ -245,5 +247,125 @@ func TestService_List_PaginationDeterministic_5_4_2_M2(t *testing.T) {
 				t.Errorf("overlap: %s appears in both pages", a.TaskID)
 			}
 		}
+	}
+}
+
+// --- TaskIDTimestamp policy tests ---
+
+// newSvcWithNaming is like newSvc but applies a specific Naming policy.
+func newSvcWithNaming(t *testing.T, n policy.Naming) (*tasks.Service, *store.Store) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "tasks.db")
+	st, err := store.Open("sqlite://" + dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(context.Background(), st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	reg := stations.NewRegistry()
+	if err := reg.Seed(context.Background(), st,
+		stations.Spec{StationID: "SCENE-L2", StationName: "SCE_2", ContentHash: "sha256:scene-l2", SchemaVersion: "veriproc.station/v1"},
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	now := time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC)
+	svc := tasks.NewService(st, reg, fixedClock(now), seqIDs("task-test"))
+	svc.SetNaming(n)
+	return svc, st
+}
+
+// TestService_TaskIDTimestamp_Creation — creation policy uses the creation
+// timestamp in the task ID, not the window start.
+func TestService_TaskIDTimestamp_Creation(t *testing.T) {
+	n := policy.Naming{TaskIDTimestamp: policy.TaskIDTimestampCreation}
+	svc, _ := newSvcWithNaming(t, n)
+	// creation time = 2025-07-03T11:50:00Z → "20250703T115000000"
+	// window start  = 2025-07-03T11:15:39Z → "20250703T111539000"
+	res, err := svc.Submit(context.Background(), validInput())
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	// The task ID timestamp segment must contain the creation time prefix.
+	if !strings.Contains(res.Task.TaskID, "20250703T115000") {
+		t.Errorf("task_id %q does not contain creation timestamp segment 20250703T115000", res.Task.TaskID)
+	}
+	// created_at must be the creation time.
+	wantCreated := time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC)
+	if !res.Task.CreatedAt.Equal(wantCreated) {
+		t.Errorf("created_at = %v, want %v", res.Task.CreatedAt, wantCreated)
+	}
+	// window_start must remain unchanged.
+	wantWinStart := time.Date(2025, 7, 3, 11, 15, 39, 0, time.UTC)
+	if !res.Task.WindowStart.Equal(wantWinStart) {
+		t.Errorf("window_start = %v, want %v", res.Task.WindowStart, wantWinStart)
+	}
+}
+
+// TestService_TaskIDTimestamp_Start — start policy uses the window start time
+// in the task ID instead of the creation time.
+func TestService_TaskIDTimestamp_Start(t *testing.T) {
+	n := policy.Naming{TaskIDTimestamp: policy.TaskIDTimestampStart}
+	svc, _ := newSvcWithNaming(t, n)
+	// window start  = 2025-07-03T11:15:39Z → "20250703T111539000"
+	// creation time = 2025-07-03T11:50:00Z → "20250703T115000000"
+	res, err := svc.Submit(context.Background(), validInput())
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	// The task ID timestamp segment must contain the window start prefix.
+	if !strings.Contains(res.Task.TaskID, "20250703T111539") {
+		t.Errorf("task_id %q does not contain window-start timestamp segment 20250703T111539", res.Task.TaskID)
+	}
+	// created_at must still be the creation time, NOT the window start.
+	wantCreated := time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC)
+	if !res.Task.CreatedAt.Equal(wantCreated) {
+		t.Errorf("created_at = %v, want %v (must remain creation time)", res.Task.CreatedAt, wantCreated)
+	}
+	// window_start must remain unchanged.
+	wantWinStart := time.Date(2025, 7, 3, 11, 15, 39, 0, time.UTC)
+	if !res.Task.WindowStart.Equal(wantWinStart) {
+		t.Errorf("window_start = %v, want %v", res.Task.WindowStart, wantWinStart)
+	}
+}
+
+// TestService_TaskIDTimestamp_Idempotency_Creation — idempotency replay returns
+// the same task ID under the creation policy.
+func TestService_TaskIDTimestamp_Idempotency_Creation(t *testing.T) {
+	n := policy.Naming{TaskIDTimestamp: policy.TaskIDTimestampCreation}
+	svc, _ := newSvcWithNaming(t, n)
+	in := validInput()
+	in.IdempotencyKey = "idem-creation"
+	first, err := svc.Submit(context.Background(), in)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	second, err := svc.Submit(context.Background(), in)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if second.Task.TaskID != first.Task.TaskID {
+		t.Errorf("idempotency replay changed task_id: %s → %s", first.Task.TaskID, second.Task.TaskID)
+	}
+}
+
+// TestService_TaskIDTimestamp_Idempotency_Start — idempotency replay returns
+// the same task ID under the start policy.
+func TestService_TaskIDTimestamp_Idempotency_Start(t *testing.T) {
+	n := policy.Naming{TaskIDTimestamp: policy.TaskIDTimestampStart}
+	svc, _ := newSvcWithNaming(t, n)
+	in := validInput()
+	in.IdempotencyKey = "idem-start"
+	first, err := svc.Submit(context.Background(), in)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	second, err := svc.Submit(context.Background(), in)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if second.Task.TaskID != first.Task.TaskID {
+		t.Errorf("idempotency replay changed task_id: %s → %s", first.Task.TaskID, second.Task.TaskID)
 	}
 }

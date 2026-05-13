@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,10 +14,23 @@ const (
 	ChecksumRequired      = "required"
 )
 
+// TaskIDTimestampPolicy controls which timestamp is embedded in the task ID.
+type TaskIDTimestampPolicy string
+
+const (
+	// TaskIDTimestampCreation uses the task creation time for the task ID
+	// timestamp segment. This is the default.
+	TaskIDTimestampCreation TaskIDTimestampPolicy = "creation"
+	// TaskIDTimestampStart uses the submitted task window start time for the
+	// task ID timestamp segment.
+	TaskIDTimestampStart TaskIDTimestampPolicy = "start"
+)
+
 type Naming struct {
-	TimestampFormat TimestampFormat `yaml:"timestamp_format"`
-	WorkingRoot     WorkingRoot     `yaml:"working_root"`
-	Filenames       Filenames       `yaml:"filenames"`
+	TaskIDTimestamp TaskIDTimestampPolicy `yaml:"task_id_timestamp"`
+	TimestampFormat TimestampFormat       `yaml:"timestamp_format"`
+	WorkingRoot     WorkingRoot           `yaml:"working_root"`
+	Filenames       Filenames             `yaml:"filenames"`
 }
 
 type TimestampFormat struct {
@@ -57,6 +71,7 @@ type Integrity struct {
 
 func DefaultNaming() Naming {
 	return Naming{
+		TaskIDTimestamp: TaskIDTimestampCreation,
 		TimestampFormat: TimestampFormat{TaskWindow: "compact-utc-millis", RuntimeEvent: "compact-utc-micros"},
 		WorkingRoot: WorkingRoot{
 			PathTemplate:    "{station}/{task}/{run}",
@@ -75,6 +90,9 @@ func DefaultIntegrity() Integrity {
 
 func (n Naming) WithDefaults() Naming {
 	d := DefaultNaming()
+	if n.TaskIDTimestamp == "" {
+		n.TaskIDTimestamp = d.TaskIDTimestamp
+	}
 	if n.TimestampFormat.TaskWindow == "" {
 		n.TimestampFormat.TaskWindow = d.TimestampFormat.TaskWindow
 	}
@@ -149,6 +167,48 @@ func ParseFilename(name, pattern string, components map[string]ComponentRule) (m
 		parsed[componentJSONName(component)] = value
 	}
 	return parsed, nil
+}
+
+// ParseWindowTimestamp parses a task processing-window timestamp in any of
+// the four accepted forms (Spec §5.3.1):
+//
+//   - RFC 3339 whole-second UTC, e.g. "2025-07-03T11:12:39Z"
+//   - RFC 3339 with at least millisecond precision, e.g. "2025-07-03T11:12:39.000Z"
+//   - Compact UTC seconds (15 chars):    YYYYMMDDTHHmmSS, e.g. "20260513T131429"
+//   - Compact UTC milliseconds (18 chars): YYYYMMDDTHHmmSSmmm, e.g. "20260513T131429000"
+//
+// The result is always normalized to UTC. Compact forms have no explicit
+// timezone and are always interpreted as UTC.
+func ParseWindowTimestamp(s string) (time.Time, error) {
+	switch len(s) {
+	case 15:
+		// Compact UTC seconds: YYYYMMDDTHHmmSS
+		t, err := time.Parse("20060102T150405", s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("timestamp %q: invalid compact UTC seconds: %w", s, err)
+		}
+		return t.UTC(), nil
+	case 18:
+		// Compact UTC milliseconds: YYYYMMDDTHHmmSSmmm
+		base, err := time.Parse("20060102T150405", s[:15])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("timestamp %q: invalid compact UTC milliseconds: %w", s, err)
+		}
+		ms, err := strconv.Atoi(s[15:])
+		if err != nil || ms < 0 || ms > 999 {
+			return time.Time{}, fmt.Errorf("timestamp %q: millisecond part must be 000–999", s)
+		}
+		return base.UTC().Add(time.Duration(ms) * time.Millisecond), nil
+	default:
+		// RFC 3339 (with or without fractional seconds).
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t.UTC(), nil
+		}
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t.UTC(), nil
+		}
+		return time.Time{}, fmt.Errorf("timestamp %q: unsupported format (want RFC 3339 or compact UTC YYYYMMDDTHHmmSS[mmm])", s)
+	}
 }
 
 func ParseFilenameTime(value string) (time.Time, error) {

@@ -236,6 +236,13 @@ func (c *Config) Validate() error {
 	}
 	c.Naming = c.Naming.WithDefaults()
 	c.Integrity = c.Integrity.WithDefaults()
+	switch c.Naming.TaskIDTimestamp {
+	case policy.TaskIDTimestampCreation, policy.TaskIDTimestampStart:
+		// valid
+	default:
+		return fmt.Errorf("config: naming.task_id_timestamp %q invalid; supported values are %q and %q",
+			c.Naming.TaskIDTimestamp, policy.TaskIDTimestampCreation, policy.TaskIDTimestampStart)
+	}
 	if err := policy.ValidatePathTemplate(c.Naming.WorkingRoot.PathTemplate); err != nil {
 		return fmt.Errorf("config: naming.working_root.%w", err)
 	}

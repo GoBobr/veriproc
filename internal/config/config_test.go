@@ -118,3 +118,59 @@ func TestConfig_MissingFile_M0(t *testing.T) {
 		t.Fatalf("expected error for missing config file")
 	}
 }
+
+// TestConfig_TaskIDTimestamp_Default — omitted key defaults to "creation".
+func TestConfig_TaskIDTimestamp_Default(t *testing.T) {
+	cfg, err := Load(nil, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if string(cfg.Naming.TaskIDTimestamp) != "creation" {
+		t.Errorf("default TaskIDTimestamp = %q, want %q", cfg.Naming.TaskIDTimestamp, "creation")
+	}
+}
+
+// TestConfig_TaskIDTimestamp_ExplicitCreation — explicit "creation" validates.
+func TestConfig_TaskIDTimestamp_ExplicitCreation(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("naming:\n  task_id_timestamp: creation\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load([]string{"--config", p}, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if string(cfg.Naming.TaskIDTimestamp) != "creation" {
+		t.Errorf("TaskIDTimestamp = %q, want creation", cfg.Naming.TaskIDTimestamp)
+	}
+}
+
+// TestConfig_TaskIDTimestamp_ExplicitStart — explicit "start" validates.
+func TestConfig_TaskIDTimestamp_ExplicitStart(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("naming:\n  task_id_timestamp: start\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load([]string{"--config", p}, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if string(cfg.Naming.TaskIDTimestamp) != "start" {
+		t.Errorf("TaskIDTimestamp = %q, want start", cfg.Naming.TaskIDTimestamp)
+	}
+}
+
+// TestConfig_TaskIDTimestamp_Invalid — unknown value is rejected.
+func TestConfig_TaskIDTimestamp_Invalid(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("naming:\n  task_id_timestamp: bogus\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := Load([]string{"--config", p}, nil)
+	if err == nil {
+		t.Fatal("expected validation error for invalid task_id_timestamp")
+	}
+}

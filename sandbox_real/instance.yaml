@@ -16,6 +16,8 @@ storage:
   station_config_root: sandbox_real/stations
 
 naming:
+  # can be "start" or "creation"
+  task_id_timestamp: start
   timestamp_format:
     task_window: compact-utc-millis
     runtime_event: compact-utc-micros
