@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 
 	"github.com/eum/veriproc/internal/canonjson"
 	"github.com/eum/veriproc/internal/executor"
@@ -70,6 +71,7 @@ type Service struct {
 	generators        map[string]string
 	naming            policy.Naming
 	integrity         policy.Integrity
+	logger            zerolog.Logger
 }
 
 // GroupRegistrar is the optional callback invoked after PrepareRun when a
@@ -93,6 +95,7 @@ type Config struct {
 	Generators        map[string]string
 	Naming            policy.Naming
 	Integrity         policy.Integrity
+	Logger            zerolog.Logger
 }
 
 // NewService constructs a Service. WorkingRootBase defaults to
@@ -133,6 +136,7 @@ func NewService(cfg Config) *Service {
 		generators:        cloneStringMap(cfg.Generators),
 		naming:            cfg.Naming,
 		integrity:         cfg.Integrity,
+		logger:            cfg.Logger,
 	}
 }
 
@@ -478,136 +482,320 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 			return nil, fmt.Errorf("parse rolling folders: %w", err)
 		}
 	}
-	for idx, input := range inputs {
-		entry := store.ManifestEntry{
-			EntryID:                  fmt.Sprintf("ent-%s-%02d", sha12(runID+":"+input.FileType), idx),
-			ObjectSequence:           idx,
-			FileType:                 input.FileType,
-			Category:                 input.Category,
-			Optional:                 input.Optional,
-			EffectiveFilenamePattern: s.effectiveInputFilenamePattern(input),
-		}
-		entry.WindowMatch = defaultWindowMatch(entry.EffectiveFilenamePattern, s.naming, input)
+	seqCounter := 0
+	for inputIdx, input := range inputs {
+		effectivePattern := s.effectiveInputFilenamePattern(input)
+		windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
 		folders := s.productCategories[input.Category]
 		if override := rollingFolders[input.Category]; len(override) > 0 {
 			folders = override
 		}
-		selected, err := s.selectInputCandidate(input, folders, task)
+		winners, missingReason, err := s.classicalSelectCandidates(runID, input, folders, task)
 		if err != nil {
 			return nil, err
 		}
-		entry.SourceArchiveID = selected.ArchiveID
-		entry.ObjectKind = selected.ObjectKind
-		entry.SourcePrecedence = selected.Precedence
-		entry.SelectionReason = selected.Reason
-		entry.EffectiveFilenamePattern = selected.EffectivePattern
-		entry.FilenameComponents = selected.FilenameComponents
-		entry.WindowMatch = selected.WindowMatch
-		if selected.Path == "" {
-			if !input.Optional {
-				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, selected.Reason)
+		if len(winners) == 0 {
+			entry := store.ManifestEntry{
+				EntryID:                  fmt.Sprintf("ent-%s-%02d-miss", sha12(runID+":"+input.FileType), inputIdx),
+				ObjectSequence:           seqCounter,
+				FileType:                 input.FileType,
+				Category:                 input.Category,
+				Optional:                 input.Optional,
+				Present:                  false,
+				EffectiveFilenamePattern: effectivePattern,
+				WindowMatch:              windowMatch,
+				SelectionReason:          missingReason,
 			}
+			seqCounter++
 			manifest.Entries = append(manifest.Entries, entry)
+			if !input.Optional {
+				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, missingReason)
+			}
+			s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+				Str("input_key", input.FileType).Bool("optional", input.Optional).
+				Str("reason", missingReason).Msg("matcher: missing optional input")
 			continue
 		}
-		info, err := os.Stat(selected.Path)
-		if err != nil {
-			return nil, err
+		for winnerIdx, winner := range winners {
+			entry := store.ManifestEntry{
+				EntryID:                  fmt.Sprintf("ent-%s-%02d-%02d", sha12(runID+":"+input.FileType), inputIdx, winnerIdx),
+				ObjectSequence:           seqCounter,
+				FileType:                 input.FileType,
+				Category:                 input.Category,
+				Optional:                 input.Optional,
+				EffectiveFilenamePattern: winner.EffectivePattern,
+				FilenameComponents:       winner.FilenameComponents,
+				WindowMatch:              winner.WindowMatch,
+				ObjectKind:               winner.ObjectKind,
+				SourceArchiveID:          winner.ArchiveID,
+				SourcePrecedence:         winner.FolderPriority + 1,
+				SelectionReason:          winner.Reason,
+				IntervalGroupKey:         winner.IntervalGroupKey,
+				FolderPriority:           winner.FolderPriority,
+				Discriminator:            winner.Discriminator,
+				WinnerMetadata:           winner.WinnerMetadata,
+			}
+			seqCounter++
+			info, err := os.Stat(winner.Path)
+			if err != nil {
+				return nil, err
+			}
+			linkName := safeInputLinkName(seqCounter-1, input.FileType, filepath.Base(winner.Path))
+			linkPath := filepath.Join(workingRoot, "input", linkName)
+			_ = os.Remove(linkPath)
+			if err := os.Symlink(winner.Path, linkPath); err != nil {
+				return nil, fmt.Errorf("symlink input %s: %w", input.FileType, err)
+			}
+			entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
+			entry.Present = true
+			if winner.ObjectKind == store.ObjectKindRegularFile {
+				entry.Size = info.Size()
+			}
+			entry.MTime = nullTime(info.ModTime().UTC())
+			if winner.ObjectKind == store.ObjectKindRegularFile {
+				entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(winner.Path, s.integrity)
+			}
+			entry.VersionMetadata = versionMetadata(winner.Path)
+			manifest.Entries = append(manifest.Entries, entry)
 		}
-		linkName := safeInputLinkName(idx, input.FileType, filepath.Base(selected.Path))
-		linkPath := filepath.Join(workingRoot, "input", linkName)
-		_ = os.Remove(linkPath)
-		if err := os.Symlink(selected.Path, linkPath); err != nil {
-			return nil, fmt.Errorf("symlink input %s: %w", input.FileType, err)
-		}
-		entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
-		entry.Present = true
-		if selected.ObjectKind == store.ObjectKindRegularFile {
-			entry.Size = info.Size()
-		}
-		entry.MTime = nullTime(info.ModTime().UTC())
-		if selected.ObjectKind == store.ObjectKindRegularFile {
-			entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(selected.Path, s.integrity)
-		}
-		entry.VersionMetadata = versionMetadata(selected.Path)
-		manifest.Entries = append(manifest.Entries, entry)
 	}
 	_ = ctx
 	return manifest, nil
 }
 
+// selectedInputCandidate is one winner produced by the classical matcher.
 type selectedInputCandidate struct {
 	Path               string
 	ObjectKind         string
 	ArchiveID          string
-	Precedence         int
+	FolderPriority     int
 	Reason             string
 	EffectivePattern   string
 	FilenameComponents string
 	WindowMatch        string
+	IntervalGroupKey   string
+	Discriminator      string
+	WinnerMetadata     string
 }
 
-func (s *Service) selectInputCandidate(input stations.InputDefinition, folders []string, task *store.TaskRecord) (selectedInputCandidate, error) {
-	selected := selectedInputCandidate{
-		EffectivePattern: s.effectiveInputFilenamePattern(input),
-	}
+// classicalCandidate is an internal struct holding a parsed candidate during
+// classical matching before winner selection.
+type classicalCandidate struct {
+	Path             string
+	ObjectKind       string
+	ArchiveID        string
+	FolderPriority   int // 0-indexed; 0 = first (highest-priority) configured folder
+	EffectivePattern string
+	WindowMatch      string
+	ParsedComponents map[string]string
+	GenTimeStr       string
+	GenTime          time.Time
+	IsSentinel       bool   // true when GenTimeStr cannot be parsed as a real timestamp
+	Discriminator    string // captured suffix from post-generation wildcard
+	IntervalGroupKey string // file_type|start_time|end_time, or just file_type when unstructured
+}
+
+// classicalSelectCandidates implements the classical input matching algorithm.
+// It scans all configured folders, groups valid candidates by logical interval,
+// and selects one winner per group using the classical comparison order:
+//  1. Newest real parsed generation time (sentinels rank last).
+//  2. Lexicographically greatest discriminator/suffix when generation time ties.
+//  3. Lowest folder-priority index (first configured folder) when discriminator ties.
+//  4. Lexicographically smallest full source path as a stable fallback.
+//
+// It returns one selectedInputCandidate per logical interval group. The second
+// return value is the reason string for a missing-input entry when the slice is empty.
+func (s *Service) classicalSelectCandidates(
+	runID string,
+	input stations.InputDefinition,
+	folders []string,
+	task *store.TaskRecord,
+) ([]selectedInputCandidate, string, error) {
+	effectivePattern := s.effectiveInputFilenamePattern(input)
+	windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
 	patternHasFileType := s.inputPatternHasFileType(input)
-	selected.WindowMatch = defaultWindowMatch(selected.EffectivePattern, s.naming, input)
+
+	s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+		Str("input_key", input.FileType).
+		Str("file_type", input.FileType).
+		Str("category", input.Category).
+		Str("object_kind", input.ObjectKind).
+		Bool("optional", input.Optional).
+		Str("effective_pattern", effectivePattern).
+		Str("window_match", windowMatch).
+		Msg("matcher: resolving input")
+
 	if len(folders) == 0 {
-		selected.Reason = "no configured folders"
-		return selected, nil
+		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+			Str("input_key", input.FileType).Msg("matcher: no configured folders")
+		return nil, "no configured folders", nil
 	}
-	for precedence, folderRef := range folders {
+
+	// Collect all valid candidates from all folders.
+	var allCandidates []classicalCandidate
+	for priority, folderRef := range folders {
 		folder, archiveID, err := s.resolveFolderRef(folderRef)
 		if err != nil {
-			return selected, err
+			return nil, "", err
 		}
-		candidates, err := s.inputCandidatesInFolder(folder, input, selected.EffectivePattern)
+		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+			Str("input_key", input.FileType).
+			Int("folder_priority", priority).
+			Str("folder_ref", folderRef).
+			Str("folder", folder).
+			Str("archive_id", archiveID).
+			Msg("matcher: scanning folder")
+		rawCandidates, err := s.inputCandidatesInFolder(folder, input, effectivePattern)
 		if err != nil {
-			return selected, err
+			return nil, "", err
 		}
-		valid := make([]selectedInputCandidate, 0, len(candidates))
-		for _, raw := range candidates {
-			candidate := selectedInputCandidate{Path: raw.Path, ObjectKind: raw.ObjectKind, ArchiveID: archiveID, Precedence: precedence + 1, EffectivePattern: selected.EffectivePattern, WindowMatch: selected.WindowMatch}
-			if selected.EffectivePattern != "" {
-				components, err := policy.ParseFilename(filepath.Base(raw.Path), selected.EffectivePattern, s.naming.Filenames.Components)
+		for _, raw := range rawCandidates {
+			candidate := classicalCandidate{
+				Path:             raw.Path,
+				ObjectKind:       raw.ObjectKind,
+				ArchiveID:        archiveID,
+				FolderPriority:   priority,
+				EffectivePattern: effectivePattern,
+				WindowMatch:      windowMatch,
+			}
+			if effectivePattern != "" {
+				components, err := policy.ParseFilename(filepath.Base(raw.Path), effectivePattern, s.naming.Filenames.Components)
 				if err != nil {
+					s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+						Str("input_key", input.FileType).
+						Str("path", raw.Path).
+						Str("parse_error", err.Error()).
+						Msg("matcher: candidate parse failure")
 					continue
 				}
 				if patternHasFileType {
 					components["file_type"] = input.FileType
 				}
-				if !candidateMatchesWindow(components, selected.WindowMatch, input, task) {
+				if !candidateMatchesWindow(components, windowMatch, input, task) {
+					s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+						Str("input_key", input.FileType).
+						Str("path", raw.Path).
+						Str("window_policy", windowMatch).
+						Msg("matcher: candidate rejected by window policy")
 					continue
 				}
-				body, err := canonjson.Marshal(components)
-				if err != nil {
-					return selected, err
-				}
-				candidate.FilenameComponents = string(body)
+				genTimeStr := components["generation_time"]
+				genTime, gtErr := policy.ParseFilenameTime(genTimeStr)
+				candidate.GenTimeStr = genTimeStr
+				candidate.GenTime = genTime
+				candidate.IsSentinel = gtErr != nil
+				candidate.Discriminator = components["suffix"]
+				candidate.ParsedComponents = components
+				candidate.IntervalGroupKey = input.FileType + "|" + components["start_time"] + "|" + components["end_time"]
+				s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+					Str("input_key", input.FileType).
+					Str("path", raw.Path).
+					Str("interval_group_key", candidate.IntervalGroupKey).
+					Str("generation_time", genTimeStr).
+					Bool("is_sentinel", candidate.IsSentinel).
+					Str("discriminator", candidate.Discriminator).
+					Int("folder_priority", priority).
+					Msg("matcher: candidate accepted")
+			} else {
+				// No structured pattern: single group per declared input.
+				candidate.IntervalGroupKey = input.FileType
 			}
-			valid = append(valid, candidate)
+			allCandidates = append(allCandidates, candidate)
 		}
-		if len(valid) == 0 {
-			continue
-		}
-		sort.Slice(valid, func(i, j int) bool {
-			im, _ := os.Stat(valid[i].Path)
-			jm, _ := os.Stat(valid[j].Path)
-			if im != nil && jm != nil && !im.ModTime().Equal(jm.ModTime()) {
-				return im.ModTime().Before(jm.ModTime())
-			}
-			return valid[i].Path < valid[j].Path
-		})
-		winner := valid[len(valid)-1]
-		winner.Reason = "selected latest by mtime then path within precedence"
-		if selected.EffectivePattern != "" {
-			winner.Reason = "selected latest matching filename_pattern/window_match by mtime then path within precedence"
-		}
-		return winner, nil
 	}
-	selected.Reason = "no matching candidate"
-	return selected, nil
+
+	if len(allCandidates) == 0 {
+		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+			Str("input_key", input.FileType).Msg("matcher: no matching candidates")
+		return nil, "no matching candidate", nil
+	}
+
+	// Group by interval key preserving first-seen order.
+	groupOrder := []string{}
+	groups := map[string][]classicalCandidate{}
+	for _, c := range allCandidates {
+		if _, ok := groups[c.IntervalGroupKey]; !ok {
+			groupOrder = append(groupOrder, c.IntervalGroupKey)
+		}
+		groups[c.IntervalGroupKey] = append(groups[c.IntervalGroupKey], c)
+	}
+
+	winners := make([]selectedInputCandidate, 0, len(groups))
+	for _, groupKey := range groupOrder {
+		groupCandidates := groups[groupKey]
+		// Sort best-first: winner is groupCandidates[0].
+		sort.Slice(groupCandidates, func(i, j int) bool {
+			ci, cj := groupCandidates[i], groupCandidates[j]
+			// Non-sentinel beats sentinel.
+			if ci.IsSentinel != cj.IsSentinel {
+				return !ci.IsSentinel
+			}
+			// Both real: newest generation time first.
+			if !ci.IsSentinel && !cj.IsSentinel && !ci.GenTime.Equal(cj.GenTime) {
+				return ci.GenTime.After(cj.GenTime)
+			}
+			// Both sentinels: greatest gen-time string first (lexicographic).
+			if ci.IsSentinel && cj.IsSentinel && ci.GenTimeStr != cj.GenTimeStr {
+				return ci.GenTimeStr > cj.GenTimeStr
+			}
+			// Greatest discriminator first.
+			if ci.Discriminator != cj.Discriminator {
+				return ci.Discriminator > cj.Discriminator
+			}
+			// Lowest folder-priority index first (highest user priority).
+			if ci.FolderPriority != cj.FolderPriority {
+				return ci.FolderPriority < cj.FolderPriority
+			}
+			// Stable fallback: smallest path first.
+			return ci.Path < cj.Path
+		})
+		winner := groupCandidates[0]
+
+		winnerMeta := map[string]any{
+			"generation_time": winner.GenTimeStr,
+			"is_sentinel":     winner.IsSentinel,
+			"discriminator":   winner.Discriminator,
+			"folder_priority": winner.FolderPriority,
+			"source_path":     winner.Path,
+			"candidate_count": len(groupCandidates),
+		}
+		winnerMetaJSON, _ := canonjson.Marshal(winnerMeta)
+
+		var filenameComponentsJSON string
+		if winner.ParsedComponents != nil {
+			b, err := canonjson.Marshal(winner.ParsedComponents)
+			if err != nil {
+				return nil, "", err
+			}
+			filenameComponentsJSON = string(b)
+		}
+
+		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+			Str("input_key", input.FileType).
+			Str("interval_group_key", groupKey).
+			Str("winner_path", winner.Path).
+			Str("generation_time", winner.GenTimeStr).
+			Bool("is_sentinel", winner.IsSentinel).
+			Str("discriminator", winner.Discriminator).
+			Int("folder_priority", winner.FolderPriority).
+			Int("candidates_in_group", len(groupCandidates)).
+			Msg("matcher: selected winner")
+
+		winners = append(winners, selectedInputCandidate{
+			Path:               winner.Path,
+			ObjectKind:         winner.ObjectKind,
+			ArchiveID:          winner.ArchiveID,
+			FolderPriority:     winner.FolderPriority,
+			EffectivePattern:   winner.EffectivePattern,
+			WindowMatch:        winner.WindowMatch,
+			FilenameComponents: filenameComponentsJSON,
+			IntervalGroupKey:   winner.IntervalGroupKey,
+			Discriminator:      winner.Discriminator,
+			WinnerMetadata:     string(winnerMetaJSON),
+			Reason:             "classical-matcher: selected by generation_time, discriminator, folder_priority, path",
+		})
+	}
+	return winners, "", nil
 }
 
 func (s *Service) effectiveInputFilenamePattern(input stations.InputDefinition) string {

@@ -45,6 +45,10 @@ type ManifestEntry struct {
 	FilenameComponents       string
 	WindowMatch              string
 	SelectionReason          string
+	IntervalGroupKey         string
+	FolderPriority           int
+	Discriminator            string
+	WinnerMetadata           string
 }
 
 // ManifestRepo persists manifest headers + entries.
@@ -79,14 +83,16 @@ func (r *ManifestRepo) Insert(ctx context.Context, m *ManifestRecord) error {
 					(entry_id, manifest_id, object_sequence, object_kind, file_type, category, path,
 					 optional, present, size, mtime, checksum, checksum_algo, checksum_source,
 					 source_archive_id, source_precedence, version_metadata,
-					 effective_filename_pattern, filename_components, window_match, selection_reason)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					 effective_filename_pattern, filename_components, window_match, selection_reason,
+					 interval_group_key, folder_priority, discriminator, winner_metadata)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				e.EntryID, m.ManifestID, e.ObjectSequence, nullStr(e.ObjectKind), e.FileType, nullStr(e.Category), nullStr(e.Path),
 				boolInt(e.Optional), boolInt(e.Present),
 				nullInt(e.Size), nullTime(e.MTime), nullStr(e.Checksum), nullStr(e.ChecksumAlgo),
 				nullStr(e.ChecksumSource), nullStr(e.SourceArchiveID), nullInt(int64(e.SourcePrecedence)),
 				nullStr(e.VersionMetadata), nullStr(e.EffectiveFilenamePattern), nullStr(e.FilenameComponents),
-				nullStr(e.WindowMatch), nullStr(e.SelectionReason)); err != nil {
+				nullStr(e.WindowMatch), nullStr(e.SelectionReason),
+				nullStr(e.IntervalGroupKey), nullInt(int64(e.FolderPriority)), nullStr(e.Discriminator), nullStr(e.WinnerMetadata)); err != nil {
 				return err
 			}
 		}
@@ -121,7 +127,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 		       COALESCE(checksum,''), COALESCE(checksum_algo,''), COALESCE(checksum_source,''),
 		       COALESCE(source_archive_id,''), COALESCE(source_precedence,0),
 		       COALESCE(version_metadata,''), COALESCE(effective_filename_pattern,''),
-		       COALESCE(filename_components,''), COALESCE(window_match,''), COALESCE(selection_reason,'')
+		       COALESCE(filename_components,''), COALESCE(window_match,''), COALESCE(selection_reason,''),
+		       COALESCE(interval_group_key,''), COALESCE(folder_priority,0), COALESCE(discriminator,''), COALESCE(winner_metadata,'')
 		FROM resolved_input_entries WHERE manifest_id = ? ORDER BY entry_id`, m.ManifestID)
 	if err != nil {
 		return nil, err
@@ -134,7 +141,8 @@ func (r *ManifestRepo) GetByRun(ctx context.Context, runID string) (*ManifestRec
 			&opt, &pres, &e.Size, &e.MTime, &e.Checksum, &e.ChecksumAlgo,
 			&e.ChecksumSource, &e.SourceArchiveID, &e.SourcePrecedence,
 			&e.VersionMetadata, &e.EffectiveFilenamePattern, &e.FilenameComponents,
-			&e.WindowMatch, &e.SelectionReason); err != nil {
+			&e.WindowMatch, &e.SelectionReason,
+			&e.IntervalGroupKey, &e.FolderPriority, &e.Discriminator, &e.WinnerMetadata); err != nil {
 			return nil, err
 		}
 		if e.MTime.Valid {

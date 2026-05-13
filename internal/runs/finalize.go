@@ -407,7 +407,52 @@ func declaredOutputs(rev *store.StationRevisionRecord) ([]stations.OutputDefinit
 
 func (s *Service) writeManifestExport(run *store.RunRecord, manifest *store.ManifestRecord) (string, error) {
 	path := filepath.Join(run.WorkingRoot, "manifest", "resolved-inputs.yaml")
-	body, err := yaml.Marshal(map[string]any{"schema_version": "veriproc.manifest/v1", "run_id": run.RunID, "entries": manifest.Entries})
+	type exportEntry struct {
+		EntryID                  string         `yaml:"entry_id"`
+		FileType                 string         `yaml:"file_type"`
+		Category                 string         `yaml:"category,omitempty"`
+		Optional                 bool           `yaml:"optional"`
+		Present                  bool           `yaml:"present"`
+		Path                     string         `yaml:"path,omitempty"`
+		ObjectKind               string         `yaml:"object_kind,omitempty"`
+		Size                     int64          `yaml:"size,omitempty"`
+		SourceArchiveID          string         `yaml:"source_archive_id,omitempty"`
+		FolderPriority           int            `yaml:"folder_priority,omitempty"`
+		EffectiveFilenamePattern string         `yaml:"effective_filename_pattern,omitempty"`
+		FilenameComponents       string         `yaml:"filename_components,omitempty"`
+		WindowMatch              string         `yaml:"window_match,omitempty"`
+		IntervalGroupKey         string         `yaml:"interval_group_key,omitempty"`
+		Discriminator            string         `yaml:"discriminator,omitempty"`
+		WinnerMetadata           string         `yaml:"winner_metadata,omitempty"`
+		SelectionReason          string         `yaml:"selection_reason,omitempty"`
+	}
+	entries := make([]exportEntry, 0, len(manifest.Entries))
+	for _, e := range manifest.Entries {
+		entries = append(entries, exportEntry{
+			EntryID:                  e.EntryID,
+			FileType:                 e.FileType,
+			Category:                 e.Category,
+			Optional:                 e.Optional,
+			Present:                  e.Present,
+			Path:                     e.Path,
+			ObjectKind:               e.ObjectKind,
+			Size:                     e.Size,
+			SourceArchiveID:          e.SourceArchiveID,
+			FolderPriority:           e.FolderPriority,
+			EffectiveFilenamePattern: e.EffectiveFilenamePattern,
+			FilenameComponents:       e.FilenameComponents,
+			WindowMatch:              e.WindowMatch,
+			IntervalGroupKey:         e.IntervalGroupKey,
+			Discriminator:            e.Discriminator,
+			WinnerMetadata:           e.WinnerMetadata,
+			SelectionReason:          e.SelectionReason,
+		})
+	}
+	body, err := yaml.Marshal(map[string]any{
+		"schema_version": "veriproc.manifest/v1",
+		"run_id":         run.RunID,
+		"entries":        entries,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -415,13 +460,28 @@ func (s *Service) writeManifestExport(run *store.RunRecord, manifest *store.Mani
 }
 
 func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, s *Service) map[string]any {
-	inputs := make([]map[string]any, 0, len(manifest.Entries))
+	// Group manifest entries by (file_type, category) to support multiple
+	// selected objects (distinct interval groups) per declared input.
+	type inputKey struct{ fileType, category string }
+	inputMap := map[inputKey][]string{}
+	inputOrder := []inputKey{}
 	for _, entry := range manifest.Entries {
-		item := map[string]any{"file_type": entry.FileType, "category": entry.Category, "files": []string{}}
-		if entry.Present && entry.Path != "" {
-			item["files"] = []string{"./" + filepath.ToSlash(entry.Path)}
+		key := inputKey{entry.FileType, entry.Category}
+		if _, exists := inputMap[key]; !exists {
+			inputOrder = append(inputOrder, key)
+			inputMap[key] = []string{}
 		}
-		inputs = append(inputs, item)
+		if entry.Present && entry.Path != "" {
+			inputMap[key] = append(inputMap[key], "./"+filepath.ToSlash(entry.Path))
+		}
+	}
+	inputs := make([]map[string]any, 0, len(inputOrder))
+	for _, key := range inputOrder {
+		inputs = append(inputs, map[string]any{
+			"file_type": key.fileType,
+			"category":  key.category,
+			"files":     inputMap[key],
+		})
 	}
 	outDocs := make([]map[string]any, 0, len(outputs))
 	for _, out := range outputs {

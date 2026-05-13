@@ -137,6 +137,11 @@ func ParseFilename(name, pattern string, components map[string]ComponentRule) (m
 	parsed := map[string]string{}
 	for idx, component := range names {
 		value := matches[idx+1]
+		if component == "" {
+			// Wildcard capture: expose as "suffix" for discriminator comparison.
+			parsed["suffix"] = value
+			continue
+		}
 		rule := components[component]
 		if err := validateComponentValue(component, value, rule); err != nil {
 			return nil, err
@@ -182,7 +187,9 @@ func compileFilenamePattern(pattern string, components map[string]ComponentRule)
 			names = append(names, component)
 			i += end + 1
 		case '*':
-			expr.WriteString(".*")
+			// Capture wildcard as a named group; stored under "suffix" in ParseFilename.
+			expr.WriteString("(.*)")
+			names = append(names, "") // sentinel: wildcard capture
 			i++
 		case '?':
 			expr.WriteString(".")

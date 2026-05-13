@@ -182,6 +182,10 @@ CREATE TABLE resolved_input_entries (
     filename_components TEXT,
     window_match TEXT,
     selection_reason TEXT,
+    interval_group_key TEXT,
+    folder_priority    INTEGER,
+    discriminator      TEXT,
+    winner_metadata    TEXT,
     FOREIGN KEY (manifest_id) REFERENCES resolved_input_manifests(manifest_id)
 );
 
