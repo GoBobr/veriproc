@@ -18,6 +18,8 @@ joborder:
     dyn_params:
       mode: NOMINAL
       CpuCores: 12
+      test: True
+      add: "fake"
     temporary_folder: ./temp
     config_files:
       - schemas
