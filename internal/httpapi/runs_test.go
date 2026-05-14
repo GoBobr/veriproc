@@ -268,7 +268,17 @@ func TestAPI_ArtifactContent_M4(t *testing.T) {
 	a.tickN(t, 6)
 	tk, _ := a.st.Tasks().Get(context.Background(), taskID)
 	arts, _ := a.st.Artifacts().ListByRun(context.Background(), tk.LatestRunID, "log")
-	resp, err := a.srv.Client().Get(a.srv.URL + "/api/v1/artifacts/" + arts[0].ArtifactID + "/content")
+	var artifactID string
+	for _, art := range arts {
+		if art.Size > 0 {
+			artifactID = art.ArtifactID
+			break
+		}
+	}
+	if artifactID == "" {
+		t.Fatalf("no non-empty log artifact: %#v", arts)
+	}
+	resp, err := a.srv.Client().Get(a.srv.URL + "/api/v1/artifacts/" + artifactID + "/content")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

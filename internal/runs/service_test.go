@@ -103,8 +103,15 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	if err := yaml.Unmarshal(jobOrderRaw, &jobOrder); err != nil {
 		t.Fatalf("parse joborder: %v", err)
 	}
-	if jobOrder["schema_version"] != "veriproc.joborder/v1" {
-		t.Fatalf("joborder missing schema_version: %#v", jobOrder)
+	meta, ok := jobOrder["veriproc_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("joborder missing veriproc_meta: %#v", jobOrder)
+	}
+	if meta["schema_version"] != "veriproc.joborder/v1" || meta["task_id"] != runA.TaskID || meta["retry_index"] == nil {
+		t.Fatalf("joborder veriproc_meta incomplete: %#v", meta)
+	}
+	if _, ok := jobOrder["schema_version"]; ok {
+		t.Fatalf("schema_version must be under veriproc_meta, got root joborder: %#v", jobOrder)
 	}
 	if inputs, ok := jobOrder["inputs"].([]any); !ok || len(inputs) != 2 {
 		t.Fatalf("joborder inputs = %#v, want two flat input entries", jobOrder["inputs"])
@@ -188,7 +195,7 @@ cp input/20250703_AUX_DIR_v1/data.nc "$VERIPROC_RUN_DIR/dir-output/data.nc"
 		Inputs:        []stations.InputDefinition{{FileType: "AUX_DIR", Category: "product", ObjectKind: store.ObjectKindDirectory}},
 		Outputs:       []stations.OutputDefinition{{Name: "dir-output", FileType: "DIR_OUTPUT", ObjectKind: store.ObjectKindDirectory, Required: true}},
 		Publication:   stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"dir-output"}},
-		Execution:   stations.Execution{Executable: script},
+		Execution:     stations.Execution{Executable: script},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -609,13 +616,17 @@ func TestRuns_JobOrderFormatJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("joborder.json not found: %v", err)
 	}
-	// Must parse as valid JSON containing schema_version.
+	// Must parse as valid JSON containing veriproc_meta.schema_version.
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("invalid JSON joborder: %v", err)
 	}
-	if doc["schema_version"] != "veriproc.joborder/v1" {
-		t.Errorf("schema_version = %v", doc["schema_version"])
+	meta, ok := doc["veriproc_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("joborder missing veriproc_meta: %#v", doc)
+	}
+	if meta["schema_version"] != "veriproc.joborder/v1" {
+		t.Errorf("schema_version = %v", meta["schema_version"])
 	}
 }
 

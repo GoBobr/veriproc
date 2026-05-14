@@ -23,4 +23,6 @@ primary input: ${primary}
 aux input: ${aux}
 OUTPUT
 echo "wrote ${VERIPROC_RUN_DIR}/${OUTFNAME} from ${primary} and ${aux}"
+
+echo "sample error" 1>&2
 exit 0

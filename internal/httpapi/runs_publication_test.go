@@ -36,7 +36,7 @@ func TestAPI_RunArtifacts_PublicationStatus_5_5_6_M6(t *testing.T) {
 		ArtifactID:      art.ArtifactID,
 		ProducingRunID:  art.ProducingRunID,
 		ArchiveID:       "primary",
-		TargetPath:      "logs/" + art.ArtifactID + "/run.log",
+		TargetPath:      "logs/" + art.ArtifactID + "/" + filepath.Base(art.Path),
 		PublicationMode: "copy",
 	}
 	if err := a.st.Publications().Insert(ctx, pubRec); err != nil {

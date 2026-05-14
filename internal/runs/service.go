@@ -389,9 +389,11 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 			return nil, err
 		}
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
-		if logArt, werr := s.collectRunLog(run); werr == nil {
-			logArt.ValidationStatus = "failed"
-			_ = s.store.Artifacts().Insert(ctx, logArt)
+		if logArts, werr := s.collectRunLogs(run); werr == nil {
+			for _, logArt := range logArts {
+				logArt.ValidationStatus = "failed"
+				_ = s.store.Artifacts().Insert(ctx, logArt)
+			}
 		}
 	case executor.StatusCancelled:
 		if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {

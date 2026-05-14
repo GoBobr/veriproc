@@ -51,7 +51,7 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("%w: cannot finalize run in state %q", ErrInvalidStateTransition, run.State)
 	}
 
-	logArtifact, err := s.collectRunLog(run)
+	logArtifacts, err := s.collectRunLogs(run)
 	if err != nil {
 		return nil, fmt.Errorf("write log: %w", err)
 	}
@@ -104,8 +104,10 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 	}
 
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
-		if err := tx.Artifacts().Insert(ctx, logArtifact); err != nil {
-			return err
+		for _, logArtifact := range logArtifacts {
+			if err := tx.Artifacts().Insert(ctx, logArtifact); err != nil {
+				return err
+			}
 		}
 		for _, oa := range outputArtifacts {
 			if err := tx.Artifacts().Insert(ctx, oa); err != nil {
@@ -392,32 +394,48 @@ func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (
 	return filepath.Join(dir, out.FileType), out.FileType, nil
 }
 
-func (s *Service) collectRunLog(run *store.RunRecord) (*store.ArtifactRecord, error) {
+func (s *Service) collectRunLogs(run *store.RunRecord) ([]*store.ArtifactRecord, error) {
 	dir := filepath.Join(run.WorkingRoot, "logs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, "run.log")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		body = []byte(fmt.Sprintf("run=%s task=%s state=finalizing executor=%s\n",
-			run.RunID, run.TaskID, s.exec.Type()))
-		if err := os.WriteFile(path, body, 0o644); err != nil {
-			return nil, err
-		}
+	now := s.clock().UTC()
+	logSpecs := []struct {
+		name     string
+		fileType string
+	}{
+		{name: "run_out.log", fileType: "RUN_STDOUT"},
+		{name: "run_err.log", fileType: "RUN_STDERR"},
 	}
-	return &store.ArtifactRecord{
-		ArtifactID:       "art-" + sha12(run.RunID+":log"),
-		ProducingRunID:   run.RunID,
-		LogicalType:      "log",
-		ObjectKind:       store.ObjectKindRegularFile,
-		FileType:         "RUN_LOG",
-		Path:             path,
-		Size:             int64(len(body)),
-		ValidationStatus: "validated",
-		Availability:     "available",
-		CreatedAt:        s.clock().UTC(),
-	}, nil
+	arts := make([]*store.ArtifactRecord, 0, len(logSpecs))
+	for _, spec := range logSpecs {
+		path := filepath.Join(dir, spec.name)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			if spec.name == "run_err.log" {
+				body = []byte(fmt.Sprintf("run=%s task=%s state=finalizing executor=%s\n",
+					run.RunID, run.TaskID, s.exec.Type()))
+			} else {
+				body = nil
+			}
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				return nil, err
+			}
+		}
+		arts = append(arts, &store.ArtifactRecord{
+			ArtifactID:       "art-" + sha12(run.RunID+":"+spec.fileType),
+			ProducingRunID:   run.RunID,
+			LogicalType:      "log",
+			ObjectKind:       store.ObjectKindRegularFile,
+			FileType:         spec.fileType,
+			Path:             path,
+			Size:             int64(len(body)),
+			ValidationStatus: "validated",
+			Availability:     "available",
+			CreatedAt:        now,
+		})
+	}
+	return arts, nil
 }
 
 // MarkFailedAndLog handles the failure path: writes a failure-log artifact
@@ -437,9 +455,11 @@ func (s *Service) MarkFailedAndLog(ctx context.Context, runID, reason string) er
 		return err
 	}
 	// Best-effort log artifact for the failure path.
-	if logArt, werr := s.collectRunLog(run); werr == nil {
-		logArt.ValidationStatus = "failed"
-		_ = s.store.Artifacts().Insert(ctx, logArt)
+	if logArts, werr := s.collectRunLogs(run); werr == nil {
+		for _, logArt := range logArts {
+			logArt.ValidationStatus = "failed"
+			_ = s.store.Artifacts().Insert(ctx, logArt)
+		}
 	}
 	return s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
 }
@@ -458,23 +478,23 @@ func declaredOutputs(rev *store.StationRevisionRecord) ([]stations.OutputDefinit
 func (s *Service) writeManifestExport(run *store.RunRecord, manifest *store.ManifestRecord) (string, error) {
 	path := filepath.Join(run.WorkingRoot, "manifest", "resolved-inputs.yaml")
 	type exportEntry struct {
-		EntryID                  string         `yaml:"entry_id"`
-		FileType                 string         `yaml:"file_type"`
-		Category                 string         `yaml:"category,omitempty"`
-		Optional                 bool           `yaml:"optional"`
-		Present                  bool           `yaml:"present"`
-		Path                     string         `yaml:"path,omitempty"`
-		ObjectKind               string         `yaml:"object_kind,omitempty"`
-		Size                     int64          `yaml:"size,omitempty"`
-		SourceArchiveID          string         `yaml:"source_archive_id,omitempty"`
-		FolderPriority           int            `yaml:"folder_priority,omitempty"`
-		EffectiveFilenamePattern string         `yaml:"effective_filename_pattern,omitempty"`
-		FilenameComponents       string         `yaml:"filename_components,omitempty"`
-		WindowMatch              string         `yaml:"window_match,omitempty"`
-		IntervalGroupKey         string         `yaml:"interval_group_key,omitempty"`
-		Discriminator            string         `yaml:"discriminator,omitempty"`
-		WinnerMetadata           string         `yaml:"winner_metadata,omitempty"`
-		SelectionReason          string         `yaml:"selection_reason,omitempty"`
+		EntryID                  string `yaml:"entry_id"`
+		FileType                 string `yaml:"file_type"`
+		Category                 string `yaml:"category,omitempty"`
+		Optional                 bool   `yaml:"optional"`
+		Present                  bool   `yaml:"present"`
+		Path                     string `yaml:"path,omitempty"`
+		ObjectKind               string `yaml:"object_kind,omitempty"`
+		Size                     int64  `yaml:"size,omitempty"`
+		SourceArchiveID          string `yaml:"source_archive_id,omitempty"`
+		FolderPriority           int    `yaml:"folder_priority,omitempty"`
+		EffectiveFilenamePattern string `yaml:"effective_filename_pattern,omitempty"`
+		FilenameComponents       string `yaml:"filename_components,omitempty"`
+		WindowMatch              string `yaml:"window_match,omitempty"`
+		IntervalGroupKey         string `yaml:"interval_group_key,omitempty"`
+		Discriminator            string `yaml:"discriminator,omitempty"`
+		WinnerMetadata           string `yaml:"winner_metadata,omitempty"`
+		SelectionReason          string `yaml:"selection_reason,omitempty"`
 	}
 	entries := make([]exportEntry, 0, len(manifest.Entries))
 	for _, e := range manifest.Entries {
@@ -551,17 +571,22 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 		generator["version"] = v
 	}
 	return map[string]any{
-		"schema_version": "veriproc.joborder/v1",
-		"joborder_id":    "joborder-" + run.RunID,
-		"task_id":        run.TaskID,
-		"retry_index":    run.RetryIndex,
-		"run_ref":        fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
-		"station":        map[string]any{"station_id": rev.StationID, "station_name": rev.StationName, "revision": rev.RevisionID},
-		"generator":      generator,
-		"order":          map[string]any{"start": task.WindowStart.UTC().Format(time.RFC3339Nano), "end": task.WindowEnd.UTC().Format(time.RFC3339Nano)},
-		"manifest":       map[string]any{"path": manifestPath},
-		"inputs":         inputs,
-		"outputs":        outDocs,
+		"veriproc_meta": map[string]any{
+			"schema_version":    "veriproc.joborder/v1",
+			"joborder_id":       "joborder-" + run.RunID,
+			"task_id":           run.TaskID,
+			"retry_index":       run.RetryIndex,
+			"run_ref":           fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
+			"station_id":        rev.StationID,
+			"station_name":      rev.StationName,
+			"station_revision":  rev.RevisionID,
+			"generator_type":    generator["type"],
+			"generator_version": generator["version"],
+			"manifest_path":     manifestPath,
+		},
+		"order":   map[string]any{"start": task.WindowStart.UTC().Format(time.RFC3339Nano), "end": task.WindowEnd.UTC().Format(time.RFC3339Nano)},
+		"inputs":  inputs,
+		"outputs": outDocs,
 	}
 }
 
@@ -575,8 +600,9 @@ var jobOrderReservedFields = map[string]bool{
 	"run_ref":        true,
 	"station":        true,
 	"generator":      true,
-	"order":          true,
 	"manifest":       true,
+	"veriproc_meta":  true,
+	"order":          true,
 	"inputs":         true,
 	"outputs":        true,
 }

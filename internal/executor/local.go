@@ -91,7 +91,8 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 		job.status = StatusRunning
 		job.mu.Unlock()
 
-		var out bytes.Buffer
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
 		cmd := exec.Command(desc.Executable, desc.Args...) // #nosec G204 – operator-supplied station executable
 		cmd.Dir = desc.WorkingRoot
 		baseEnv := append(os.Environ(),
@@ -108,12 +109,16 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 			baseEnv = append(baseEnv, "VERIPROC_JOBORDER_PATH="+desc.JobOrderPath)
 		}
 		cmd.Env = baseEnv
-		cmd.Stdout = &out
-		cmd.Stderr = &out
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 
 		err := cmd.Run()
-		logPath := filepath.Join(desc.WorkingRoot, "logs", "run.log")
-		if writeErr := os.WriteFile(logPath, out.Bytes(), 0o644); writeErr != nil && err == nil {
+		outLogPath := filepath.Join(desc.WorkingRoot, "logs", "run_out.log")
+		if writeErr := os.WriteFile(outLogPath, stdout.Bytes(), 0o644); writeErr != nil && err == nil {
+			err = writeErr
+		}
+		errLogPath := filepath.Join(desc.WorkingRoot, "logs", "run_err.log")
+		if writeErr := os.WriteFile(errLogPath, stderr.Bytes(), 0o644); writeErr != nil && err == nil {
 			err = writeErr
 		}
 
@@ -124,8 +129,10 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 			if errors.As(err, &exitErr) {
 				job.exitCode = exitErr.ExitCode()
 			}
-			if out.Len() > 0 {
-				job.failMsg = err.Error() + ": " + out.String()
+			if stderr.Len() > 0 {
+				job.failMsg = err.Error() + ": " + stderr.String()
+			} else if stdout.Len() > 0 {
+				job.failMsg = err.Error() + ": " + stdout.String()
 			} else {
 				job.failMsg = err.Error()
 			}
