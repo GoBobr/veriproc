@@ -102,8 +102,12 @@ func run(args []string) error {
 		productCategories[cat.Name] = append([]string(nil), cat.Folders...)
 	}
 	generators := map[string]string{}
+	jobOrderPaths := "relative"
 	for name, gen := range cfg.Generators {
 		generators[name] = gen.Version
+		if name == "job_order" && gen.Paths != "" {
+			jobOrderPaths = gen.Paths
+		}
 	}
 	runsSvc := runs.NewService(runs.Config{
 		Store:             st,
@@ -114,9 +118,11 @@ func run(args []string) error {
 		Integrity:         cfg.Integrity,
 		InstanceID:        cfg.InstanceID,
 		Facility:          cfg.Facility,
+		Definitions:       cfg.Definitions,
 		RollingArchives:   archivePaths,
 		ProductCategories: productCategories,
 		Generators:        generators,
+		JobOrderPaths:     jobOrderPaths,
 		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {
 			return groupSvc.RegisterRun(ctx, splitGroupID, runID, taskID, "")
 		},

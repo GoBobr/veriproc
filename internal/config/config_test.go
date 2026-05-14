@@ -174,3 +174,46 @@ func TestConfig_TaskIDTimestamp_Invalid(t *testing.T) {
 		t.Fatal("expected validation error for invalid task_id_timestamp")
 	}
 }
+
+// TestConfig_Definitions_RejectsReservedKeys — reserved context names must not
+// appear as top-level definitions keys.
+func TestConfig_Definitions_RejectsReservedKeys(t *testing.T) {
+	reserved := []string{
+		"station_id", "station_name", "task_id", "retry_index",
+		"run_ref", "job_id", "start", "end", "working_root", "joborder",
+	}
+	for _, key := range reserved {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "cfg.yaml")
+		content := "definitions:\n  " + key + ": forbidden\n"
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_, err := Load([]string{"--config", p}, nil)
+		if err == nil {
+			t.Errorf("expected validation error for reserved definitions key %q", key)
+		}
+	}
+}
+
+// TestConfig_Definitions_AcceptsUserKeys — arbitrary user-defined keys are
+// allowed.
+func TestConfig_Definitions_AcceptsUserKeys(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	content := "definitions:\n  facility:\n    center: SAF\n  generic_mode: NOMINAL\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load([]string{"--config", p}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Definitions["generic_mode"] != "NOMINAL" {
+		t.Errorf("definitions[generic_mode] = %v, want NOMINAL", cfg.Definitions["generic_mode"])
+	}
+	fac, ok := cfg.Definitions["facility"].(map[string]any)
+	if !ok || fac["center"] != "SAF" {
+		t.Errorf("definitions[facility] = %v, want map with center=SAF", cfg.Definitions["facility"])
+	}
+}

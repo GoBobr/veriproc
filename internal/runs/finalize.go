@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	toml "github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/canonjson"
@@ -153,41 +154,90 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 	return s.store.Runs().Get(ctx, runID)
 }
 
-// writeJobOrder writes joborder.yaml to the working root before the executor
-// is invoked. The file captures the run identity and dispatch context so that
-// a human or real executor can inspect what was submitted.
-func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord, path string) (*store.ArtifactRecord, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
+// writeJobOrder writes the joborder file to the working root before the
+// executor is invoked. Returns the resolved path and artifact record, or
+// ("", nil, nil) when joborder.format is "none". The file captures the run
+// identity and dispatch context so that a human or real executor can inspect
+// what was submitted.
+func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (string, *store.ArtifactRecord, error) {
 	task, err := s.store.Tasks().Get(ctx, run.TaskID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
+
+	// Parse the station's joborder configuration.
+	var joCfg stations.JobOrderConfig
+	if rev.DeclaredJobOrder != "" {
+		if jerr := json.Unmarshal([]byte(rev.DeclaredJobOrder), &joCfg); jerr != nil {
+			return "", nil, fmt.Errorf("parse declared_joborder: %w", jerr)
+		}
+	}
+	// Apply defaults (normalizeDefinition already does this but guard again).
+	if joCfg.Format == "" {
+		joCfg.Format = "yaml"
+	}
+	if joCfg.Format == "none" {
+		// No joborder file, no artifact.
+		return "", nil, nil
+	}
+	if joCfg.Name == "" {
+		switch joCfg.Format {
+		case "toml":
+			joCfg.Name = "joborder.toml"
+		case "json":
+			joCfg.Name = "joborder.json"
+		default:
+			joCfg.Name = "joborder.yaml"
+		}
+	}
+
+	path := filepath.Join(run.WorkingRoot, joCfg.Name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", nil, err
+	}
+
 	manifest, err := s.store.Manifests().GetByRun(ctx, run.RunID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	manifestPath, err := s.writeManifestExport(run, manifest)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	outputs, err := declaredOutputs(rev)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	body, err := yaml.Marshal(jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s))
+
+	// Build the base joborder document.
+	doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, s.jobOrderPaths)
+
+	// Resolve and merge joborder.include into doc.
+	if len(joCfg.Include) > 0 {
+		runCtx := s.buildRunContext(run, task, rev, path)
+		resolvedInclude, rerr := stations.ResolveMap(joCfg.Include, runCtx)
+		if rerr != nil {
+			return "", nil, fmt.Errorf("resolve joborder.include: %w", rerr)
+		}
+		if merr := mergeJobOrderInclude(doc, resolvedInclude); merr != nil {
+			return "", nil, fmt.Errorf("merge joborder.include: %w", merr)
+		}
+	}
+
+	// Render to the configured format.
+	body, err := renderJobOrder(doc, joCfg.Format)
 	if err != nil {
-		return nil, err
+		return "", nil, fmt.Errorf("render joborder (%s): %w", joCfg.Format, err)
 	}
+
 	if err := os.WriteFile(path, body, 0o644); err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return &store.ArtifactRecord{
+	return path, &store.ArtifactRecord{
 		ArtifactID:       "art-" + sha12(run.RunID+":joborder"),
 		ProducingRunID:   run.RunID,
 		LogicalType:      "joborder",
@@ -459,7 +509,8 @@ func (s *Service) writeManifestExport(run *store.RunRecord, manifest *store.Mani
 	return "./manifest/resolved-inputs.yaml", os.WriteFile(path, body, 0o644)
 }
 
-func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, s *Service) map[string]any {
+func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, generators map[string]string, pathMode string) map[string]any {
+	absolutePaths := pathMode == "absolute"
 	// Group manifest entries by (file_type, category) to support multiple
 	// selected objects (distinct interval groups) per declared input.
 	type inputKey struct{ fileType, category string }
@@ -472,23 +523,30 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 			inputMap[key] = []string{}
 		}
 		if entry.Present && entry.Path != "" {
-			inputMap[key] = append(inputMap[key], "./"+filepath.ToSlash(entry.Path))
+			if absolutePaths {
+				inputMap[key] = append(inputMap[key], filepath.Join(run.WorkingRoot, filepath.FromSlash(entry.Path)))
+			} else {
+				inputMap[key] = append(inputMap[key], "./"+entry.Path)
+			}
 		}
 	}
 	inputs := make([]map[string]any, 0, len(inputOrder))
 	for _, key := range inputOrder {
 		inputs = append(inputs, map[string]any{
 			"file_type": key.fileType,
-			"category":  key.category,
 			"files":     inputMap[key],
 		})
 	}
+	outputDir := filepath.Join(run.WorkingRoot, "output")
+	if !absolutePaths {
+		outputDir = "./output"
+	}
 	outDocs := make([]map[string]any, 0, len(outputs))
 	for _, out := range outputs {
-		outDocs = append(outDocs, map[string]any{"file_type": out.FileType, "name": out.Name, "required": out.Required})
+		outDocs = append(outDocs, map[string]any{"file_type": out.FileType, "directory": outputDir})
 	}
 	generator := map[string]any{"type": "system-default", "version": "local-mvp"}
-	if v := s.generators["job_order"]; v != "" {
+	if v := generators["job_order"]; v != "" {
 		generator["type"] = "configured"
 		generator["version"] = v
 	}
@@ -501,12 +559,70 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 		"station":        map[string]any{"station_id": rev.StationID, "station_name": rev.StationName, "revision": rev.RevisionID},
 		"generator":      generator,
 		"order":          map[string]any{"start": task.WindowStart.UTC().Format(time.RFC3339Nano), "end": task.WindowEnd.UTC().Format(time.RFC3339Nano)},
-		"facility":       s.facility,
-		"log_level":      "INFO",
-		"dyn_params":     map[string]any{"instance_id": s.instanceID},
 		"manifest":       map[string]any{"path": manifestPath},
 		"inputs":         inputs,
 		"outputs":        outDocs,
+	}
+}
+
+// jobOrderReservedFields lists top-level fields in the joborder document that
+// the system generates and that must not be overridden via joborder.include.
+var jobOrderReservedFields = map[string]bool{
+	"schema_version": true,
+	"joborder_id":    true,
+	"task_id":        true,
+	"retry_index":    true,
+	"run_ref":        true,
+	"station":        true,
+	"generator":      true,
+	"order":          true,
+	"manifest":       true,
+	"inputs":         true,
+	"outputs":        true,
+}
+
+// mergeJobOrderInclude deep-merges the resolved include subtree into doc.
+// Top-level reserved fields must not appear in include.
+func mergeJobOrderInclude(doc map[string]any, include map[string]any) error {
+	for k, v := range include {
+		if jobOrderReservedFields[k] {
+			return fmt.Errorf("joborder.include attempts to override reserved field %q", k)
+		}
+		existing, ok := doc[k]
+		if !ok {
+			doc[k] = v
+			continue
+		}
+		// Deep-merge mappings; replace scalars/slices directly.
+		existingMap, em := existing.(map[string]any)
+		incomingMap, im := v.(map[string]any)
+		if em && im {
+			if err := mergeJobOrderInclude(existingMap, incomingMap); err != nil {
+				return err
+			}
+		} else {
+			doc[k] = v
+		}
+	}
+	return nil
+}
+
+// renderJobOrder encodes doc to the specified format.
+func renderJobOrder(doc map[string]any, format string) ([]byte, error) {
+	switch format {
+	case "yaml", "":
+		return yaml.Marshal(doc)
+	case "json":
+		return json.MarshalIndent(doc, "", "  ")
+	case "toml":
+		var buf strings.Builder
+		enc := toml.NewEncoder(&buf)
+		if err := enc.Encode(doc); err != nil {
+			return nil, err
+		}
+		return []byte(buf.String()), nil
+	default:
+		return nil, fmt.Errorf("unsupported joborder format %q", format)
 	}
 }
 

@@ -3,13 +3,22 @@ set -euo pipefail
 
 : "${VERIPROC_WORKING_ROOT:?}"
 : "${VERIPROC_STATION_ID:?}"
-: "${VERIPROC_RUN_ID:?}"
+: "${VERIPROC_RETRY_INDEX:?}"
+: "${VERIPROC_TASK_ID:?}"
+: "${VERIPROC_JOBORDER_PATH:?}"
 : "${VERIPROC_RUN_DIR:?}"
+: "${VERIPROC_WINDOW_START:?}"
+: "${VERIPROC_WINDOW_END:?}"
 
-input=$(find "${VERIPROC_WORKING_ROOT}/input" -type l -name '*A_RESULT*' | sort | tail -n 1)
+primary=$(find "${VERIPROC_WORKING_ROOT}/input" -type l -name '*SCE_2__ICM______*' | sort | tail -n 1)
 
-cat > "${VERIPROC_RUN_DIR}/track.csv" <<CSV
-run_id,station,input_file,confidence
-${VERIPROC_RUN_ID},${VERIPROC_STATION_ID},$(basename "${input}"),0.91
-CSV
-echo "wrote ${VERIPROC_RUN_DIR}/track.csv from ${input}"
+GEN_TIME=$(date -u +"%Y%m%dT%H%M%S")
+OUTFNAME="CDMA_SCE_2__ICM_____2_ON_${VERIPROC_WINDOW_START}_${VERIPROC_WINDOW_END}_${GEN_TIME}_018_093_EUM__VAL_T_NR_C00.nc"
+cat > "${VERIPROC_RUN_DIR}/${OUTFNAME}" <<OUTPUT
+Here is the output product: ${OUTFNAME}
+run_id: ${VERIPROC_RETRY_INDEX}
+task_id: ${VERIPROC_TASK_ID}
+primary input: ${primary}
+OUTPUT
+echo "wrote ${VERIPROC_RUN_DIR}/${OUTFNAME} from ${primary}"
+exit 0

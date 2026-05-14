@@ -17,7 +17,8 @@ CREATE TABLE station_revisions (
     declared_downstream TEXT NOT NULL DEFAULT '',
     publication_policy TEXT NOT NULL DEFAULT '',
     rolling_folders TEXT NOT NULL DEFAULT '',
-    declared_scripts TEXT NOT NULL DEFAULT '',
+    declared_execution TEXT NOT NULL DEFAULT '',
+    declared_joborder  TEXT NOT NULL DEFAULT '',
     UNIQUE (station_id, content_hash)
 );
 

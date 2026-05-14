@@ -50,7 +50,7 @@ func (e *LocalExecutor) Type() string { return "local" }
 // wired (the goroutine runs to completion regardless).
 func (e *LocalExecutor) SupportsCancellation() bool { return false }
 
-// Submit launches the script described by desc.ScriptPath and returns
+// Submit launches the script described by desc.Executable and returns
 // immediately. The script is executed with the runtime contract from
 // Spec §3.6.2 / §6.5:
 //
@@ -60,15 +60,15 @@ func (e *LocalExecutor) SupportsCancellation() bool { return false }
 //	VERIPROC_RUN_REF        = desc.RunRef ("<task_id>/r<retry_index>")
 //	VERIPROC_STATION_ID     = desc.StationID
 //	VERIPROC_WORKING_ROOT   = desc.WorkingRoot
-//	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath
+//	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath  (only when non-empty)
 //	VERIPROC_WINDOW_START   = desc.WindowStart  (YYYYMMDDTHHmmSS, UTC)
 //	VERIPROC_WINDOW_END     = desc.WindowEnd    (YYYYMMDDTHHmmSS, UTC)
 //
 // VERIPROC_RUN_ID is intentionally NOT exposed: the surrogate run_id is
 // internal-only per Spec §3.6.1.
 func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, error) {
-	if desc.ScriptPath == "" {
-		return "", fmt.Errorf("local executor: ScriptPath is empty for run %s (station has no run script?)", desc.RunID)
+	if desc.Executable == "" {
+		return "", fmt.Errorf("local executor: Executable is empty for run %s (station has no executable?)", desc.RunID)
 	}
 
 	id := "local-" + desc.RunID
@@ -92,19 +92,22 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 		job.mu.Unlock()
 
 		var out bytes.Buffer
-		cmd := exec.Command(desc.ScriptPath) // #nosec G204 – operator-supplied station script
+		cmd := exec.Command(desc.Executable, desc.Args...) // #nosec G204 – operator-supplied station executable
 		cmd.Dir = desc.WorkingRoot
-		cmd.Env = append(os.Environ(),
+		baseEnv := append(os.Environ(),
 			"VERIPROC_RUN_DIR="+outDir,
 			"VERIPROC_TASK_ID="+desc.TaskID,
 			"VERIPROC_RETRY_INDEX="+fmt.Sprintf("%d", desc.RetryIndex),
 			"VERIPROC_RUN_REF="+desc.RunRef,
 			"VERIPROC_STATION_ID="+desc.StationID,
 			"VERIPROC_WORKING_ROOT="+desc.WorkingRoot,
-			"VERIPROC_JOBORDER_PATH="+desc.JobOrderPath,
 			"VERIPROC_WINDOW_START="+desc.WindowStart.UTC().Format("20060102T150405"),
 			"VERIPROC_WINDOW_END="+desc.WindowEnd.UTC().Format("20060102T150405"),
 		)
+		if desc.JobOrderPath != "" {
+			baseEnv = append(baseEnv, "VERIPROC_JOBORDER_PATH="+desc.JobOrderPath)
+		}
+		cmd.Env = baseEnv
 		cmd.Stdout = &out
 		cmd.Stderr = &out
 

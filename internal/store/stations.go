@@ -24,9 +24,12 @@ type StationRevisionRecord struct {
 	DeclaredDownstream string
 	PublicationPolicy  string
 	RollingFolders     string
-	// DeclaredScripts is a JSON-encoded map[string]string of script name →
-	// resolved absolute path (e.g. {"run": "/abs/scripts/run.sh"}).
-	DeclaredScripts string
+	// DeclaredExecution is a JSON-encoded stations.Execution (executable + args).
+	// Empty string means no execution config declared.
+	DeclaredExecution string
+	// DeclaredJobOrder is a JSON-encoded stations.JobOrderConfig.
+	// Empty string means no joborder config declared (defaults apply at runtime).
+	DeclaredJobOrder string
 }
 
 // StationRevisionRepo persists station revisions.
@@ -46,12 +49,13 @@ func (r *StationRevisionRepo) Insert(ctx context.Context, rec *StationRevisionRe
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO station_revisions
 			(revision_id, station_id, content_hash, schema_version, station_name, effective_at, created_at,
-			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders, declared_scripts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders,
+			 declared_execution, declared_joborder)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.RevisionID, rec.StationID, rec.ContentHash, rec.SchemaVersion,
 		rec.StationName, rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
 		rec.DeclaredInputs, rec.DeclaredOutputs, rec.DeclaredDownstream,
-		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredScripts)
+		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredExecution, rec.DeclaredJobOrder)
 	if err != nil {
 		if r.dialect.IsUniqueViolation(err) {
 			return fmt.Errorf("%w: station_revision station_id=%s hash=%s",
@@ -77,8 +81,9 @@ func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRe
 	_, err := r.q.ExecContext(ctx, `
 		INSERT INTO station_revisions
 			(revision_id, station_id, content_hash, schema_version, station_name, effective_at, created_at,
-			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders, declared_scripts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 declared_inputs, declared_outputs, declared_downstream, publication_policy, rolling_folders,
+			 declared_execution, declared_joborder)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(revision_id) DO UPDATE SET
 			station_name        = excluded.station_name,
 			declared_inputs     = excluded.declared_inputs,
@@ -86,11 +91,12 @@ func (r *StationRevisionRepo) Upsert(ctx context.Context, rec *StationRevisionRe
 			declared_downstream = excluded.declared_downstream,
 			publication_policy  = excluded.publication_policy,
 			rolling_folders     = excluded.rolling_folders,
-			declared_scripts    = excluded.declared_scripts`,
+			declared_execution  = excluded.declared_execution,
+			declared_joborder   = excluded.declared_joborder`,
 		rec.RevisionID, rec.StationID, rec.ContentHash, rec.SchemaVersion,
 		rec.StationName, rec.EffectiveAt.UTC(), rec.CreatedAt.UTC(),
 		rec.DeclaredInputs, rec.DeclaredOutputs, rec.DeclaredDownstream,
-		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredScripts)
+		rec.PublicationPolicy, rec.RollingFolders, rec.DeclaredExecution, rec.DeclaredJobOrder)
 	return err
 }
 
@@ -101,13 +107,15 @@ func (r *StationRevisionRepo) Get(ctx context.Context, revisionID string) (*Stat
 		       station_name, effective_at, created_at,
 		       COALESCE(declared_inputs, ''), COALESCE(declared_outputs, ''),
 		       COALESCE(declared_downstream, ''), COALESCE(publication_policy, ''),
-		       COALESCE(rolling_folders, ''), COALESCE(declared_scripts, '')
+		       COALESCE(rolling_folders, ''), COALESCE(declared_execution, ''),
+		       COALESCE(declared_joborder, '')
 		FROM station_revisions WHERE revision_id = ?`, revisionID)
 	var rec StationRevisionRecord
 	if err := row.Scan(&rec.RevisionID, &rec.StationID, &rec.ContentHash,
 		&rec.SchemaVersion, &rec.StationName, &rec.EffectiveAt, &rec.CreatedAt,
 		&rec.DeclaredInputs, &rec.DeclaredOutputs, &rec.DeclaredDownstream,
-		&rec.PublicationPolicy, &rec.RollingFolders, &rec.DeclaredScripts); err != nil {
+		&rec.PublicationPolicy, &rec.RollingFolders, &rec.DeclaredExecution,
+		&rec.DeclaredJobOrder); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}

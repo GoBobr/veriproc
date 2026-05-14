@@ -65,10 +65,12 @@ type Service struct {
 	idFactory         func() string
 	registerGroup     GroupRegistrar
 	instanceID        string
+	definitions       map[string]any
 	facility          map[string]string
 	rollingArchives   map[string]string
 	productCategories map[string][]string
 	generators        map[string]string
+	jobOrderPaths     string // "relative" or "absolute"
 	naming            policy.Naming
 	integrity         policy.Integrity
 	logger            zerolog.Logger
@@ -89,10 +91,12 @@ type Config struct {
 	IDFactory         func() string
 	RegisterGroup     GroupRegistrar
 	InstanceID        string
+	Definitions       map[string]any
 	Facility          map[string]string
 	RollingArchives   map[string]string
 	ProductCategories map[string][]string
 	Generators        map[string]string
+	JobOrderPaths     string // "relative" (default) or "absolute"
 	Naming            policy.Naming
 	Integrity         policy.Integrity
 	Logger            zerolog.Logger
@@ -130,10 +134,12 @@ func NewService(cfg Config) *Service {
 		idFactory:         cfg.IDFactory,
 		registerGroup:     cfg.RegisterGroup,
 		instanceID:        cfg.InstanceID,
+		definitions:       cloneAnyMap(cfg.Definitions),
 		facility:          cloneStringMap(cfg.Facility),
 		rollingArchives:   cloneStringMap(cfg.RollingArchives),
 		productCategories: cloneStringSliceMap(cfg.ProductCategories),
 		generators:        cloneStringMap(cfg.Generators),
+		jobOrderPaths:     cfg.JobOrderPaths,
 		naming:            cfg.Naming,
 		integrity:         cfg.Integrity,
 		logger:            cfg.Logger,
@@ -253,23 +259,17 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("%w: cannot dispatch run in state %q", ErrInvalidStateTransition, run.State)
 	}
 
-	jobOrderPath := filepath.Join(run.WorkingRoot, "joborder.yaml")
-	jobOrderArtifact, err := s.writeJobOrder(ctx, run, jobOrderPath)
+	jobOrderPath, jobOrderArtifact, err := s.writeJobOrder(ctx, run)
 	if err != nil {
 		return nil, fmt.Errorf("write job-order: %w", err)
 	}
 
-	// Resolve the run script path from the station revision's declared scripts.
-	var scriptPath string
+	// Resolve the station execution from the station revision's declared execution.
+	var executable string
+	var resolvedArgs []string
 	rev, rerr := s.store.Stations().Get(ctx, run.StationRevisionID)
 	if rerr != nil {
 		return nil, rerr
-	}
-	if rev.DeclaredScripts != "" {
-		var scripts map[string]string
-		if jerr := json.Unmarshal([]byte(rev.DeclaredScripts), &scripts); jerr == nil {
-			scriptPath = scripts["run"]
-		}
 	}
 
 	task, err := s.store.Tasks().Get(ctx, run.TaskID)
@@ -277,6 +277,20 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, fmt.Errorf("dispatch: fetch task: %w", err)
 	}
 
+	if rev.DeclaredExecution != "" {
+		var execCfg stations.Execution
+		if jerr := json.Unmarshal([]byte(rev.DeclaredExecution), &execCfg); jerr == nil {
+			executable = execCfg.Executable
+			// Build runtime context and resolve args.
+			runCtx := s.buildRunContext(run, task, rev, jobOrderPath)
+			resolvedArgs, err = stations.ResolveArgs(execCfg.Args, runCtx)
+			if err != nil {
+				return nil, fmt.Errorf("dispatch: resolve execution args: %w", err)
+			}
+		}
+	}
+
+	runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
 	desc := executor.JobDescription{
 		RunID:        run.RunID,
 		WorkingRoot:  run.WorkingRoot,
@@ -284,9 +298,9 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		StationID:    rev.StationID,
 		TaskID:       run.TaskID,
 		RetryIndex:   run.RetryIndex,
-		RunRef:       fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
-		Command:      "run",
-		ScriptPath:   scriptPath,
+		RunRef:       runRef,
+		Executable:   executable,
+		Args:         resolvedArgs,
 		WindowStart:  task.WindowStart,
 		WindowEnd:    task.WindowEnd,
 	}
@@ -310,8 +324,10 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		if err := tx.Jobs().Insert(ctx, job); err != nil {
 			return err
 		}
-		if err := tx.Artifacts().Insert(ctx, jobOrderArtifact); err != nil {
-			return err
+		if jobOrderArtifact != nil {
+			if err := tx.Artifacts().Insert(ctx, jobOrderArtifact); err != nil {
+				return err
+			}
 		}
 		return tx.Runs().MarkDispatched(ctx, run.RunID, now)
 	})
@@ -1042,8 +1058,46 @@ func versionMetadata(path string) string {
 	return ""
 }
 
+// buildRunContext assembles the station context namespace for a given run.
+// It merges instance definitions (lowest priority) with reserved runtime keys
+// (highest priority). The resulting map is used by the context resolver to
+// expand <name> and <name.path> references in execution args and joborder include.
+func (s *Service) buildRunContext(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, jobOrderPath string) map[string]any {
+	ctx := make(map[string]any, len(s.definitions)+12)
+	for k, v := range s.definitions {
+		ctx[k] = v
+	}
+	// Reserved runtime keys always override definitions.
+	runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
+	ctx["station_id"] = rev.StationID
+	ctx["station_name"] = rev.StationName
+	ctx["task_id"] = run.TaskID
+	ctx["retry_index"] = run.RetryIndex
+	ctx["run_ref"] = runRef
+	ctx["start"] = task.WindowStart.UTC().Format("20060102T150405")
+	ctx["end"] = task.WindowEnd.UTC().Format("20060102T150405")
+	ctx["working_root"] = run.WorkingRoot
+	if jobOrderPath != "" {
+		ctx["joborder"] = map[string]any{
+			"path": jobOrderPath,
+		}
+	}
+	return ctx
+}
+
 func cloneStringMap(in map[string]string) map[string]string {
 	out := map[string]string{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneAnyMap(in map[string]any) map[string]any {
+	if in == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
@@ -1071,8 +1125,11 @@ func cloneStringSliceMap(in map[string][]string) map[string][]string {
 }
 
 // computeFingerprint hashes the canonical JSON of {station_revision_id,
-// manifest summary, force}. Spec §3.10 requires the fingerprint to be a
-// deterministic function of the inputs that govern processing equivalence.
+// manifest summary, force, resolved_execution_args, declared_joborder}.
+// Spec §3.10 requires the fingerprint to be a deterministic function of the
+// inputs that govern processing equivalence. Resolved execution args and
+// joborder configuration are included because they capture resolved context
+// values (e.g., instance definitions) that affect processing.
 func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecord, force bool) string {
 	entries := make([]any, 0, len(m.Entries))
 	for _, e := range m.Entries {
@@ -1088,6 +1145,8 @@ func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecor
 		"station_revision_content_hash": rev.ContentHash,
 		"manifest":                      entries,
 		"force":                         force,
+		"declared_execution":            rev.DeclaredExecution,
+		"declared_joborder":             rev.DeclaredJobOrder,
 	}
 	raw, err := canonjson.Marshal(payload)
 	if err != nil {

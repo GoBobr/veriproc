@@ -16,12 +16,13 @@ storage:
   station_config_root: sandbox/stations
 
 naming:
-  task_id_timestamp: creation
+  # can be "start" or "creation"
+  task_id_timestamp: start
   timestamp_format:
     task_window: compact-utc-millis
     runtime_event: compact-utc-micros
   working_root:
-    path_template: "{station}/{task}/{run}"
+    path_template: "{task}-{run}"
     station_segment: "{station_id}"
     task_segment: "{task_id}"
     run_segment: "r{retry_index}"
@@ -31,10 +32,10 @@ naming:
     replace_invalid: "_"
     max_segment_length: 128
     station_case: preserve
-    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_??_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
     components:
       MISSION_ID:
-        pattern: "CO2?"
+        pattern: "CDM?"
         length: 4
         charset: ascii
       FILE_TYPE:
@@ -56,14 +57,20 @@ integrity:
   record_size_when_available: true
   record_mtime_when_available: true
 
-facility:
-  processing_center: SANDBOX
-  environment: LOCAL
-  acquisition_station: Testbed
+definitions:
+  facility:
+    processing_center: SANDBOX
+    environment: LOCAL
+    acquisition_station: Testbed
+  generic_mode: TEST
 
 rolling_archives:
   hot:
     path: sandbox/rolling-archives/hot
+    retention: keep-fixtures
+    mode: read_write
+  aux:
+    path: sandbox/rolling-archives/aux
     retention: keep-fixtures
     mode: read_write
 
@@ -71,6 +78,9 @@ product_categories:
   - name: product
     folders:
       - rolling:hot
+  - name: aux
+    folders:
+      - rolling:aux
 
 executor:
   type: local
@@ -79,6 +89,8 @@ generators:
   job_order:
     type: system-default
     version: local-mvp-v1
+    # relative or absolute paths for input/output files in joborder
+    paths: relative
   working_root:
     type: system-default
     version: local-mvp-v1

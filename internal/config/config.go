@@ -34,6 +34,10 @@ type Config struct {
 	Storage           PathsConfig               `yaml:"storage"`
 	Naming            policy.Naming             `yaml:"naming"`
 	Integrity         policy.Integrity          `yaml:"integrity"`
+	// Definitions is an arbitrary nested YAML mapping injected at the root of
+	// the station context-reference namespace. Top-level keys must not collide
+	// with reserved runtime context names (Spec §2.3.1).
+	Definitions       map[string]any            `yaml:"definitions"`
 	Facility          map[string]string         `yaml:"facility"`
 	RollingArchives   map[string]RollingArchive `yaml:"rolling_archives"`
 	ProductCategories []ProductCategory         `yaml:"product_categories"`
@@ -63,6 +67,7 @@ type ExecutorConfig struct {
 type Generator struct {
 	Type    string `yaml:"type"`
 	Version string `yaml:"version"`
+	Paths   string `yaml:"paths"` // "relative" (default) or "absolute"
 }
 
 // HTTPConfig configures the REST API server.
@@ -229,10 +234,30 @@ func applyEnv(cfg *Config, env map[string]string) {
 	}
 }
 
+// reservedContextNames lists top-level definition keys that are reserved
+// for runtime injection and must not be set in instance definitions (Spec §2.3.1).
+var reservedContextNames = map[string]bool{
+	"station_id":   true,
+	"station_name": true,
+	"task_id":      true,
+	"retry_index":  true,
+	"run_ref":      true,
+	"job_id":       true,
+	"start":        true,
+	"end":          true,
+	"working_root": true,
+	"joborder":     true,
+}
+
 // Validate enforces invariants on the resolved configuration.
 func (c *Config) Validate() error {
 	if strings.TrimSpace(c.InstanceID) == "" {
 		return errors.New("config: instance_id must not be empty")
+	}
+	for k := range c.Definitions {
+		if reservedContextNames[k] {
+			return fmt.Errorf("config: definitions key %q collides with reserved context name", k)
+		}
 	}
 	c.Naming = c.Naming.WithDefaults()
 	c.Integrity = c.Integrity.WithDefaults()

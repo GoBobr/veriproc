@@ -28,7 +28,7 @@ type Definition struct {
 	ContentHash    string              `yaml:"content_hash,omitempty" json:"-"`
 	Description    string              `yaml:"description,omitempty" json:"description,omitempty"`
 	Execution      Execution           `yaml:"execution,omitempty" json:"execution,omitempty"`
-	Scripts        map[string]string   `yaml:"scripts,omitempty" json:"scripts,omitempty"`
+	JobOrder       JobOrderConfig      `yaml:"joborder,omitempty" json:"joborder,omitempty"`
 	Inputs         []InputDefinition   `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Outputs        OutputDefinitions   `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 	Downstream     []DownstreamTarget  `yaml:"downstream,omitempty" json:"downstream,omitempty"`
@@ -37,9 +37,23 @@ type Definition struct {
 	Metadata       map[string]string   `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
+// Execution describes how to invoke the station workload.
 type Execution struct {
-	Mode    string `yaml:"mode,omitempty" json:"mode,omitempty"`
-	Command string `yaml:"command,omitempty" json:"command,omitempty"`
+	Mode       string   `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Executable string   `yaml:"executable,omitempty" json:"executable,omitempty"`
+	Args       []string `yaml:"args,omitempty" json:"args,omitempty"`
+}
+
+// JobOrderConfig holds the station's joborder rendering configuration.
+type JobOrderConfig struct {
+	// Format is one of "yaml", "toml", "json", or "none". Defaults to "yaml".
+	Format string `yaml:"format,omitempty" json:"format,omitempty"`
+	// Name is the filename for the joborder file, relative to the working root.
+	// Defaults to "joborder.yaml", "joborder.toml", or "joborder.json" per format.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Include is an arbitrary mapping merged into the generated joborder document.
+	// Context references within Include are resolved before rendering.
+	Include map[string]any `yaml:"include,omitempty" json:"include,omitempty"`
 }
 
 type InputDefinition struct {
@@ -120,22 +134,18 @@ func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Sto
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		// Resolve script paths to absolute using the station directory so the
-		// executor can invoke them without knowing the station config root.
-		if len(def.Scripts) > 0 {
+		// Resolve executable path to absolute using the station directory so the
+		// executor can invoke it without knowing the station config root.
+		// The spec's ContentHash is computed from the relative path (deterministic);
+		// we update spec.Execution.Executable separately so the executor and DB
+		// get the runtime-resolved absolute path.
+		if def.Execution.Executable != "" && !filepath.IsAbs(def.Execution.Executable) {
 			stationDir := filepath.Dir(path)
 			absStationDir, err := filepath.Abs(stationDir)
 			if err != nil {
 				return nil, fmt.Errorf("stations: resolve %q: %w", stationDir, err)
 			}
-			spec.Scripts = make(map[string]string, len(def.Scripts))
-			for verb, rel := range def.Scripts {
-				if filepath.IsAbs(rel) {
-					spec.Scripts[verb] = rel
-				} else {
-					spec.Scripts[verb] = filepath.Join(absStationDir, rel)
-				}
-			}
+			spec.Execution.Executable = filepath.Join(absStationDir, def.Execution.Executable)
 		}
 		if prev, ok := seen[spec.StationID]; ok {
 			return nil, fmt.Errorf("%w: station_id=%s in %s and %s", ErrDuplicateStation, spec.StationID, prev, path)
@@ -199,6 +209,8 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 		StationName:    def.StationName,
 		ContentHash:    computed,
 		SchemaVersion:  def.SchemaVersion,
+		Execution:      def.Execution,
+		JobOrder:       def.JobOrder,
 		Inputs:         def.Inputs,
 		Outputs:        []OutputDefinition(def.Outputs),
 		Downstream:     def.Downstream,
@@ -232,13 +244,23 @@ func normalizeDefinition(def Definition) Definition {
 	def.ContentHash = strings.TrimSpace(def.ContentHash)
 	def.Description = strings.TrimSpace(def.Description)
 	def.Execution.Mode = strings.TrimSpace(def.Execution.Mode)
-	def.Execution.Command = strings.TrimSpace(def.Execution.Command)
-	if def.Execution.Command != "" {
-		if def.Scripts == nil {
-			def.Scripts = map[string]string{}
-		}
-		if def.Scripts["run"] == "" {
-			def.Scripts["run"] = def.Execution.Command
+	def.Execution.Executable = strings.TrimSpace(def.Execution.Executable)
+	// Normalize joborder format default.
+	def.JobOrder.Format = strings.TrimSpace(strings.ToLower(def.JobOrder.Format))
+	if def.JobOrder.Format == "" {
+		def.JobOrder.Format = "yaml"
+	}
+	def.JobOrder.Name = strings.TrimSpace(def.JobOrder.Name)
+	if def.JobOrder.Name == "" {
+		switch def.JobOrder.Format {
+		case "toml":
+			def.JobOrder.Name = "joborder.toml"
+		case "json":
+			def.JobOrder.Name = "joborder.json"
+		case "none":
+			def.JobOrder.Name = ""
+		default:
+			def.JobOrder.Name = "joborder.yaml"
 		}
 	}
 	for i := range def.Inputs {
@@ -290,6 +312,30 @@ func validateDefinition(def Definition) error {
 	}
 	if def.SchemaVersion == "" {
 		return errors.New("schema_version must not be empty")
+	}
+	// Validate joborder section.
+	switch def.JobOrder.Format {
+	case "yaml", "toml", "json", "none":
+		// valid
+	default:
+		return fmt.Errorf("joborder.format %q invalid; must be yaml, toml, json, or none", def.JobOrder.Format)
+	}
+	if def.JobOrder.Format == "none" {
+		if def.JobOrder.Name != "" {
+			return errors.New("joborder.name must be absent when format is none")
+		}
+		if len(def.JobOrder.Include) > 0 {
+			return errors.New("joborder.include must be absent when format is none")
+		}
+	}
+	if def.JobOrder.Name != "" {
+		if filepath.IsAbs(def.JobOrder.Name) {
+			return fmt.Errorf("joborder.name %q must be relative", def.JobOrder.Name)
+		}
+		clean := filepath.Clean(def.JobOrder.Name)
+		if strings.HasPrefix(clean, "..") {
+			return fmt.Errorf("joborder.name %q must not escape the working root", def.JobOrder.Name)
+		}
 	}
 	for _, input := range def.Inputs {
 		if input.FileType == "" {

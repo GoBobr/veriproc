@@ -55,11 +55,14 @@ type JobDescription struct {
 	RunRef       string
 	StationID    string
 	WorkingRoot  string
+	// JobOrderPath is the absolute path of the written joborder file.
+	// Empty when joborder.format is "none" — VERIPROC_JOBORDER_PATH is not
+	// injected in that case.
 	JobOrderPath string
-	Command      string
-	// ScriptPath is the resolved absolute path of the script to execute.
-	// Used by LocalExecutor; ignored by StubExecutor and remote executors.
-	ScriptPath  string
+	// Executable is the resolved absolute path of the binary or script to run.
+	Executable  string
+	// Args are the resolved argument strings to pass to the executable.
+	Args        []string
 	WindowStart time.Time
 	WindowEnd   time.Time
 }

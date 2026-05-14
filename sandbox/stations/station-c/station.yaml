@@ -1,10 +1,10 @@
-station_id: STATION-C
+station_id: statC
 station_name: Daily aggregator
 description: |
   Sandbox station C - daily aggregator. Use with --split-group to exercise
   M7 split-group aggregation across multiple windows.
-scripts:
-  run: ./scripts/run.sh
+execution:
+  executable: ./scripts/run.sh
 outputs:
   - file_type: DAILY_SUMMARY
     name: daily.json

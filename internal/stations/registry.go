@@ -43,14 +43,13 @@ type Spec struct {
 	StationName    string
 	ContentHash    string
 	SchemaVersion  string
+	Execution      Execution
+	JobOrder       JobOrderConfig
 	Inputs         []InputDefinition
 	Outputs        []OutputDefinition
 	Downstream     []DownstreamTarget
 	Publication    PublicationPolicy
 	RollingFolders map[string][]string
-	// Scripts maps script verb (e.g. "run") to the resolved absolute path of
-	// the script file. Populated by the file loader; empty for seed-only stations.
-	Scripts map[string]string
 }
 
 // Registry is the in-memory Resolver.
@@ -106,10 +105,15 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			b, _ := json.Marshal(sp.RollingFolders)
 			rollingFolders = string(b)
 		}
-		declaredScripts := ""
-		if len(sp.Scripts) > 0 {
-			b, _ := json.Marshal(sp.Scripts)
-			declaredScripts = string(b)
+		declaredExecution := ""
+		if sp.Execution.Executable != "" || len(sp.Execution.Args) > 0 {
+			b, _ := json.Marshal(sp.Execution)
+			declaredExecution = string(b)
+		}
+		declaredJobOrder := ""
+		if sp.JobOrder.Format != "" || sp.JobOrder.Name != "" || len(sp.JobOrder.Include) > 0 {
+			b, _ := json.Marshal(sp.JobOrder)
+			declaredJobOrder = string(b)
 		}
 		rec := &store.StationRevisionRecord{
 			RevisionID:         fmt.Sprintf("rev-%s-%s", sp.StationID, shortHash(sp.ContentHash)),
@@ -122,7 +126,8 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			DeclaredDownstream: declaredDownstream,
 			PublicationPolicy:  publicationPolicy,
 			RollingFolders:     rollingFolders,
-			DeclaredScripts:    declaredScripts,
+			DeclaredExecution:  declaredExecution,
+			DeclaredJobOrder:   declaredJobOrder,
 		}
 		r.mu.Lock()
 		if existing, ok := r.byID[sp.StationID]; ok {

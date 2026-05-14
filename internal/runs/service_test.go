@@ -2,6 +2,7 @@ package runs_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -72,8 +73,8 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 
 	reg := stations.NewRegistry()
 	if err := reg.Seed(ctx, st,
-		stations.Spec{StationID: "STATION-A", StationName: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Scripts: map[string]string{"run": scriptA}},
-		stations.Spec{StationID: "STATION-B", StationName: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Scripts: map[string]string{"run": scriptB}},
+		stations.Spec{StationID: "STATION-A", StationName: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Execution: stations.Execution{Executable: scriptA}},
+		stations.Spec{StationID: "STATION-B", StationName: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Execution: stations.Execution{Executable: scriptB}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -102,8 +103,8 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	if err := yaml.Unmarshal(jobOrderRaw, &jobOrder); err != nil {
 		t.Fatalf("parse joborder: %v", err)
 	}
-	if jobOrder["schema_version"] != "veriproc.joborder/v1" || jobOrder["log_level"] == nil || jobOrder["dyn_params"] == nil {
-		t.Fatalf("joborder missing required root fields: %#v", jobOrder)
+	if jobOrder["schema_version"] != "veriproc.joborder/v1" {
+		t.Fatalf("joborder missing schema_version: %#v", jobOrder)
 	}
 	if inputs, ok := jobOrder["inputs"].([]any); !ok || len(inputs) != 2 {
 		t.Fatalf("joborder inputs = %#v, want two flat input entries", jobOrder["inputs"])
@@ -187,7 +188,7 @@ cp input/20250703_AUX_DIR_v1/data.nc "$VERIPROC_RUN_DIR/dir-output/data.nc"
 		Inputs:        []stations.InputDefinition{{FileType: "AUX_DIR", Category: "product", ObjectKind: store.ObjectKindDirectory}},
 		Outputs:       []stations.OutputDefinition{{Name: "dir-output", FileType: "DIR_OUTPUT", ObjectKind: store.ObjectKindDirectory, Required: true}},
 		Publication:   stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"dir-output"}},
-		Scripts:       map[string]string{"run": script},
+		Execution:   stations.Execution{Executable: script},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -241,7 +242,7 @@ func TestRuns_LocalExecutionMissingOutputFails_5_6_7_5_4(t *testing.T) {
 	}
 	script := writeExecutable(t, dir, "no-output.sh", "#!/bin/sh\nset -eu\necho no output created\n")
 	reg := stations.NewRegistry()
-	if err := reg.Seed(ctx, st, stations.Spec{StationID: "BROKEN", StationName: "BROKEN", ContentHash: "sha256:broken", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "required.json", FileType: "REQUIRED", Required: true}}, Scripts: map[string]string{"run": script}}); err != nil {
+	if err := reg.Seed(ctx, st, stations.Spec{StationID: "BROKEN", StationName: "BROKEN", ContentHash: "sha256:broken", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "required.json", FileType: "REQUIRED", Required: true}}, Execution: stations.Execution{Executable: script}}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	tsvc := tasks.NewService(st, reg, nil, func() string { return "0b0b0b" })
@@ -553,5 +554,124 @@ func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10_M3(t *testing.T) {
 	if winners != 1 || dups != 1 {
 		t.Errorf("expected 1 canonical + 1 duplicate, got %d/%d (rA=%s rB=%s)",
 			winners, dups, rA.Canonicality, rB.Canonicality)
+	}
+}
+
+// TestRuns_JobOrderFormatJSON — a station with joborder.format=json writes a
+// JSON joborder file to the working root and the artifact reflects the name.
+func TestRuns_JobOrderFormatJSON(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "jo-json.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	script := writeExecutable(t, dir, "jo-json.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.json\"\n")
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "JO-JSON",
+		StationName:   "JobOrder JSON",
+		ContentHash:   "sha256:jo-json",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: script},
+		Outputs:       []stations.OutputDefinition{{Name: "out.json", FileType: "JSON_OUT", Required: true}},
+		JobOrder:      stations.JobOrderConfig{Format: "json", Name: "joborder.json"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "a1b2c3" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executor:        executor.NewLocalExecutor(nil),
+		Resolver:        reg,
+		WorkingRootBase: filepath.Join(dir, "work"),
+		IDFactory:       func() string { runN++; return "run-jojson-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "JO-JSON"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+	// joborder.json must be present in the working root.
+	joPath := filepath.Join(run.WorkingRoot, "joborder.json")
+	raw, err := os.ReadFile(joPath)
+	if err != nil {
+		t.Fatalf("joborder.json not found: %v", err)
+	}
+	// Must parse as valid JSON containing schema_version.
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid JSON joborder: %v", err)
+	}
+	if doc["schema_version"] != "veriproc.joborder/v1" {
+		t.Errorf("schema_version = %v", doc["schema_version"])
+	}
+}
+
+// TestRuns_JobOrderFormatNone — a station with joborder.format=none writes no
+// joborder file and exposes no joborder artifact.
+func TestRuns_JobOrderFormatNone(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "jo-none.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	script := writeExecutable(t, dir, "jo-none.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.dat\"\n")
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "JO-NONE",
+		StationName:   "JobOrder None",
+		ContentHash:   "sha256:jo-none",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: script},
+		Outputs:       []stations.OutputDefinition{{Name: "out.dat", FileType: "NONE_OUT", Required: true}},
+		JobOrder:      stations.JobOrderConfig{Format: "none"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "d4e5f6" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executor:        executor.NewLocalExecutor(nil),
+		Resolver:        reg,
+		WorkingRootBase: filepath.Join(dir, "work"),
+		IDFactory:       func() string { runN++; return "run-jonone-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "JO-NONE"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+	// No joborder file must exist.
+	if _, err := os.Stat(filepath.Join(run.WorkingRoot, "joborder.yaml")); !os.IsNotExist(err) {
+		t.Error("joborder.yaml should not exist for format=none")
+	}
+	// No joborder artifact.
+	arts, _ := st.Artifacts().ListByRun(ctx, run.RunID, "joborder")
+	if len(arts) != 0 {
+		t.Errorf("expected no joborder artifact, got %d", len(arts))
 	}
 }

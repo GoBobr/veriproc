@@ -16,7 +16,7 @@ func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 		StationID:   "STATION-A",
 		StationName: "SCE_2",
 		Description: "demo station",
-		Scripts:     map[string]string{"run": "./scripts/run.sh"},
+		Execution:   stations.Execution{Executable: "./scripts/run.sh"},
 		Outputs:     stations.OutputDefinitions{{Name: "result.json", FileType: "RESULT", Required: true}},
 	}
 	spec, err := stations.SpecFromDefinition(def)
@@ -34,13 +34,13 @@ func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 	left := stations.Definition{
 		StationID: "STATION-A", StationName: "SCE_2",
-		Scripts:  map[string]string{"run": "./scripts/run.sh", "validate": "./scripts/validate.sh"},
-		Metadata: map[string]string{"owner": "science", "tier": "sandbox"},
+		Execution: stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
+		Metadata:  map[string]string{"owner": "science", "tier": "sandbox"},
 	}
 	right := stations.Definition{
 		StationName: "SCE_2", StationID: "STATION-A",
-		Metadata: map[string]string{"tier": "sandbox", "owner": "science"},
-		Scripts:  map[string]string{"validate": "./scripts/validate.sh", "run": "./scripts/run.sh"},
+		Metadata:   map[string]string{"tier": "sandbox", "owner": "science"},
+		Execution:  stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
 	}
 	lh, err := stations.ComputeContentHash(left)
 	if err != nil {
@@ -149,4 +149,83 @@ func openStore(t *testing.T) *store.Store {
 		t.Fatalf("migrate: %v", err)
 	}
 	return st
+}
+
+// TestLoader_JobOrder_Formats — valid joborder format values load without error.
+func TestLoader_JobOrder_Formats(t *testing.T) {
+	for _, format := range []string{"yaml", "json", "toml", "none", ""} {
+		root := t.TempDir()
+		content := "station_id: JO-FORMAT\nstation_name: JO Format Test\n"
+		if format != "" {
+			content += "joborder:\n  format: " + format + "\n"
+		}
+		writeStation(t, root, "s", content)
+		_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+		if err != nil {
+			t.Errorf("format %q: unexpected error: %v", format, err)
+		}
+	}
+}
+
+// TestLoader_JobOrder_InvalidFormat — unknown format is rejected.
+func TestLoader_JobOrder_InvalidFormat(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", "station_id: JO-BAD\nstation_name: JO Bad\njoborder:\n  format: xml\n")
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err == nil {
+		t.Fatal("expected error for invalid joborder format")
+	}
+}
+
+// TestLoader_JobOrder_NoneWithInclude — format: none must not have include.
+func TestLoader_JobOrder_NoneWithInclude(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", `station_id: JO-NONE
+station_name: JO None
+joborder:
+  format: none
+  include:
+    extra: forbidden
+`)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err == nil {
+		t.Fatal("expected error: format none must not have include")
+	}
+}
+
+// TestLoader_JobOrder_NoneWithName — format: none must not have a name.
+func TestLoader_JobOrder_NoneWithName(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", "station_id: JO-NONE2\nstation_name: JO None2\njoborder:\n  format: none\n  name: should-not-exist.yaml\n")
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err == nil {
+		t.Fatal("expected error: format none must not have name")
+	}
+}
+
+// TestLoader_Execution_RelativePathResolvedToAbsolute — relative executable
+// paths are resolved to absolute when LoadDir is called.
+func TestLoader_Execution_RelativePathResolvedToAbsolute(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", "station_id: EXE-REL\nstation_name: Exe Rel\nexecution:\n  executable: ./scripts/run.sh\n")
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 spec, got %d", len(specs))
+	}
+	if !filepath.IsAbs(specs[0].Execution.Executable) {
+		t.Errorf("executable should be resolved to absolute path, got %q", specs[0].Execution.Executable)
+	}
+}
+
+// TestLoader_Execution_RelativePath — relative executable path is accepted.
+func TestLoader_Execution_RelativePath(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", "station_id: EXE-REL\nstation_name: Exe Rel\nexecution:\n  executable: ./scripts/run.sh\n")
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }

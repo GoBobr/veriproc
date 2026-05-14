@@ -1,4 +1,4 @@
-station_id: STATION-B
+station_id: statB
 station_name: Track L1 processor
 schema_version: veriproc.station/v1
 description: |
@@ -6,19 +6,26 @@ description: |
   archive and writes a small CSV product.
 execution:
   mode: local
-  command: ./scripts/run.sh
-scripts:
-  run: ./scripts/run.sh
+  executable: ./scripts/run.sh
 inputs:
-  - file_type: A_RESULT________
+  - file_type: SCE_2__ICM______
     category: product
-    filename_pattern: "result-a.json"
+    window_match: overlaps
+    margins: [0, 0]
     mandatory: true
 outputs:
-  - file_type: B_TRACK_________
-    name: track.csv
-    filename_pattern: "track.csv"
+  - file_type: SCE_2__ICM_____2
     mandatory: true
+    publish:
+      rolling_archive: hot
+
+publication:
+  enabled: true
+  archive_id: hot
+  mode: copy
+  outputs:
+    - "CDM?_SCE_2__ICM_____2*.nc"
+
 metadata:
   owner: sandbox
   cadence: 15m
