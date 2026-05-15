@@ -214,6 +214,18 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	}
 	fingerprintValue := computeFingerprint(rev, manifest, task.Force)
 
+	// Spec §3.15: if the fingerprint is already canonically owned and this
+	// run is not forced, fail before creating any DB records or dispatching.
+	// Forced runs bypass this check so operators can always trigger a fresh
+	// execution; if execution actually happens the run will go downstream
+	// regardless of canonicality (§3.8, §3.12).
+	if !task.Force {
+		if fp, gerr := s.store.Fingerprints().GetByValue(ctx, fingerprintValue); gerr == nil && fp.CanonicalRunID != "" {
+			_ = os.RemoveAll(workingRoot)
+			return nil, fmt.Errorf("%w: duplicate fingerprint — already canonically processed as run %s", ErrFatalPrepare, fp.CanonicalRunID)
+		}
+	}
+
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
 		if err := tx.Runs().Insert(ctx, run); err != nil {
 			return err
@@ -262,6 +274,11 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	jobOrderPath, jobOrderArtifact, err := s.writeJobOrder(ctx, run)
 	if err != nil {
 		return nil, fmt.Errorf("write job-order: %w", err)
+	}
+
+	taskHistoryArtifact, err := s.writeTaskHistory(ctx, run)
+	if err != nil {
+		return nil, fmt.Errorf("write task history: %w", err)
 	}
 
 	// Resolve the station execution from the station revision's declared execution.
@@ -326,6 +343,11 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		}
 		if jobOrderArtifact != nil {
 			if err := tx.Artifacts().Insert(ctx, jobOrderArtifact); err != nil {
+				return err
+			}
+		}
+		if taskHistoryArtifact != nil {
+			if err := tx.Artifacts().Insert(ctx, taskHistoryArtifact); err != nil {
 				return err
 			}
 		}

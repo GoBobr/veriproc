@@ -52,6 +52,7 @@ type taskWire struct {
 	Window              tasks.Window      `json:"window"`
 	Force               bool              `json:"force"`
 	State               string            `json:"state"`
+	FailureSummary      string            `json:"failure_summary,omitempty"`
 	CreatedAt           time.Time         `json:"created_at"`
 	LatestRetryIndex    *int64            `json:"latest_retry_index"`
 	LatestRunRef        *string           `json:"latest_run_ref"`
@@ -218,9 +219,10 @@ func toWire(t *store.TaskRecord) taskWire {
 			Start: t.WindowStart.UTC(),
 			End:   t.WindowEnd.UTC(),
 		},
-		Force:     t.Force,
-		State:     t.State,
-		CreatedAt: t.CreatedAt.UTC(),
+		Force:          t.Force,
+		State:          t.State,
+		FailureSummary: t.FailureSummary,
+		CreatedAt:      t.CreatedAt.UTC(),
 	}
 	if t.LatestRetryIndex.Valid {
 		v := t.LatestRetryIndex.Int64

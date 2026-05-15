@@ -557,7 +557,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id", "created_at"})
+		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "failure_summary", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id", "created_at"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"station_id", "state", "split_group_id", "parent_task_id", "limit", "cursor"})

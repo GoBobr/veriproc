@@ -100,38 +100,57 @@ func TestRuns_ForcedRerunNonCanonical_3_15_M6(t *testing.T) {
 // TestRuns_PromoteCanonical_M6 — a non-canonical complete run can be promoted
 // by an operator. The previous canonical run becomes "duplicate" and an audit
 // entry is recorded. Spec §3.16, §7.4.5.
+//
+// Both runs are prepared before either is finalized so neither triggers the
+// pre-dispatch duplicate check (the fingerprint has no canonical owner yet).
+// The first run to finalize claims canonical; the second becomes "duplicate".
 func TestRuns_PromoteCanonical_M6(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
-	canonRunID := finalizeTaskRun(t, f, taskID)
 
-	// Create a duplicate run for the same task (retry of the same window).
-	dupRunID := finalizeTaskRun(t, f, taskID)
-	if dupRunID == canonRunID {
-		t.Fatalf("duplicate run id collision")
-	}
-
-	dup, err := f.st.Runs().Get(ctx, dupRunID)
+	// Prepare both runs while the fingerprint is still unclaimed.
+	run1, err := f.runs.PrepareRun(ctx, taskID)
 	if err != nil {
-		t.Fatalf("get dup: %v", err)
+		t.Fatalf("prepare run1: %v", err)
 	}
-	if dup.Canonicality != "duplicate" {
-		t.Fatalf("dup canonicality = %q, want duplicate", dup.Canonicality)
+	run2, err := f.runs.PrepareRun(ctx, taskID)
+	if err != nil {
+		t.Fatalf("prepare run2: %v", err)
 	}
 
-	out, err := f.runs.PromoteCanonical(ctx, dupRunID, "operator-rebuild", "alice")
+	// Drive both runs to completion via the dispatcher.
+	for i := 0; i < 8; i++ {
+		_ = f.dispatch.Tick(ctx)
+	}
+
+	canonRun, err := f.st.Runs().Get(ctx, run1.RunID)
+	if err != nil {
+		t.Fatalf("get run1: %v", err)
+	}
+	dupRun, err := f.st.Runs().Get(ctx, run2.RunID)
+	if err != nil {
+		t.Fatalf("get run2: %v", err)
+	}
+	if canonRun.Canonicality != "canonical" {
+		t.Fatalf("run1 canonicality = %q, want canonical", canonRun.Canonicality)
+	}
+	if dupRun.Canonicality != "duplicate" {
+		t.Fatalf("run2 canonicality = %q, want duplicate", dupRun.Canonicality)
+	}
+
+	out, err := f.runs.PromoteCanonical(ctx, dupRun.RunID, "operator-rebuild", "alice")
 	if err != nil {
 		t.Fatalf("promote: %v", err)
 	}
-	if out.PreviousRunID != canonRunID {
-		t.Errorf("previous_run_id = %q, want %s", out.PreviousRunID, canonRunID)
+	if out.PreviousRunID != canonRun.RunID {
+		t.Errorf("previous_run_id = %q, want %s", out.PreviousRunID, canonRun.RunID)
 	}
 	if out.Run.Canonicality != "canonical" {
 		t.Errorf("promoted canonicality = %q, want canonical", out.Run.Canonicality)
 	}
 
-	prev, err := f.st.Runs().Get(ctx, canonRunID)
+	prev, err := f.st.Runs().Get(ctx, canonRun.RunID)
 	if err != nil {
 		t.Fatalf("get prev: %v", err)
 	}
@@ -148,7 +167,7 @@ func TestRuns_PromoteCanonical_M6(t *testing.T) {
 		t.Fatalf("audit rows = %d, want >= 2 (elect + promote)", len(audits))
 	}
 	last := audits[len(audits)-1]
-	if last.Action != "promote" || last.NewRunID != dupRunID || last.Actor != "alice" {
+	if last.Action != "promote" || last.NewRunID != dupRun.RunID || last.Actor != "alice" {
 		t.Errorf("last audit = %+v", last)
 	}
 }

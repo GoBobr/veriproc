@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -561,6 +562,50 @@ func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10_M3(t *testing.T) {
 	if winners != 1 || dups != 1 {
 		t.Errorf("expected 1 canonical + 1 duplicate, got %d/%d (rA=%s rB=%s)",
 			winners, dups, rA.Canonicality, rB.Canonicality)
+	}
+
+	// Both tasks must be completed — a duplicate run must not leave the task
+	// permanently in "accepted" state.
+	tkA2, _ := f.st.Tasks().Get(ctx, taskA)
+	tkB2, _ := f.st.Tasks().Get(ctx, taskB)
+	for _, tk := range []*store.TaskRecord{tkA2, tkB2} {
+		if tk.State != "completed" {
+			t.Errorf("task %s state = %q, want completed", tk.TaskID, tk.State)
+		}
+	}
+}
+
+// TestRuns_DuplicateFailsBeforeDispatch_3_15_M4 — when a second task is
+// submitted for a fingerprint already canonically owned by an earlier
+// completed run, the dispatcher fails the task at preparation time without
+// creating a run record (Spec §3.15).
+func TestRuns_DuplicateFailsBeforeDispatch_3_15_M4(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	// Submit and fully complete taskA so its fingerprint becomes canonically owned.
+	taskAID := submitTask(t, f)
+	waitForTaskState(t, ctx, f.st, f.dispatch, taskAID, "completed")
+
+	// Submit taskB with identical station/window → identical fingerprint.
+	taskBID := submitTask(t, f)
+	// The dispatcher must fail taskB at preparation — no run should be created.
+	waitForTaskState(t, ctx, f.st, f.dispatch, taskBID, "failed")
+
+	tkB, err := f.st.Tasks().Get(ctx, taskBID)
+	if err != nil {
+		t.Fatalf("get task B: %v", err)
+	}
+	if tkB.State != "failed" {
+		t.Errorf("task B state = %q, want failed", tkB.State)
+	}
+	if !strings.Contains(tkB.FailureSummary, "duplicate") {
+		t.Errorf("task B failure_summary = %q, want substring 'duplicate'", tkB.FailureSummary)
+	}
+	// No run must have been created for taskB (PrepareRun returned ErrFatalPrepare
+	// before inserting into the runs table).
+	if tkB.LatestRetryIndex.Valid {
+		t.Errorf("expected no run for duplicate task B, got retry_index=%d", tkB.LatestRetryIndex.Int64)
 	}
 }
 

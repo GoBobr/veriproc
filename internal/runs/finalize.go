@@ -91,6 +91,28 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		}
 	}
 
+	// Emit a structured log explaining the canonicality decision so operators
+	// can diagnose why a run is or is not triggering downstream tasks.
+	switch canonicality {
+	case "canonical":
+		s.logger.Info().
+			Str("run_id", run.RunID).
+			Str("task_id", run.TaskID).
+			Str("fingerprint", run.ProcessingFingerprint).
+			Msg("run elected canonical — fingerprint claimed; downstream tasks will be triggered")
+	case "duplicate":
+		s.logger.Warn().
+			Str("run_id", run.RunID).
+			Str("task_id", run.TaskID).
+			Str("fingerprint", run.ProcessingFingerprint).
+			Msg("run is duplicate — fingerprint already owned (concurrent execution race); downstream tasks will still be triggered")
+	case "forced":
+		s.logger.Info().
+			Str("run_id", run.RunID).
+			Str("task_id", run.TaskID).
+			Msg("run is forced — force=true; run does not compete for fingerprint ownership; downstream tasks will be triggered")
+	}
+
 	now := s.clock().UTC()
 	publicationRecords, err := s.buildPublicationRecords(ctx, run, outputArtifacts)
 	if err != nil {
@@ -101,6 +123,16 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 	if err != nil {
 		_ = s.MarkFailedAndLog(ctx, runID, err.Error())
 		return nil, err
+	}
+	if len(downstreamTasks) > 0 {
+		ids := make([]string, 0, len(downstreamTasks))
+		for _, dt := range downstreamTasks {
+			ids = append(ids, dt.TaskID)
+		}
+		s.logger.Info().
+			Str("run_id", run.RunID).
+			Strs("downstream_task_ids", ids).
+			Msg("triggering downstream tasks")
 	}
 
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
@@ -144,6 +176,14 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		} else if canonicality == "forced" {
 			// Forced reruns mark the task completed but do not overwrite
 			// canonical_run_id (Spec §3.15).
+			if err := tx.Tasks().SetState(ctx, run.TaskID, "completed", ""); err != nil {
+				return err
+			}
+		} else if canonicality == "duplicate" {
+			// Duplicate runs still complete the task — the canonical run from
+			// an earlier or concurrent submission already owns the fingerprint
+			// and has triggered downstream. The task must not stay in
+			// "accepted" indefinitely.
 			if err := tx.Tasks().SetState(ctx, run.TaskID, "completed", ""); err != nil {
 				return err
 			}
@@ -572,9 +612,15 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 	}
 	return map[string]any{
 		"veriproc_meta": map[string]any{
+			"schema_version":    "veriproc.joborder/v1",
 			"joborder_id":       "joborder-" + run.RunID,
+			"task_id":           run.TaskID,
+			"retry_index":       run.RetryIndex,
 			"run_ref":           fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
+			"station_id":        rev.StationID,
+			"station_name":      rev.StationName,
 			"station_revision":  rev.RevisionID,
+			"generator_type":    generator["type"],
 			"generator_version": generator["version"],
 			"manifest_path":     manifestPath,
 		},
@@ -722,9 +768,6 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 }
 
 func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord, parent *store.TaskRecord, canonicality string) ([]*store.TaskRecord, error) {
-	if canonicality != "canonical" {
-		return nil, nil
-	}
 	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
 	if err != nil || rev.DeclaredDownstream == "" {
 		return nil, err
@@ -733,6 +776,29 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 	if err := json.Unmarshal([]byte(rev.DeclaredDownstream), &routes); err != nil {
 		return nil, fmt.Errorf("parse downstream: %w", err)
 	}
+
+	// Build the history entry for the current (parent) run.
+	parentRunRef := fmt.Sprintf("%s/r%d", parent.TaskID, run.RetryIndex)
+	parentEntry := map[string]any{
+		"station_id":   rev.StationID,
+		"run_ref":      parentRunRef,
+		"completed_at": s.clock().UTC().Format(time.RFC3339),
+		"summary":      "station " + rev.StationName + " completed",
+	}
+
+	// Extract history already recorded in the parent task's routing content,
+	// then append the current parent run so the child carries the full chain.
+	var ancestorHistory []any
+	if len(parent.RoutingContent) > 0 {
+		var rc map[string]any
+		if jerr := json.Unmarshal(parent.RoutingContent, &rc); jerr == nil {
+			if h, ok := rc["history"].([]any); ok {
+				ancestorHistory = h
+			}
+		}
+	}
+	history := append(ancestorHistory, parentEntry) //nolint:gocritic
+
 	children := make([]*store.TaskRecord, 0, len(routes))
 	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
@@ -753,7 +819,8 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 			"destination":    map[string]any{"station_id": resolved.StationID},
 			"window":         map[string]any{"start": parent.WindowStart.UTC().Format(time.RFC3339Nano), "end": parent.WindowEnd.UTC().Format(time.RFC3339Nano)},
 			"force":          false,
-			"parent":         map[string]any{"task_id": parent.TaskID, "retry_index": run.RetryIndex},
+			"parent":         map[string]any{"run_ref": parentRunRef},
+			"history":        history,
 		}
 		raw, err := canonjson.Marshal(routing)
 		if err != nil {
