@@ -51,17 +51,7 @@ outputs:
     mandatory: true
     publish:
       rolling_archive: proc-ra
-
-publication:
-  enabled: true
-  archive_id: proc-ra
-  mode: copy
-  outputs:
-    - "CDM?_SCE_2__ICM______*.nc"
+      mode: copy
 
 downstream:
   - station_id: statB
-
-metadata:
-  owner: sandbox
-  cadence: 15m

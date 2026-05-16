@@ -32,9 +32,7 @@ type Definition struct {
 	Inputs         []InputDefinition   `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Outputs        OutputDefinitions   `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 	Downstream     []DownstreamTarget  `yaml:"downstream,omitempty" json:"downstream,omitempty"`
-	Publication    PublicationPolicy   `yaml:"publication,omitempty" json:"publication,omitempty"`
 	RollingFolders map[string][]string `yaml:"rolling_folders,omitempty" json:"rolling_folders,omitempty"`
-	Metadata       map[string]string   `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
 // Execution describes how to invoke the station workload.
@@ -80,8 +78,18 @@ type OutputDefinition struct {
 	// Pattern glob) to be captured as individual output artifacts instead of
 	// only the newest single match. Use for fan-out stations that write a
 	// variable number of output files per run.
-	Multiple bool `yaml:"multiple,omitempty" json:"multiple,omitempty"`
-	Publish  any  `yaml:"publish,omitempty" json:"publish,omitempty"`
+	Multiple bool           `yaml:"multiple,omitempty" json:"multiple,omitempty"`
+	Publish  *OutputPublish `yaml:"publish,omitempty" json:"publish,omitempty"`
+}
+
+// OutputPublish declares that a validated output should be published to a
+// rolling archive after run finalization. The rolling_archive field must
+// resolve to a configured archive in the instance configuration. Mode
+// defaults to "copy" when absent.
+type OutputPublish struct {
+	RollingArchive string `yaml:"rolling_archive,omitempty" json:"rolling_archive,omitempty"`
+	Mode           string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	TargetSubpath  string `yaml:"target_subpath,omitempty" json:"target_subpath,omitempty"`
 }
 
 type OutputDefinitions []OutputDefinition
@@ -117,14 +125,6 @@ type DownstreamTarget struct {
 	// "fan_in": triggered only when the split group spawned by this station
 	//           reaches "complete" state (all members canonical).
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
-}
-
-type PublicationPolicy struct {
-	Enabled       bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ArchiveID     string   `yaml:"archive_id,omitempty" json:"archive_id,omitempty"`
-	Mode          string   `yaml:"mode,omitempty" json:"mode,omitempty"`
-	TargetSubpath string   `yaml:"target_subpath,omitempty" json:"target_subpath,omitempty"`
-	Outputs       []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 }
 
 // LoadDir scans root for */station.yaml, computes revision hashes, and seeds
@@ -226,7 +226,6 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 		Inputs:         def.Inputs,
 		Outputs:        []OutputDefinition(def.Outputs),
 		Downstream:     def.Downstream,
-		Publication:    def.Publication,
 		RollingFolders: def.RollingFolders,
 	}, nil
 }
@@ -308,10 +307,14 @@ func normalizeDefinition(def Definition) Definition {
 		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)
 		def.Downstream[i].Mode = strings.TrimSpace(strings.ToLower(def.Downstream[i].Mode))
 	}
-	def.Publication.ArchiveID = strings.TrimSpace(def.Publication.ArchiveID)
-	def.Publication.Mode = strings.TrimSpace(def.Publication.Mode)
-	if def.Publication.Mode == "" {
-		def.Publication.Mode = "copy"
+	for i := range def.Outputs {
+		if def.Outputs[i].Publish != nil {
+			def.Outputs[i].Publish.RollingArchive = strings.TrimSpace(def.Outputs[i].Publish.RollingArchive)
+			def.Outputs[i].Publish.Mode = strings.TrimSpace(def.Outputs[i].Publish.Mode)
+			if def.Outputs[i].Publish.Mode == "" {
+				def.Outputs[i].Publish.Mode = "copy"
+			}
+		}
 	}
 	return def
 }
@@ -383,8 +386,10 @@ func validateDefinition(def Definition) error {
 			return fmt.Errorf("downstream target %s mode %q invalid", down.StationID, down.Mode)
 		}
 	}
-	if def.Publication.Enabled && def.Publication.ArchiveID == "" {
-		return errors.New("publication archive_id must not be empty when enabled")
+	for _, out := range def.Outputs {
+		if out.Publish != nil && out.Publish.RollingArchive == "" {
+			return fmt.Errorf("output %s publish.rolling_archive must not be empty", out.FileType)
+		}
 	}
 	return nil
 }

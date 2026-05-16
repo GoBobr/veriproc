@@ -35,12 +35,10 @@ func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 	left := stations.Definition{
 		StationID: "STATION-A", StationName: "SCE_2",
 		Execution: stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
-		Metadata:  map[string]string{"owner": "science", "tier": "sandbox"},
 	}
 	right := stations.Definition{
 		StationName: "SCE_2", StationID: "STATION-A",
-		Metadata:   map[string]string{"tier": "sandbox", "owner": "science"},
-		Execution:  stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
+		Execution:   stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
 	}
 	lh, err := stations.ComputeContentHash(left)
 	if err != nil {

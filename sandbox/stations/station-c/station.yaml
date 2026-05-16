@@ -25,20 +25,10 @@ outputs:
     multiple: true
     publish:
       rolling_archive: micro-ra
+      mode: copy
 
 downstream:
   - station_id: statD
     mode: task_out
   - station_id: statE
     mode: fan_in
-
-publication:
-  enabled: true
-  archive_id: micro-ra
-  mode: copy
-  outputs:
-    - "CDM?_SCE_2__MICROBIG_*.nc"
-
-metadata:
-  owner: sandbox
-  cadence: 15m

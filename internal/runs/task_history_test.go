@@ -82,8 +82,8 @@ func TestTaskHistory_RootTask_2_6_1(t *testing.T) {
 	if doc["schema_version"] != "veriproc.task/v1" {
 		t.Errorf("schema_version = %v, want veriproc.task/v1", doc["schema_version"])
 	}
-	if doc["task_id"] != res.Task.TaskID {
-		t.Errorf("task_id = %v, want %s", doc["task_id"], res.Task.TaskID)
+	if doc["task_id"] != nil {
+		t.Errorf("task_id must be absent (run_ref encodes it), got: %v", doc["task_id"])
 	}
 	wantRunRef := res.Task.TaskID + "/r0"
 	if doc["run_ref"] != wantRunRef {
@@ -208,8 +208,8 @@ func TestTaskHistory_DownstreamTask_2_6_1(t *testing.T) {
 	}
 
 	// Beta task_id / run_ref.
-	if doc["task_id"] != betaTaskID {
-		t.Errorf("task_id = %v, want %s", doc["task_id"], betaTaskID)
+	if doc["task_id"] != nil {
+		t.Errorf("task_id must be absent (run_ref encodes it), got: %v", doc["task_id"])
 	}
 	wantBetaRunRef := betaTaskID + "/r0"
 	if doc["run_ref"] != wantBetaRunRef {

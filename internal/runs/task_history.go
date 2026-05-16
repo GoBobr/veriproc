@@ -26,7 +26,6 @@ type taskHistoryEntry struct {
 // about the task it is processing and the processing chain that led to it.
 type taskHistoryDocument struct {
 	SchemaVersion string `yaml:"schema_version"`
-	TaskID        string `yaml:"task_id"`
 	RunRef        string `yaml:"run_ref"`
 	IdempotencyKey string `yaml:"idempotency_key,omitempty"`
 	Destination   struct {
@@ -59,7 +58,6 @@ func (s *Service) writeTaskHistory(ctx context.Context, run *store.RunRecord) (*
 
 	doc := taskHistoryDocument{
 		SchemaVersion: "veriproc.task/v1",
-		TaskID:        task.TaskID,
 		RunRef:        runRef,
 		Force:         task.Force,
 		CreatedAt:     task.CreatedAt.UTC().Format(time.RFC3339),

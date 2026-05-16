@@ -23,14 +23,4 @@ outputs:
     mandatory: true
     publish:
       rolling_archive: micro-ra
-
-publication:
-  enabled: true
-  archive_id: micro-ra
-  mode: copy
-  outputs:
-    - "CDM?_SCE_2__PROCBIG__*.nc"
-
-metadata:
-  owner: sandbox
-  cadence: 90s
+      mode: copy

@@ -74,7 +74,7 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 
 	reg := stations.NewRegistry()
 	if err := reg.Seed(ctx, st,
-		stations.Spec{StationID: "STATION-A", StationName: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Publication: stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"result-a.json"}}, Execution: stations.Execution{Executable: scriptA}},
+		stations.Spec{StationID: "STATION-A", StationName: "A_PROC", ContentHash: "sha256:station-a", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}, {FileType: "AUX_A", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "result-a.json", FileType: "A_RESULT", Required: true, Publish: &stations.OutputPublish{RollingArchive: "hot", Mode: "copy"}}}, Downstream: []stations.DownstreamTarget{{StationID: "STATION-B"}}, Execution: stations.Execution{Executable: scriptA}},
 		stations.Spec{StationID: "STATION-B", StationName: "B_PROC", ContentHash: "sha256:station-b", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_RESULT", Category: "product", Pattern: "result-a.json"}}, Outputs: []stations.OutputDefinition{{Name: "result-b.json", FileType: "B_RESULT", Required: true}}, Execution: stations.Execution{Executable: scriptB}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -194,8 +194,7 @@ cp input/20250703_AUX_DIR_v1/data.nc "$VERIPROC_RUN_DIR/dir-output/data.nc"
 		ContentHash:   "sha256:dir-station",
 		SchemaVersion: "veriproc.station/v1",
 		Inputs:        []stations.InputDefinition{{FileType: "AUX_DIR", Category: "product", ObjectKind: store.ObjectKindDirectory}},
-		Outputs:       []stations.OutputDefinition{{Name: "dir-output", FileType: "DIR_OUTPUT", ObjectKind: store.ObjectKindDirectory, Required: true}},
-		Publication:   stations.PublicationPolicy{Enabled: true, ArchiveID: "hot", Mode: "copy", Outputs: []string{"dir-output"}},
+		Outputs:       []stations.OutputDefinition{{Name: "dir-output", FileType: "DIR_OUTPUT", ObjectKind: store.ObjectKindDirectory, Required: true, Publish: &stations.OutputPublish{RollingArchive: "hot", Mode: "copy"}}},
 		Execution:     stations.Execution{Executable: script},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

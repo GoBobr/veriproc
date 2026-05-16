@@ -23,15 +23,4 @@ outputs:
     mandatory: true
     publish:
       rolling_archive: proc-ra
-
-publication:
-  enabled: true
-  archive_id: proc-ra
-  mode: copy
-  outputs:
-    - "CDM?_SCE_2__FINAL____*.nc"
-
-metadata:
-  owner: sandbox
-  cadence: 15m
-  
+      mode: copy

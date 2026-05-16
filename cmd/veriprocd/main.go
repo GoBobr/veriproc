@@ -328,7 +328,7 @@ func buildGroupCompleteNotifier(
 				parentRunRef = fmt.Sprintf("%s/r%d", parentTask.TaskID, canonRun.RetryIndex)
 				completedAt := ""
 				if canonRun.TerminalAt.Valid {
-					completedAt = canonRun.TerminalAt.Time.UTC().Format(time.RFC3339)
+					completedAt = canonRun.TerminalAt.Time.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 				}
 				entry := map[string]any{
 					"station_id": parentTask.DestinationStationID,
@@ -368,7 +368,7 @@ func buildGroupCompleteNotifier(
 					"canonicality": memberRun.Canonicality,
 				}
 				if memberRun.TerminalAt.Valid {
-					e["completed_at"] = memberRun.TerminalAt.Time.UTC().Format(time.RFC3339)
+					e["completed_at"] = memberRun.TerminalAt.Time.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 				}
 				memberEntries = append(memberEntries, memberEntry{windowStart: memberTask.WindowStart, entry: e})
 			}

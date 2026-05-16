@@ -737,8 +737,6 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 	}
 	return map[string]any{
 		"veriproc_meta": map[string]any{
-			"schema_version":    "veriproc.joborder/v1",
-			"joborder_id":       "joborder-" + run.RunID,
 			"run_ref":           fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
 			"station_id":        rev.StationID,
 			"station_revision":  rev.RevisionID,
@@ -816,59 +814,55 @@ func renderJobOrder(doc map[string]any, format string) ([]byte, error) {
 
 func (s *Service) buildPublicationRecords(ctx context.Context, run *store.RunRecord, artifacts []*store.ArtifactRecord) ([]*store.PublicationRecord, error) {
 	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
-	if err != nil || rev.PublicationPolicy == "" {
-		return nil, err
-	}
-	var policy stations.PublicationPolicy
-	if err := json.Unmarshal([]byte(rev.PublicationPolicy), &policy); err != nil {
-		return nil, fmt.Errorf("parse publication policy: %w", err)
-	}
-	if !policy.Enabled {
-		return nil, nil
-	}
-	if s.rollingArchives[policy.ArchiveID] == "" {
-		return nil, fmt.Errorf("publication archive %q is not configured", policy.ArchiveID)
-	}
-	subpath, err := cleanPublicationSubpath(policy.TargetSubpath)
 	if err != nil {
 		return nil, err
 	}
-	selected := map[string]bool{}
-	for _, name := range policy.Outputs {
-		selected[name] = true
+	if rev.DeclaredOutputs == "" {
+		return nil, nil
+	}
+	var outDefs []stations.OutputDefinition
+	if err := json.Unmarshal([]byte(rev.DeclaredOutputs), &outDefs); err != nil {
+		return nil, fmt.Errorf("parse declared outputs: %w", err)
+	}
+	// Index publish config by file_type for O(1) lookup per artifact.
+	publishByType := map[string]*stations.OutputPublish{}
+	for _, od := range outDefs {
+		if od.Publish != nil {
+			publishByType[od.FileType] = od.Publish
+		}
+	}
+	if len(publishByType) == 0 {
+		return nil, nil
 	}
 	records := make([]*store.PublicationRecord, 0, len(artifacts))
 	for _, art := range artifacts {
-		name := filepath.Base(art.Path)
-		if len(selected) > 0 && !selected[name] && !selected[art.FileType] && !matchesAnyGlob(name, policy.Outputs) {
+		pub := publishByType[art.FileType]
+		if pub == nil {
 			continue
 		}
+		if s.rollingArchives[pub.RollingArchive] == "" {
+			return nil, fmt.Errorf("publication archive %q is not configured", pub.RollingArchive)
+		}
+		subpath, err := cleanPublicationSubpath(pub.TargetSubpath)
+		if err != nil {
+			return nil, err
+		}
+		name := filepath.Base(art.Path)
 		targetPath := name
 		if subpath != "" {
 			targetPath = filepath.ToSlash(filepath.Join(subpath, name))
 		}
-		mode := policy.Mode
+		mode := pub.Mode
 		if mode == "" {
 			mode = "copy"
 		}
-		if err := fileops.PublishObject(art.Path, filepath.Join(s.rollingArchives[policy.ArchiveID], targetPath), mode); err != nil {
+		if err := fileops.PublishObject(art.Path, filepath.Join(s.rollingArchives[pub.RollingArchive], targetPath), mode); err != nil {
 			return nil, err
 		}
 		now := s.clock().UTC()
-		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+policy.ArchiveID+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: policy.ArchiveID, TargetPath: targetPath, ObjectKind: art.ObjectKind, PublicationMode: mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
+		records = append(records, &store.PublicationRecord{PublicationID: "pub-" + sha12(run.RunID+":"+pub.RollingArchive+":"+name), ArtifactID: art.ArtifactID, ProducingRunID: run.RunID, ArchiveID: pub.RollingArchive, TargetPath: targetPath, ObjectKind: art.ObjectKind, PublicationMode: mode, PublicationState: store.PublicationStatePublished, Size: art.Size, Checksum: art.Checksum, ChecksumAlgo: art.ChecksumAlgo, ChecksumSource: art.ChecksumSource, CreatedAt: now, PublishedAt: nullTime(now)})
 	}
 	return records, nil
-}
-
-// matchesAnyGlob reports whether name matches any of the glob patterns.
-// Patterns that are not valid globs are treated as literal strings.
-func matchesAnyGlob(name string, patterns []string) bool {
-	for _, p := range patterns {
-		if ok, err := filepath.Match(p, name); err == nil && ok {
-			return true
-		}
-	}
-	return false
 }
 
 func cleanPublicationSubpath(subpath string) (string, error) {
@@ -955,7 +949,7 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 	parentEntry := map[string]any{
 		"station_id":   rev.StationID,
 		"run_ref":      parentRunRef,
-		"completed_at": s.clock().UTC().Format(time.RFC3339),
+		"completed_at": s.clock().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
 		"summary":      "station " + rev.StationName + " completed",
 	}
 

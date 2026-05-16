@@ -48,7 +48,6 @@ type Spec struct {
 	Inputs         []InputDefinition
 	Outputs        []OutputDefinition
 	Downstream     []DownstreamTarget
-	Publication    PublicationPolicy
 	RollingFolders map[string][]string
 }
 
@@ -95,11 +94,6 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			b, _ := json.Marshal(sp.Downstream)
 			declaredDownstream = string(b)
 		}
-		publicationPolicy := ""
-		if sp.Publication.Enabled {
-			b, _ := json.Marshal(sp.Publication)
-			publicationPolicy = string(b)
-		}
 		rollingFolders := ""
 		if len(sp.RollingFolders) > 0 {
 			b, _ := json.Marshal(sp.RollingFolders)
@@ -124,7 +118,6 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			DeclaredInputs:     declaredInputs,
 			DeclaredOutputs:    declaredOutputs,
 			DeclaredDownstream: declaredDownstream,
-			PublicationPolicy:  publicationPolicy,
 			RollingFolders:     rollingFolders,
 			DeclaredExecution:  declaredExecution,
 			DeclaredJobOrder:   declaredJobOrder,
