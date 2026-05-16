@@ -1,14 +1,44 @@
 station_id: statC
-station_name: Daily aggregator
+station_name: FanOut station C
+schema_version: veriproc.station/v1
 description: |
-  Sandbox station C - daily aggregator. Use with --split-group to exercise
-  M7 split-group aggregation across multiple windows.
+  Sandbox station C receives the SCE_2__BIG______ product from station B and
+  splits it into 10 equal micro-granules (SCE_2__MICROBIG_). Each granule
+  covers a sub-window of the parent task window.
+  The backend publishes all 10 granules to the micro-ra rolling archive after
+  validation. The script writes task-out.yaml declaring one statD task per
+  granule, all sharing a single split group. Station-E (statE) aggregates the
+  processed granules once the group is complete.
 execution:
+  mode: local
   executable: ./scripts/run.sh
-outputs:
-  - file_type: DAILY_SUMMARY
-    name: daily.json
+inputs:
+  - file_type: SCE_2__BIG______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
     mandatory: true
+
+outputs:
+  - file_type: SCE_2__MICROBIG_
+    mandatory: true
+    multiple: true
+    publish:
+      rolling_archive: micro-ra
+
+downstream:
+  - station_id: statD
+    mode: task_out
+  - station_id: statE
+    mode: fan_in
+
+publication:
+  enabled: true
+  archive_id: micro-ra
+  mode: copy
+  outputs:
+    - "CDM?_SCE_2__MICROBIG_*.nc"
+
 metadata:
   owner: sandbox
-  cadence: 1d
+  cadence: 15m

@@ -4,7 +4,7 @@ schema_version: veriproc.station/v1
 
 description: |
   Sandbox station A selects two rolling-archive inputs, writes a JSON output,
-  publishes it back to the hot archive, and triggers STATION-B.
+  publishes it back to proc-ra, and triggers STATION-B.
 
 execution:
   mode: local
@@ -50,10 +50,11 @@ outputs:
   - file_type: SCE_2__ICM______
     mandatory: true
     publish:
-      rolling_archive: hot
+      rolling_archive: proc-ra
+
 publication:
   enabled: true
-  archive_id: hot
+  archive_id: proc-ra
   mode: copy
   outputs:
     - "CDM?_SCE_2__ICM______*.nc"

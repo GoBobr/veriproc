@@ -140,7 +140,11 @@ func (s *Service) Aggregate(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	canonical, failed, terminal, total, summary := s.tallyMembers(ctx, members)
-	derived := derivedState(g.State, canonical, failed, terminal, total)
+	expected := 0
+	if g.ExpectedMembers.Valid {
+		expected = int(g.ExpectedMembers.Int64)
+	}
+	derived := derivedState(g.State, canonical, failed, terminal, total, expected)
 	if err := s.store.SplitGroups().SetAggregation(ctx, id, canonical, failed, summary); err != nil {
 		return "", err
 	}
@@ -173,7 +177,13 @@ func (s *Service) tallyMembers(ctx context.Context, members []*store.SplitGroupM
 	return
 }
 
-func derivedState(current string, canonical, failed, terminal, total int) string {
+func derivedState(current string, canonical, failed, terminal, total, expected int) string {
+	if expected > 0 && total < expected {
+		if current == store.SplitGroupStateOpen {
+			return store.SplitGroupStateOpen
+		}
+		return store.SplitGroupStateAggregating
+	}
 	if current == store.SplitGroupStateOpen && terminal < total {
 		return store.SplitGroupStateOpen
 	}

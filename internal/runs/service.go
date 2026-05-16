@@ -63,8 +63,9 @@ type Service struct {
 	workingRootBase   string
 	clock             func() time.Time
 	idFactory         func() string
-	registerGroup     GroupRegistrar
-	instanceID        string
+	registerGroup        GroupRegistrar
+	notifyGroupComplete  GroupCompleteNotifier
+	instanceID           string
 	definitions       map[string]any
 	facility          map[string]string
 	rollingArchives   map[string]string
@@ -81,6 +82,13 @@ type Service struct {
 // not import the groups package directly to keep the dependency one-way.
 type GroupRegistrar func(ctx context.Context, splitGroupID, runID, taskID string) error
 
+// GroupCompleteNotifier is the optional callback invoked after a run is
+// finalised as canonical and belongs to a split group. The caller is
+// responsible for aggregating the group and triggering any downstream action
+// (e.g. auto-submitting the fan-in station). Called asynchronously in a
+// goroutine so it does not block finalization.
+type GroupCompleteNotifier func(ctx context.Context, splitGroupID string)
+
 // Config configures a Service.
 type Config struct {
 	Store             *store.Store
@@ -89,8 +97,9 @@ type Config struct {
 	WorkingRootBase   string
 	Clock             func() time.Time
 	IDFactory         func() string
-	RegisterGroup     GroupRegistrar
-	InstanceID        string
+	RegisterGroup        GroupRegistrar
+	NotifyGroupComplete  GroupCompleteNotifier
+	InstanceID           string
 	Definitions       map[string]any
 	Facility          map[string]string
 	RollingArchives   map[string]string
@@ -132,8 +141,9 @@ func NewService(cfg Config) *Service {
 		workingRootBase:   cfg.WorkingRootBase,
 		clock:             cfg.Clock,
 		idFactory:         cfg.IDFactory,
-		registerGroup:     cfg.RegisterGroup,
-		instanceID:        cfg.InstanceID,
+		registerGroup:       cfg.RegisterGroup,
+		notifyGroupComplete: cfg.NotifyGroupComplete,
+		instanceID:          cfg.InstanceID,
 		definitions:       cloneAnyMap(cfg.Definitions),
 		facility:          cloneStringMap(cfg.Facility),
 		rollingArchives:   cloneStringMap(cfg.RollingArchives),
@@ -320,6 +330,7 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		Args:         resolvedArgs,
 		WindowStart:  task.WindowStart,
 		WindowEnd:    task.WindowEnd,
+		SplitGroupID: task.SplitGroupID,
 	}
 	schedID, err := s.exec.Submit(ctx, desc)
 	if err != nil {

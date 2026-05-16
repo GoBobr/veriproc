@@ -50,6 +50,12 @@ type SubmitInput struct {
 	Parent         *Parent
 	SplitGroupID   string
 	ClientMetadata map[string]any
+	// History carries the pre-built routing-history chain that should be
+	// embedded verbatim in the task's routing content. When non-nil each
+	// element must be a map[string]any with at least a station_id and
+	// run_ref key. Used by the group-complete notifier so that fan-in
+	// tasks (e.g. aggregation) carry the full ancestral chain.
+	History []any
 }
 
 // Destination identifies a target station.
@@ -282,7 +288,7 @@ func canonicalRouting(in SubmitInput, rev *store.StationRevisionRecord) (json.Ra
 	if in.Priority != "" {
 		m["priority"] = in.Priority
 	}
-	if in.Parent != nil && (in.Parent.TaskID != "" || in.Parent.RetryIndex != nil) {
+	if in.Parent != nil && (in.Parent.TaskID != "" || in.Parent.RetryIndex != nil || in.Parent.RunRef != "") {
 		p := map[string]any{}
 		if in.Parent.TaskID != "" {
 			p["task_id"] = in.Parent.TaskID
@@ -290,7 +296,14 @@ func canonicalRouting(in SubmitInput, rev *store.StationRevisionRecord) (json.Ra
 		if in.Parent.RetryIndex != nil {
 			p["retry_index"] = *in.Parent.RetryIndex
 		}
+		// Include run_ref so task.yaml can show the parent hop directly.
+		if in.Parent.RunRef != "" {
+			p["run_ref"] = in.Parent.RunRef
+		}
 		m["parent"] = p
+	}
+	if len(in.History) > 0 {
+		m["history"] = in.History
 	}
 	if len(in.ClientMetadata) > 0 {
 		m["client_metadata"] = in.ClientMetadata

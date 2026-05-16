@@ -28,14 +28,8 @@ const (
 
 type Naming struct {
 	TaskIDTimestamp TaskIDTimestampPolicy `yaml:"task_id_timestamp"`
-	TimestampFormat TimestampFormat       `yaml:"timestamp_format"`
 	WorkingRoot     WorkingRoot           `yaml:"working_root"`
 	Filenames       Filenames             `yaml:"filenames"`
-}
-
-type TimestampFormat struct {
-	TaskWindow   string `yaml:"task_window"`
-	RuntimeEvent string `yaml:"runtime_event"`
 }
 
 type WorkingRoot struct {
@@ -72,7 +66,6 @@ type Integrity struct {
 func DefaultNaming() Naming {
 	return Naming{
 		TaskIDTimestamp: TaskIDTimestampCreation,
-		TimestampFormat: TimestampFormat{TaskWindow: "compact-utc-millis", RuntimeEvent: "compact-utc-micros"},
 		WorkingRoot: WorkingRoot{
 			PathTemplate:    "{station}/{task}/{run}",
 			StationSegment:  "{station_id}",
@@ -92,12 +85,6 @@ func (n Naming) WithDefaults() Naming {
 	d := DefaultNaming()
 	if n.TaskIDTimestamp == "" {
 		n.TaskIDTimestamp = d.TaskIDTimestamp
-	}
-	if n.TimestampFormat.TaskWindow == "" {
-		n.TimestampFormat.TaskWindow = d.TimestampFormat.TaskWindow
-	}
-	if n.TimestampFormat.RuntimeEvent == "" {
-		n.TimestampFormat.RuntimeEvent = d.TimestampFormat.RuntimeEvent
 	}
 	if n.WorkingRoot.PathTemplate == "" {
 		n.WorkingRoot.PathTemplate = d.WorkingRoot.PathTemplate

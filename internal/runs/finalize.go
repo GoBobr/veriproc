@@ -119,11 +119,12 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		_ = s.MarkFailedAndLog(ctx, runID, err.Error())
 		return nil, err
 	}
-	downstreamTasks, err := s.buildDownstreamTasks(ctx, run, task, canonicality)
+	downstreamPlan, err := s.buildDownstreamPlan(ctx, run, task, canonicality)
 	if err != nil {
 		_ = s.MarkFailedAndLog(ctx, runID, err.Error())
 		return nil, err
 	}
+	downstreamTasks := downstreamPlan.Tasks
 	if len(downstreamTasks) > 0 {
 		ids := make([]string, 0, len(downstreamTasks))
 		for _, dt := range downstreamTasks {
@@ -146,16 +147,31 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 				return err
 			}
 		}
+		if downstreamPlan.TaskOutArtifact != nil {
+			if err := tx.Artifacts().Insert(ctx, downstreamPlan.TaskOutArtifact); err != nil {
+				return err
+			}
+		}
 		for _, pub := range publicationRecords {
 			if err := tx.Publications().Insert(ctx, pub); err != nil && !errors.Is(err, store.ErrConflict) {
 				return err
+			}
+		}
+		for _, group := range downstreamPlan.SplitGroups {
+			if _, err := tx.SplitGroups().EnsureGroup(ctx, group.GroupID, group.Label, group.Description, group.ExpectedMembers, now); err != nil {
+				return err
+			}
+			if group.Close {
+				if err := tx.SplitGroups().SetState(ctx, group.GroupID, store.SplitGroupStateAggregating, now); err != nil {
+					return err
+				}
 			}
 		}
 		for _, child := range downstreamTasks {
 			if err := tx.Tasks().Insert(ctx, child); err != nil && !errors.Is(err, store.ErrConflict) {
 				return err
 			}
-			link := &store.ProvenanceLink{LinkID: "prov-" + sha12(run.RunID+":"+child.TaskID), SourceType: "run", SourceID: run.RunID, TargetType: "task", TargetID: child.TaskID, RelationshipType: "produced_downstream", Role: "parent", Reason: "station_default_downstream", CreatedAt: now}
+			link := &store.ProvenanceLink{LinkID: "prov-" + sha12(run.RunID+":"+child.TaskID), SourceType: "run", SourceID: run.RunID, TargetType: "task", TargetID: child.TaskID, RelationshipType: "produced_downstream", Role: "parent", Reason: downstreamPlan.ProvenanceReason, CreatedAt: now}
 			if err := tx.Provenance().Insert(ctx, link); err != nil && !errors.Is(err, store.ErrConflict) {
 				return err
 			}
@@ -192,6 +208,15 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 	})
 	if err != nil {
 		return nil, err
+	}
+	// After the transaction commits, fire the group-complete notifier if this
+	// run became canonical and belongs to a split group. Run in a goroutine so
+	// finalization is not delayed by downstream submission latency.
+	if (canonicality == "canonical" || canonicality == "forced") &&
+		task.SplitGroupID != "" && s.notifyGroupComplete != nil {
+		groupID := task.SplitGroupID
+		notifier := s.notifyGroupComplete
+		go notifier(context.Background(), groupID)
 	}
 	return s.store.Runs().Get(ctx, runID)
 }
@@ -308,6 +333,45 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 	dir := filepath.Join(run.WorkingRoot, "output")
 	arts := make([]*store.ArtifactRecord, 0, len(outputs))
 	for _, out := range outputs {
+		if out.Multiple {
+			// Fan-out outputs: collect all files matching the pattern.
+			paths, merr := s.resolveAllOutputPaths(dir, out)
+			if merr != nil {
+				return nil, merr
+			}
+			for _, path := range paths {
+				name := filepath.Base(path)
+				info, serr := os.Stat(path)
+				if serr != nil {
+					return nil, fmt.Errorf("output %s missing at %s", out.FileType, path)
+				}
+				objectKind := objectKindFromInfo(info)
+				var size int64
+				if objectKind == store.ObjectKindRegularFile {
+					size = info.Size()
+				}
+				checksum, algo, source := "", "", ""
+				if objectKind == store.ObjectKindRegularFile {
+					checksum, algo, source = availableChecksum(path, s.integrity)
+				}
+				arts = append(arts, &store.ArtifactRecord{
+					ArtifactID:       "art-" + sha12(run.RunID+":output:"+name),
+					ProducingRunID:   run.RunID,
+					LogicalType:      "output",
+					ObjectKind:       objectKind,
+					FileType:         out.FileType,
+					Path:             path,
+					Size:             size,
+					Checksum:         checksum,
+					ChecksumAlgo:     algo,
+					ChecksumSource:   source,
+					ValidationStatus: "validated",
+					Availability:     "available",
+					CreatedAt:        s.clock().UTC(),
+				})
+			}
+			continue
+		}
 		path, name, err := s.resolveOutputPath(dir, out)
 		if err != nil {
 			return nil, err
@@ -350,6 +414,55 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 		})
 	}
 	return arts, nil
+}
+
+// resolveAllOutputPaths returns the paths of all files in dir that match the
+// output definition's filename pattern (or Pattern glob). It is used when
+// Multiple is true — i.e. a station produces a variable number of output files
+// of the same file type per run.
+func (s *Service) resolveAllOutputPaths(dir string, out stations.OutputDefinition) ([]string, error) {
+	effective := policy.EffectiveFilenamePattern(s.naming.Filenames.FilenamePattern, out.FilenamePattern, out.FileType)
+	if effective != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		var matches []string
+		for _, entry := range entries {
+			if out.ObjectKind != "" {
+				if info, ierr := entry.Info(); ierr == nil {
+					if objectKindFromInfo(info) != out.ObjectKind {
+						continue
+					}
+				}
+			}
+			if _, perr := policy.ParseFilename(entry.Name(), effective, s.naming.Filenames.Components); perr == nil {
+				matches = append(matches, filepath.Join(dir, entry.Name()))
+			}
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("mandatory output %s (multiple): no files matched pattern %q in %s", out.FileType, effective, dir)
+		}
+		sort.Strings(matches)
+		return matches, nil
+	}
+	if out.Pattern != "" {
+		matches, err := filepath.Glob(filepath.Join(dir, out.Pattern))
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("mandatory output %s (multiple): no files matched glob %q in %s", out.FileType, out.Pattern, dir)
+		}
+		sort.Strings(matches)
+		return matches, nil
+	}
+	// No pattern — fall back to single-file resolve for compatibility.
+	path, _, err := s.resolveOutputPath(dir, out)
+	if err != nil {
+		return nil, err
+	}
+	return []string{path}, nil
 }
 
 func (s *Service) resolveOutputPath(dir string, out stations.OutputDefinition) (string, string, error) {
@@ -501,7 +614,19 @@ func (s *Service) MarkFailedAndLog(ctx context.Context, runID, reason string) er
 			_ = s.store.Artifacts().Insert(ctx, logArt)
 		}
 	}
-	return s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
+	if err := s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason); err != nil {
+		return err
+	}
+	// Fire the group-complete notifier even on failure so partial-aggregation
+	// logic in the notifier can advance the group state (e.g. statE runs when
+	// at least one split-group member succeeded, even if others failed).
+	if task, terr := s.store.Tasks().Get(ctx, run.TaskID); terr == nil &&
+		task.SplitGroupID != "" && s.notifyGroupComplete != nil {
+		groupID := task.SplitGroupID
+		notifier := s.notifyGroupComplete
+		go notifier(context.Background(), groupID)
+	}
+	return nil
 }
 
 func declaredOutputs(rev *store.StationRevisionRecord) ([]stations.OutputDefinition, error) {
@@ -614,11 +739,8 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 		"veriproc_meta": map[string]any{
 			"schema_version":    "veriproc.joborder/v1",
 			"joborder_id":       "joborder-" + run.RunID,
-			"task_id":           run.TaskID,
-			"retry_index":       run.RetryIndex,
 			"run_ref":           fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
 			"station_id":        rev.StationID,
-			"station_name":      rev.StationName,
 			"station_revision":  rev.RevisionID,
 			"generator_type":    generator["type"],
 			"generator_version": generator["version"],
@@ -767,14 +889,65 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 	return clean, nil
 }
 
-func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord, parent *store.TaskRecord, canonicality string) ([]*store.TaskRecord, error) {
+type downstreamPlan struct {
+	Tasks            []*store.TaskRecord
+	SplitGroups      []taskOutSplitGroupInit
+	TaskOutArtifact  *store.ArtifactRecord
+	ProvenanceReason string
+}
+
+type taskOutSplitGroupInit struct {
+	GroupID         string
+	Label           string
+	Description     string
+	ExpectedMembers int
+	Close           bool
+}
+
+type taskOutDescriptor struct {
+	SchemaVersion string                  `yaml:"schema_version"`
+	SplitGroups   []taskOutSplitGroupYAML `yaml:"split_groups"`
+	Downstream    []taskOutDownstreamYAML `yaml:"downstream"`
+}
+
+type taskOutSplitGroupYAML struct {
+	GroupID              string `yaml:"group_id"`
+	Mode                 string `yaml:"mode"`
+	AggregationStationID string `yaml:"aggregation_station_id"`
+	ExpectedMembers      int    `yaml:"expected_members"`
+	Closure              string `yaml:"closure"`
+	Label                string `yaml:"label"`
+	Description          string `yaml:"description"`
+}
+
+type taskOutDownstreamYAML struct {
+	Key          string        `yaml:"key"`
+	StationID    string        `yaml:"station_id"`
+	Window       taskOutWindow `yaml:"window"`
+	SplitGroupID string        `yaml:"split_group_id"`
+	Role         string        `yaml:"role"`
+}
+
+type taskOutWindow struct {
+	Start string `yaml:"start"`
+	End   string `yaml:"end"`
+}
+
+func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord, parent *store.TaskRecord, canonicality string) (*downstreamPlan, error) {
 	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
-	if err != nil || rev.DeclaredDownstream == "" {
+	if err != nil {
 		return nil, err
 	}
 	var routes []stations.DownstreamTarget
-	if err := json.Unmarshal([]byte(rev.DeclaredDownstream), &routes); err != nil {
-		return nil, fmt.Errorf("parse downstream: %w", err)
+	if rev.DeclaredDownstream != "" {
+		if err := json.Unmarshal([]byte(rev.DeclaredDownstream), &routes); err != nil {
+			return nil, fmt.Errorf("parse downstream: %w", err)
+		}
+	}
+
+	taskOut, taskOutArtifact, hasTaskOut, err := s.readTaskOutDescriptor(run)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build the history entry for the current (parent) run.
@@ -799,9 +972,22 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 	}
 	history := append(ancestorHistory, parentEntry) //nolint:gocritic
 
+	if hasTaskOut {
+		children, groups, err := s.buildTaskOutDownstreamTasks(ctx, run, parent, taskOut, routes, parentRunRef, history)
+		if err != nil {
+			return nil, err
+		}
+		return &downstreamPlan{Tasks: children, SplitGroups: groups, TaskOutArtifact: taskOutArtifact, ProvenanceReason: "task_out_descriptor"}, nil
+	}
+
 	children := make([]*store.TaskRecord, 0, len(routes))
 	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
+		// "fan_in" targets are triggered by the group-complete notifier, and
+		// "task_out" targets require an algorithm-produced task-out.yaml.
+		if route.Mode == "fan_in" || route.Mode == "task_out" {
+			continue
+		}
 		resolved, err := s.resolver.Resolve(ctx, route.StationID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve downstream: %w", err)
@@ -842,5 +1028,216 @@ func (s *Service) buildDownstreamTasks(ctx context.Context, run *store.RunRecord
 			CreatedAt:            created,
 		})
 	}
-	return children, nil
+	return &downstreamPlan{Tasks: children, ProvenanceReason: "station_default_downstream"}, nil
+}
+
+func (s *Service) readTaskOutDescriptor(run *store.RunRecord) (*taskOutDescriptor, *store.ArtifactRecord, bool, error) {
+	paths := []string{
+		filepath.Join(run.WorkingRoot, "task-out.yaml"),
+		filepath.Join(run.WorkingRoot, "output", "task-out.yaml"),
+	}
+	var path string
+	for _, candidate := range paths {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			path = candidate
+			break
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, false, fmt.Errorf("stat task-out.yaml: %w", err)
+		}
+	}
+	if path == "" {
+		return nil, nil, false, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read task-out.yaml: %w", err)
+	}
+	var desc taskOutDescriptor
+	if err := yaml.Unmarshal(b, &desc); err != nil {
+		return nil, nil, false, fmt.Errorf("parse task-out.yaml: %w", err)
+	}
+	if desc.SchemaVersion != "" && desc.SchemaVersion != "veriproc.task-out/v1" {
+		return nil, nil, false, fmt.Errorf("task-out.yaml schema_version %q unsupported", desc.SchemaVersion)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("stat task-out.yaml: %w", err)
+	}
+	checksum, algo, source := availableChecksum(path, s.integrity)
+	artifact := &store.ArtifactRecord{
+		ArtifactID:       "art-" + sha12(run.RunID+":task-out"),
+		ProducingRunID:   run.RunID,
+		LogicalType:      "task_out",
+		ObjectKind:       store.ObjectKindRegularFile,
+		FileType:         "task-out.yaml",
+		Path:             path,
+		Size:             info.Size(),
+		Checksum:         checksum,
+		ChecksumAlgo:     algo,
+		ChecksumSource:   source,
+		ValidationStatus: "validated",
+		Availability:     "available",
+		CreatedAt:        s.clock().UTC(),
+	}
+	return &desc, artifact, true, nil
+}
+
+func (s *Service) buildTaskOutDownstreamTasks(ctx context.Context, run *store.RunRecord, parent *store.TaskRecord, desc *taskOutDescriptor, routes []stations.DownstreamTarget, parentRunRef string, history []any) ([]*store.TaskRecord, []taskOutSplitGroupInit, error) {
+	if len(desc.Downstream) == 0 {
+		return nil, nil, fmt.Errorf("task-out.yaml must declare at least one downstream task")
+	}
+	allowedTaskOut := map[string]bool{}
+	allowedFanIn := map[string]bool{}
+	for _, route := range routes {
+		switch route.Mode {
+		case "task_out":
+			allowedTaskOut[route.StationID] = true
+		case "fan_in":
+			allowedFanIn[route.StationID] = true
+		case "", "normal":
+			allowedTaskOut[route.StationID] = true
+		}
+	}
+
+	groupsByID := map[string]taskOutSplitGroupYAML{}
+	for _, group := range desc.SplitGroups {
+		group.GroupID = strings.TrimSpace(group.GroupID)
+		group.AggregationStationID = strings.TrimSpace(group.AggregationStationID)
+		group.Mode = strings.TrimSpace(group.Mode)
+		group.Closure = strings.TrimSpace(group.Closure)
+		if group.GroupID == "" {
+			return nil, nil, fmt.Errorf("task-out.yaml split group missing group_id")
+		}
+		if group.Mode != "aggregation" {
+			return nil, nil, fmt.Errorf("task-out.yaml split group %s mode %q unsupported", group.GroupID, group.Mode)
+		}
+		if group.ExpectedMembers <= 0 {
+			return nil, nil, fmt.Errorf("task-out.yaml split group %s expected_members must be positive", group.GroupID)
+		}
+		if group.AggregationStationID == "" || !allowedFanIn[group.AggregationStationID] {
+			return nil, nil, fmt.Errorf("task-out.yaml split group %s aggregation target %q is not declared as fan_in downstream", group.GroupID, group.AggregationStationID)
+		}
+		if _, err := s.resolver.Resolve(ctx, group.AggregationStationID); err != nil {
+			return nil, nil, fmt.Errorf("resolve aggregation target %s: %w", group.AggregationStationID, err)
+		}
+		groupsByID[group.GroupID] = group
+	}
+
+	seen := map[string]bool{}
+	groupMemberCounts := map[string]int{}
+	children := make([]*store.TaskRecord, 0, len(desc.Downstream))
+	baseCreated := s.clock().UTC()
+	for idx, entry := range desc.Downstream {
+		entry.Key = strings.TrimSpace(entry.Key)
+		entry.StationID = strings.TrimSpace(entry.StationID)
+		entry.SplitGroupID = strings.TrimSpace(entry.SplitGroupID)
+		entry.Role = strings.TrimSpace(entry.Role)
+		if entry.StationID == "" {
+			return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] missing station_id", idx)
+		}
+		if !allowedTaskOut[entry.StationID] {
+			return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] target %q is not declared for task_out routing", idx, entry.StationID)
+		}
+		if entry.Key == "" {
+			entry.Key = fmt.Sprintf("%03d", idx)
+		}
+		start, err := parseTaskOutTime(entry.Window.Start)
+		if err != nil {
+			return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] window.start: %w", idx, err)
+		}
+		end, err := parseTaskOutTime(entry.Window.End)
+		if err != nil {
+			return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] window.end: %w", idx, err)
+		}
+		if !end.After(start) {
+			return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] end must be after start", idx)
+		}
+		if entry.SplitGroupID != "" {
+			if _, ok := groupsByID[entry.SplitGroupID]; !ok {
+				return nil, nil, fmt.Errorf("task-out.yaml downstream[%d] references undeclared split_group_id %q", idx, entry.SplitGroupID)
+			}
+			groupMemberCounts[entry.SplitGroupID]++
+		}
+		dupKey := entry.StationID + "|" + start.Format(time.RFC3339Nano) + "|" + end.Format(time.RFC3339Nano) + "|" + entry.SplitGroupID + "|" + entry.Key
+		if seen[dupKey] {
+			return nil, nil, fmt.Errorf("task-out.yaml duplicate downstream entry %q", dupKey)
+		}
+		seen[dupKey] = true
+
+		resolved, err := s.resolver.Resolve(ctx, entry.StationID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve task-out downstream %s: %w", entry.StationID, err)
+		}
+		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
+		hashSeed := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s|%s", parent.TaskID, entry.Key, resolved.StationID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))))
+		hex6 := hex.EncodeToString(hashSeed[:3])
+		taskIDTimestamp := created
+		if s.naming.TaskIDTimestamp == policy.TaskIDTimestampStart {
+			taskIDTimestamp = start.UTC()
+		}
+		taskID := policy.GenerateTaskID(resolved.StationID, taskIDTimestamp, hex6)
+		routing := map[string]any{
+			"schema_version": parent.SchemaVersion,
+			"destination":    map[string]any{"station_id": resolved.StationID},
+			"window":         map[string]any{"start": start.UTC().Format(time.RFC3339Nano), "end": end.UTC().Format(time.RFC3339Nano)},
+			"force":          false,
+			"parent":         map[string]any{"run_ref": parentRunRef},
+			"history":        history,
+			"routing_source": "task-out.yaml",
+		}
+		if entry.SplitGroupID != "" {
+			routing["split_group_id"] = entry.SplitGroupID
+		}
+		raw, err := canonjson.Marshal(routing)
+		if err != nil {
+			return nil, nil, err
+		}
+		sum := sha256.Sum256(raw)
+		children = append(children, &store.TaskRecord{
+			TaskID:               taskID,
+			SchemaVersion:        parent.SchemaVersion,
+			DestinationStationID: resolved.StationID,
+			WindowStart:          start.UTC(),
+			WindowEnd:            end.UTC(),
+			ParentTaskID:         parent.TaskID,
+			ParentRunRetryIndex:  sql.NullInt64{Int64: int64(run.RetryIndex), Valid: true},
+			SplitGroupID:         entry.SplitGroupID,
+			RoutingContent:       raw,
+			RoutingContentHash:   hex.EncodeToString(sum[:]),
+			SubmissionOrigin:     "backend",
+			State:                "accepted",
+			CreatedAt:            created,
+		})
+	}
+
+	groups := make([]taskOutSplitGroupInit, 0, len(groupsByID))
+	for groupID, group := range groupsByID {
+		if groupMemberCounts[groupID] != group.ExpectedMembers {
+			return nil, nil, fmt.Errorf("task-out.yaml split group %s expected %d members, got %d downstream declarations", groupID, group.ExpectedMembers, groupMemberCounts[groupID])
+		}
+		groups = append(groups, taskOutSplitGroupInit{
+			GroupID:         groupID,
+			Label:           group.Label,
+			Description:     group.Description,
+			ExpectedMembers: group.ExpectedMembers,
+			Close:           group.Closure == "closed",
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].GroupID < groups[j].GroupID })
+	return children, groups, nil
+}
+
+func parseTaskOutTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("timestamp is empty")
+	}
+	for _, layout := range []string{time.RFC3339Nano, "20060102T150405", "20060102T150405000"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported timestamp %q", value)
 }

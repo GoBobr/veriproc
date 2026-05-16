@@ -62,9 +62,12 @@ type JobDescription struct {
 	// Executable is the resolved absolute path of the binary or script to run.
 	Executable  string
 	// Args are the resolved argument strings to pass to the executable.
-	Args        []string
-	WindowStart time.Time
-	WindowEnd   time.Time
+	Args         []string
+	WindowStart  time.Time
+	WindowEnd    time.Time
+	// SplitGroupID is the split-group this run belongs to, if any. Exposed
+	// to the workload as VERIPROC_SPLIT_GROUP_ID (empty string → not set).
+	SplitGroupID string
 }
 
 // Observation is the result of polling.

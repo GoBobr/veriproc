@@ -1,0 +1,37 @@
+station_id: statE
+station_name: Aggregator station E
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station E is the fan-in aggregator. It is submitted automatically by
+  the backend once the statD split group is complete.
+  Station E uses window_match: overlaps over the full parent 15-minute window
+  so the classical matcher selects available SCE_2__PROCBIG__ granules from
+  the micro-ra rolling archive, one winner per 90-second interval group, and
+  combines them into the final SCE_2__FINAL____ product.
+execution:
+  mode: local
+  executable: ./scripts/run.sh
+inputs:
+  - file_type: SCE_2__PROCBIG__
+    category: micro-ra
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+
+outputs:
+  - file_type: SCE_2__FINAL____
+    mandatory: true
+    publish:
+      rolling_archive: proc-ra
+
+publication:
+  enabled: true
+  archive_id: proc-ra
+  mode: copy
+  outputs:
+    - "CDM?_SCE_2__FINAL____*.nc"
+
+metadata:
+  owner: sandbox
+  cadence: 15m
+  

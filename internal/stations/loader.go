@@ -76,7 +76,12 @@ type OutputDefinition struct {
 	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
 	Required        bool   `yaml:"required,omitempty" json:"required,omitempty"`
 	Mandatory       bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
-	Publish         any    `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Multiple, when true, causes all files matching the filename pattern (or
+	// Pattern glob) to be captured as individual output artifacts instead of
+	// only the newest single match. Use for fan-out stations that write a
+	// variable number of output files per run.
+	Multiple bool `yaml:"multiple,omitempty" json:"multiple,omitempty"`
+	Publish  any  `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
 
 type OutputDefinitions []OutputDefinition
@@ -105,6 +110,13 @@ func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
 
 type DownstreamTarget struct {
 	StationID string `yaml:"station_id" json:"station_id"`
+	// Mode controls when the downstream is triggered.
+	// "normal" (default, empty): triggered immediately on run finalization.
+	// "task_out": declared as an allowed target, but concrete child tasks are
+	//             created only from algorithm-produced task-out.yaml entries.
+	// "fan_in": triggered only when the split group spawned by this station
+	//           reaches "complete" state (all members canonical).
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
 type PublicationPolicy struct {
@@ -294,6 +306,7 @@ func normalizeDefinition(def Definition) Definition {
 	}
 	for i := range def.Downstream {
 		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)
+		def.Downstream[i].Mode = strings.TrimSpace(strings.ToLower(def.Downstream[i].Mode))
 	}
 	def.Publication.ArchiveID = strings.TrimSpace(def.Publication.ArchiveID)
 	def.Publication.Mode = strings.TrimSpace(def.Publication.Mode)
@@ -362,6 +375,12 @@ func validateDefinition(def Definition) error {
 	for _, down := range def.Downstream {
 		if down.StationID == "" {
 			return errors.New("downstream target must define station_id")
+		}
+		switch down.Mode {
+		case "", "normal", "task_out", "fan_in":
+			// valid
+		default:
+			return fmt.Errorf("downstream target %s mode %q invalid", down.StationID, down.Mode)
 		}
 	}
 	if def.Publication.Enabled && def.Publication.ArchiveID == "" {

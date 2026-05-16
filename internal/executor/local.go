@@ -105,6 +105,9 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 			"VERIPROC_WINDOW_START="+desc.WindowStart.UTC().Format("20060102T150405"),
 			"VERIPROC_WINDOW_END="+desc.WindowEnd.UTC().Format("20060102T150405"),
 		)
+		if desc.SplitGroupID != "" {
+			baseEnv = append(baseEnv, "VERIPROC_SPLIT_GROUP_ID="+desc.SplitGroupID)
+		}
 		if desc.JobOrderPath != "" {
 			baseEnv = append(baseEnv, "VERIPROC_JOBORDER_PATH="+desc.JobOrderPath)
 		}

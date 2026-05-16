@@ -18,9 +18,6 @@ storage:
 naming:
   # can be "start" or "creation"
   task_id_timestamp: start
-  timestamp_format:
-    task_window: compact-utc-millis
-    runtime_event: compact-utc-micros
   working_root:
     path_template: "{task}-{run}"
     station_segment: "{station_id}"
@@ -65,22 +62,34 @@ definitions:
   generic_mode: TEST
 
 rolling_archives:
-  hot:
-    path: sandbox/rolling-archives/hot
-    retention: keep-fixtures
-    mode: read_write
   aux:
     path: sandbox/rolling-archives/aux
+    retention: keep-fixtures
+    mode: read_write
+  prods:
+    path: sandbox/rolling-archives/prods
+    retention: keep-fixtures
+    mode: read_write
+  proc-ra:
+    path: sandbox/data/temp-rolling-archives/proc
+    retention: keep-fixtures
+    mode: read_write
+  micro-ra:
+    path: sandbox/data/temp-rolling-archives/micro
     retention: keep-fixtures
     mode: read_write
 
 product_categories:
   - name: product
     folders:
-      - rolling:hot
+      - rolling:proc-ra
+      - rolling:prods
   - name: aux
     folders:
       - rolling:aux
+  - name: micro-ra
+    folders:
+      - rolling:micro-ra
 
 executor:
   type: local

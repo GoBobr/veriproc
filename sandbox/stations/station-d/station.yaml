@@ -1,0 +1,36 @@
+station_id: statD
+station_name: Parallel worker station D
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station D is the parallel fan-out worker. Each task receives exactly
+  one SCE_2__MICROBIG_ granule (identified by its 90-second sub-window) and
+  processes it into a SCE_2__PROCBIG__ product. Ten statD tasks run
+  concurrently, all members of the same split group created by station C.
+  Once all ten members are terminal, the backend automatically submits station
+  E (statE) when at least one canonical statD result is available.
+execution:
+  mode: local
+  executable: ./scripts/run.sh
+inputs:
+  - file_type: SCE_2__MICROBIG_
+    category: micro-ra
+    window_match: within_window
+    margins: [0, 0]
+    mandatory: true
+
+outputs:
+  - file_type: SCE_2__PROCBIG__
+    mandatory: true
+    publish:
+      rolling_archive: micro-ra
+
+publication:
+  enabled: true
+  archive_id: micro-ra
+  mode: copy
+  outputs:
+    - "CDM?_SCE_2__PROCBIG__*.nc"
+
+metadata:
+  owner: sandbox
+  cadence: 90s

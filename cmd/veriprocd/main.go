@@ -3,14 +3,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog"
+	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/auth"
 	"github.com/eum/veriproc/internal/config"
@@ -126,6 +132,7 @@ func run(args []string) error {
 		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {
 			return groupSvc.RegisterRun(ctx, splitGroupID, runID, taskID, "")
 		},
+		NotifyGroupComplete: buildGroupCompleteNotifier(st, taskSvc, groupSvc, registry, logger),
 	})
 	dispatcher := runs.NewDispatcher(runsSvc, 250*time.Millisecond, logger)
 	reconcilerSvc := reconciler.New(reconciler.Config{
@@ -251,6 +258,224 @@ func firstArchiveBase(paths map[string]string) string {
 		return path
 	}
 	return ""
+}
+
+// buildGroupCompleteNotifier returns a GroupCompleteNotifier that, when a
+// split group transitions to "complete", submits the aggregation target with
+// the parent task's window. Group IDs follow the sandbox convention
+// "sg-<parentTaskID>".
+func buildGroupCompleteNotifier(
+	st *store.Store,
+	taskSvc *tasks.Service,
+	groupSvc *groups.Service,
+	resolver stations.Resolver,
+	log zerolog.Logger,
+) runs.GroupCompleteNotifier {
+	return func(ctx context.Context, groupID string) {
+		derived, err := groupSvc.Aggregate(ctx, groupID)
+		if err != nil {
+			log.Warn().Err(err).Str("group_id", groupID).Msg("group-complete notifier: aggregate failed")
+			return
+		}
+		if derived != "complete" {
+			return // not complete yet; another canonical run will trigger us again
+		}
+
+		// Derive parent task ID from group ID (convention: "sg-<parentTaskID>").
+		if len(groupID) <= 3 || groupID[:3] != "sg-" {
+			log.Warn().Str("group_id", groupID).Msg("group-complete notifier: unexpected group_id format, cannot derive parent task")
+			return
+		}
+		parentTaskID := groupID[3:]
+
+		parentTask, err := st.Tasks().Get(ctx, parentTaskID)
+		if err != nil {
+			log.Warn().Err(err).Str("parent_task_id", parentTaskID).Msg("group-complete notifier: parent task not found")
+			return
+		}
+
+		targets, err := fanInTargetsForGroup(ctx, st, resolver, parentTask, groupID)
+		if err != nil {
+			log.Warn().Err(err).Str("group_id", groupID).Msg("group-complete notifier: resolve fan-in targets")
+			return
+		}
+		if len(targets) == 0 {
+			return
+		}
+
+		idempotencyBase := "fan-in-" + groupID
+
+		// Build the routing history chain for the fan-in task so that
+		// task.yaml carries the full ancestral chain: ancestors of the
+		// fan-out parent, the fan-out parent itself, and the member (statD)
+		// runs that belong to this split group.
+		var fanInHistory []any
+		var parentRunRef string
+
+		// 1. Ancestors inherited from the fan-out parent's routing content.
+		if len(parentTask.RoutingContent) > 0 {
+			var rc map[string]any
+			if jerr := json.Unmarshal(parentTask.RoutingContent, &rc); jerr == nil {
+				if h, ok := rc["history"].([]any); ok {
+					fanInHistory = h
+				}
+			}
+		}
+
+		// 2. Fan-out parent (statC) entry.
+		if parentTask.CanonicalRunID != "" {
+			if canonRun, rerr := st.Runs().Get(ctx, parentTask.CanonicalRunID); rerr == nil {
+				parentRunRef = fmt.Sprintf("%s/r%d", parentTask.TaskID, canonRun.RetryIndex)
+				completedAt := ""
+				if canonRun.TerminalAt.Valid {
+					completedAt = canonRun.TerminalAt.Time.UTC().Format(time.RFC3339)
+				}
+				entry := map[string]any{
+					"station_id": parentTask.DestinationStationID,
+					"run_ref":    parentRunRef,
+				}
+				if completedAt != "" {
+					entry["completed_at"] = completedAt
+				}
+				if rev, rerr := resolver.Resolve(ctx, parentTask.DestinationStationID); rerr == nil {
+					entry["summary"] = "station " + rev.StationName + " completed"
+				}
+				fanInHistory = append(fanInHistory, entry)
+			}
+		}
+
+		// 3. Member runs (statD) that belong to this split group, ordered
+		//    by window start so the history reads chronologically.
+		if members, merr := st.SplitGroups().ListMembers(ctx, groupID); merr == nil {
+			type memberEntry struct {
+				windowStart time.Time
+				entry       map[string]any
+			}
+			var memberEntries []memberEntry
+			for _, m := range members {
+				memberRun, rerr := st.Runs().Get(ctx, m.RunID)
+				if rerr != nil {
+					continue
+				}
+				memberTask, terr := st.Tasks().Get(ctx, m.TaskID)
+				if terr != nil {
+					continue
+				}
+				runRef := fmt.Sprintf("%s/r%d", m.TaskID, memberRun.RetryIndex)
+				e := map[string]any{
+					"station_id":   memberTask.DestinationStationID,
+					"run_ref":      runRef,
+					"canonicality": memberRun.Canonicality,
+				}
+				if memberRun.TerminalAt.Valid {
+					e["completed_at"] = memberRun.TerminalAt.Time.UTC().Format(time.RFC3339)
+				}
+				memberEntries = append(memberEntries, memberEntry{windowStart: memberTask.WindowStart, entry: e})
+			}
+			// Sort by window start for a chronological order.
+			sort.Slice(memberEntries, func(i, j int) bool {
+				return memberEntries[i].windowStart.Before(memberEntries[j].windowStart)
+			})
+			for _, me := range memberEntries {
+				fanInHistory = append(fanInHistory, me.entry)
+			}
+		}
+
+		for _, stationID := range targets {
+			result, serr := taskSvc.Submit(ctx, tasks.SubmitInput{
+				IdempotencyKey: idempotencyBase + "-" + stationID,
+				Destination:    tasks.Destination{StationID: stationID},
+				Window: tasks.Window{
+					Start: parentTask.WindowStart,
+					End:   parentTask.WindowEnd,
+				},
+				Parent: &tasks.Parent{
+					TaskID: parentTaskID,
+					RunRef: parentRunRef,
+				},
+				History: fanInHistory,
+			})
+			if serr != nil {
+				log.Warn().Err(serr).Str("station_id", stationID).Msg("group-complete notifier: submit fan-in failed")
+				continue
+			}
+			if result.Created {
+				log.Info().Str("group_id", groupID).Str("fan_in_station", stationID).Str("task_id", result.Task.TaskID).Msg("group-complete notifier: fan-in task submitted")
+			} else {
+				log.Debug().Str("group_id", groupID).Str("fan_in_station", stationID).Msg("group-complete notifier: fan-in task already exists (idempotent)")
+			}
+		}
+	}
+}
+
+type daemonTaskOutDescriptor struct {
+	SplitGroups []daemonTaskOutSplitGroup `yaml:"split_groups"`
+}
+
+type daemonTaskOutSplitGroup struct {
+	GroupID              string `yaml:"group_id"`
+	AggregationStationID string `yaml:"aggregation_station_id"`
+}
+
+func fanInTargetsForGroup(ctx context.Context, st *store.Store, resolver stations.Resolver, parentTask *store.TaskRecord, groupID string) ([]string, error) {
+	if parentTask.CanonicalRunID != "" {
+		run, err := st.Runs().Get(ctx, parentTask.CanonicalRunID)
+		if err == nil {
+			if targets, ok, err := taskOutFanInTargets(run.WorkingRoot, groupID); err != nil {
+				return nil, err
+			} else if ok {
+				for _, stationID := range targets {
+					if _, err := resolver.Resolve(ctx, stationID); err != nil {
+						return nil, err
+					}
+				}
+				return targets, nil
+			}
+		}
+	}
+
+	// Fallback for station-default grouped workflows that do not emit task-out.yaml.
+	rev, err := resolver.Resolve(ctx, parentTask.DestinationStationID)
+	if err != nil || rev.DeclaredDownstream == "" {
+		return nil, err
+	}
+	var routes []stations.DownstreamTarget
+	if err := json.Unmarshal([]byte(rev.DeclaredDownstream), &routes); err != nil {
+		return nil, err
+	}
+	targets := make([]string, 0, len(routes))
+	for _, route := range routes {
+		if route.Mode == "fan_in" {
+			targets = append(targets, route.StationID)
+		}
+	}
+	return targets, nil
+}
+
+func taskOutFanInTargets(workingRoot, groupID string) ([]string, bool, error) {
+	paths := []string{
+		filepath.Join(workingRoot, "task-out.yaml"),
+		filepath.Join(workingRoot, "output", "task-out.yaml"),
+	}
+	for _, path := range paths {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, false, err
+		}
+		var desc daemonTaskOutDescriptor
+		if err := yaml.Unmarshal(b, &desc); err != nil {
+			return nil, false, err
+		}
+		for _, group := range desc.SplitGroups {
+			if strings.TrimSpace(group.GroupID) == groupID && strings.TrimSpace(group.AggregationStationID) != "" {
+				return []string{strings.TrimSpace(group.AggregationStationID)}, true, nil
+			}
+		}
+	}
+	return nil, false, nil
 }
 
 // loadAuth parses VERIPROC_AUTH_TOKENS into a StaticAuthenticator and
