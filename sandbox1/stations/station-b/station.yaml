@@ -1,0 +1,25 @@
+station_id: statB
+station_name: Track L1 processor
+schema_version: veriproc.station/v1
+description: |
+  Sandbox station B consumes STATION-A's published output from the rolling
+  archive and writes a small CSV product.
+execution:
+  mode: local
+  executable: ./scripts/run.sh
+
+inputs:
+  - file_type: SCE_2__ICM______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+outputs:
+  - file_type: SCE_2__BIG______
+    mandatory: true
+    publish:
+      rolling_archive: proc-ra
+      mode: copy
+
+downstream:
+  - station_id: statC

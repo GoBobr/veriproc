@@ -1,0 +1,27 @@
+station_id: statD
+station_name: Parallel worker station D
+schema_version: veriproc.station/v1
+description: |
+  Sandbox1 station D is the parallel fan-out worker. Each task receives the
+  full SCE_2__BIG______ product and processes only the sub-window assigned by
+  station C's task-out.yaml. No intermediate granule files are staged; station
+  D resolves the big product directly from the product category and writes its
+  slice of the result as SCE_2__PROCBIG__. Ten statD tasks run concurrently,
+  all members of the same split group created by station C. Once all ten
+  members are terminal, the backend automatically submits station E (statE).
+execution:
+  mode: local
+  executable: ./scripts/run.sh
+inputs:
+  - file_type: SCE_2__BIG______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+
+outputs:
+  - file_type: SCE_2__PROCBIG__
+    mandatory: true
+    publish:
+      rolling_archive: micro-ra
+      mode: copy

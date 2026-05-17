@@ -1,0 +1,5 @@
+Here is the output product: CDMA_SCE_2__ICM_______ON_20250703T111239_20250703T111538_20260516T084016_018_093_EUM__VAL_T_NR_C00.nc
+run_id: 0
+task_id: statA-20250703T111239000-a8910e
+primary input: /Users/leo/work/eum/veriproc/sandbox/data/working-roots/statA-20250703T111239000-a8910e-r0/input/CDMA_CLI_1B_RAD_______ON_20250703T111239_20250703T111539_20251101T000002_018_093_EUM__VAL_T_NR_C00.nc
+aux input: /Users/leo/work/eum/veriproc/sandbox/data/working-roots/statA-20250703T111239000-a8910e-r0/input/CDMA_CO2_1A_GEO_______ON_20250703T111239_20250703T111539_20251101T000002_018_093_EUM__VAL_T_NR_C00.nc

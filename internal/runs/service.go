@@ -6,7 +6,7 @@
 // Spec references:
 //   - §3.7 Run identity, retry, working root
 //   - §3.8 Resolved input manifest (frozen at preparation)
-//   - §3.10 Processing fingerprint
+//   - §3.15 Processing fingerprint
 //   - §5.6 Run completion gate
 //   - §7.5 Lifecycle scenarios
 package runs
@@ -222,7 +222,7 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 		_ = os.RemoveAll(workingRoot)
 		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
 	}
-	fingerprintValue := computeFingerprint(rev, manifest, task.Force)
+	fingerprintValue := computeFingerprint(rev, manifest, task.Force, task.WindowStart, task.WindowEnd)
 
 	// Spec §3.15: if the fingerprint is already canonically owned and this
 	// run is not forced, fail before creating any DB records or dispatching.
@@ -1160,12 +1160,15 @@ func cloneStringSliceMap(in map[string][]string) map[string][]string {
 }
 
 // computeFingerprint hashes the canonical JSON of {station_revision_id,
-// manifest summary, force, resolved_execution_args, declared_joborder}.
-// Spec §3.10 requires the fingerprint to be a deterministic function of the
-// inputs that govern processing equivalence. Resolved execution args and
-// joborder configuration are included because they capture resolved context
-// values (e.g., instance definitions) that affect processing.
-func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecord, force bool) string {
+// manifest summary, task window, force, resolved_execution_args, declared_joborder}.
+// Spec §3.15 requires the fingerprint to be a deterministic function of the
+// inputs that govern processing equivalence. The task window is included
+// because the same input file processed for different time windows represents
+// distinct computations (e.g. fan-out workers each covering a sub-window of
+// a shared parent product). Resolved execution args and joborder configuration
+// are included because they capture resolved context values (e.g., instance
+// definitions) that affect processing.
+func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecord, force bool, windowStart, windowEnd time.Time) string {
 	entries := make([]any, 0, len(m.Entries))
 	for _, e := range m.Entries {
 		entries = append(entries, map[string]any{
@@ -1179,6 +1182,8 @@ func computeFingerprint(rev *store.StationRevisionRecord, m *store.ManifestRecor
 		"station_revision_id":           rev.RevisionID,
 		"station_revision_content_hash": rev.ContentHash,
 		"manifest":                      entries,
+		"window_start":                  windowStart.UTC().Format(time.RFC3339Nano),
+		"window_end":                    windowEnd.UTC().Format(time.RFC3339Nano),
 		"force":                         force,
 		"declared_execution":            rev.DeclaredExecution,
 		"declared_joborder":             rev.DeclaredJobOrder,

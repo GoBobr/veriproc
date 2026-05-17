@@ -1,0 +1,57 @@
+station_id: statA
+station_name: Scenario 2 ingest
+schema_version: veriproc.station/v1
+
+description: |
+  Sandbox station A selects two rolling-archive inputs, writes a JSON output,
+  publishes it back to proc-ra, and triggers STATION-B.
+
+execution:
+  mode: local
+  executable: ./scripts/run.sh
+
+joborder:
+  # can be none/yaml/json/toml
+  format: yaml
+  name: joborder.yaml
+  include:
+    dyn_params:
+      mode: NOMINAL
+      CpuCores: 12
+      test: True
+      add: "fake"
+    temporary_folder: ./temp
+    config_files:
+      - schemas
+    facility:
+      processing_center: <facility.processing_center>
+      environment: <facility.environment>
+      acquisition_station: <facility.acquisition_station>
+
+inputs:
+  - file_type: CLI_1B_RAD______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+  - file_type: CO2_1A_GEO______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+  - file_type: SCE_2__CAMF___AX
+    category: aux
+    object_kind: directory
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+
+outputs:
+  - file_type: SCE_2__ICM______
+    mandatory: true
+    publish:
+      rolling_archive: proc-ra
+      mode: copy
+
+downstream:
+  - station_id: statB

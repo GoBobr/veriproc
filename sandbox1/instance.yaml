@@ -1,0 +1,105 @@
+schema_version: veriproc.instance/v1
+instance_id: sandbox-local
+
+http:
+  bind_addr: 127.0.0.1:8080
+
+log:
+  level: debug
+  format: console
+
+db:
+  dsn: sqlite://sandbox1/data/veriproc.db
+
+storage:
+  working_root_base: sandbox1/data/working-roots
+  station_config_root: sandbox1/stations
+
+naming:
+  # can be "start" or "creation"
+  task_id_timestamp: start
+  working_root:
+    path_template: "{task}-{run}"
+    station_segment: "{station_id}"
+    task_segment: "{task_id}"
+    run_segment: "r{retry_index}"
+    collision_suffix: "-{short_run_id}"
+  filenames:
+    allowed_charset: "A-Z a-z 0-9 - _ ."
+    replace_invalid: "_"
+    max_segment_length: 128
+    station_case: preserve
+    filename_pattern: "<MISSION_ID>_<FILE_TYPE>_??_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+    components:
+      MISSION_ID:
+        pattern: "CDM?"
+        length: 4
+        charset: ascii
+      FILE_TYPE:
+        length: 16
+        charset: ascii
+      START_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      END_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+      GENERATION_TIME:
+        format: "YYYYMMDDTHHmmSS"
+        length: 15
+
+integrity:
+  checksum_policy: available_only
+  allowed_algorithms: [sha256]
+  record_size_when_available: true
+  record_mtime_when_available: true
+
+definitions:
+  facility:
+    processing_center: SANDBOX1
+    environment: LOCAL
+    acquisition_station: Testbed
+  generic_mode: TEST
+
+rolling_archives:
+  aux:
+    path: sandbox1/rolling-archives/aux
+    retention: keep-fixtures
+    mode: read_write
+  prods:
+    path: sandbox1/rolling-archives/prods
+    retention: keep-fixtures
+    mode: read_write
+  proc-ra:
+    path: sandbox1/data/temp-rolling-archives/proc
+    retention: keep-fixtures
+    mode: read_write
+  micro-ra:
+    path: sandbox1/data/temp-rolling-archives/micro
+    retention: keep-fixtures
+    mode: read_write
+
+product_categories:
+  - name: product
+    folders:
+      - rolling:proc-ra
+      - rolling:prods
+  - name: aux
+    folders:
+      - rolling:aux
+  - name: micro-ra
+    folders:
+      - rolling:micro-ra
+
+executor:
+  type: local
+
+generators:
+  job_order:
+    type: system-default
+    version: local-mvp-v1
+    # relative or absolute paths for input/output files in joborder
+    paths: relative
+  working_root:
+    type: system-default
+    version: local-mvp-v1
