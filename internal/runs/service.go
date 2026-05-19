@@ -1035,7 +1035,11 @@ func candidateMatchesWindow(components map[string]string, match string, input st
 	windowStart, windowEnd := effectiveInputWindow(task.WindowStart, task.WindowEnd, input.Margins)
 	switch match {
 	case "overlaps":
-		return !candidateEnd.Before(windowStart) && !candidateStart.After(windowEnd)
+		// Half-open interval semantics: [candidateStart, candidateEnd) overlaps [windowStart, windowEnd)
+		// iff candidateEnd > windowStart AND candidateStart < windowEnd.
+		// A candidate ending exactly at the window start (or starting exactly at the window end)
+		// is not considered overlapping.
+		return candidateEnd.After(windowStart) && candidateStart.Before(windowEnd)
 	case "within_window":
 		return !candidateStart.Before(windowStart) && !candidateEnd.After(windowEnd)
 	case "covers_window":

@@ -737,6 +737,9 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 	}
 	return map[string]any{
 		"veriproc_meta": map[string]any{
+			"schema_version":    "veriproc.joborder/v1",
+			"task_id":           run.TaskID,
+			"retry_index":       run.RetryIndex,
 			"run_ref":           fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex),
 			"station_id":        rev.StationID,
 			"station_revision":  rev.RevisionID,

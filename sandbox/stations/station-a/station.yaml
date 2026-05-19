@@ -31,6 +31,7 @@ joborder:
 inputs:
   - file_type: CLI_1B_RAD______
     category: product
+    # can be none/overlaps/within_window(fully_within)/covers_window(surrender)
     window_match: overlaps
     margins: [0, 0]
     mandatory: true

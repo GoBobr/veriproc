@@ -407,7 +407,9 @@ func TestClassicalMatcher_WindowPolicies(t *testing.T) {
 		policy  string
 		wantHit bool
 	}{
-		{"overlaps boundary", "20250703T110000", "20250703T111500", "overlaps", true},
+		{"overlaps left boundary touch", "20250703T110000", "20250703T111500", "overlaps", false},
+		{"overlaps right boundary touch", "20250703T113000", "20250703T120000", "overlaps", false},
+		{"overlaps genuine", "20250703T110000", "20250703T111600", "overlaps", true},
 		{"overlaps miss", "20250703T110000", "20250703T111400", "overlaps", false},
 		{"within_window ok", "20250703T111600", "20250703T112900", "within_window", true},
 		{"within_window miss", "20250703T110000", "20250703T114500", "within_window", false},
@@ -450,7 +452,9 @@ func TestCandidateMatchesWindowPolicies(t *testing.T) {
 		match string
 		want  bool
 	}{
-		{name: "overlaps boundary", start: "20250703T110000", end: "20250703T111500", match: "cross", want: true},
+		{name: "overlaps left boundary touch", start: "20250703T110000", end: "20250703T111500", match: "cross", want: false},
+		{name: "overlaps right boundary touch", start: "20250703T113000", end: "20250703T120000", match: "cross", want: false},
+		{name: "overlaps genuine", start: "20250703T110000", end: "20250703T111600", match: "cross", want: true},
 		{name: "within", start: "20250703T111600", end: "20250703T112900", match: "fully_within", want: true},
 		{name: "covers", start: "20250703T110000", end: "20250703T114500", match: "surrender", want: true},
 		{name: "not within", start: "20250703T110000", end: "20250703T114500", match: "within_window", want: false},
