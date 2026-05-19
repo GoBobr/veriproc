@@ -84,6 +84,7 @@ func run(args []string) error {
 	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 	taskSvc.SetNaming(cfg.Naming)
+	taskSvc.SetLogger(logger)
 
 	var exec executor.Executor
 	execType := cfg.Executor.Type
@@ -129,6 +130,7 @@ func run(args []string) error {
 		ProductCategories: productCategories,
 		Generators:        generators,
 		JobOrderPaths:     jobOrderPaths,
+		Logger:            logger,
 		RegisterGroup: func(ctx context.Context, splitGroupID, runID, taskID string) error {
 			return groupSvc.RegisterRun(ctx, splitGroupID, runID, taskID, "")
 		},
@@ -393,7 +395,8 @@ func buildGroupCompleteNotifier(
 					TaskID: parentTaskID,
 					RunRef: parentRunRef,
 				},
-				History: fanInHistory,
+				History:   fanInHistory,
+				TriggerID: "group:" + groupID,
 			})
 			if serr != nil {
 				log.Warn().Err(serr).Str("station_id", stationID).Msg("group-complete notifier: submit fan-in failed")

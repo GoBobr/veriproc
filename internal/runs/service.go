@@ -259,7 +259,28 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 			return nil, fmt.Errorf("register split group: %w", err)
 		}
 	}
-	return s.store.Runs().Get(ctx, runID)
+	prepared, err := s.store.Runs().Get(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	runRef := fmt.Sprintf("%s/r%d", prepared.TaskID, prepared.RetryIndex)
+	trigger := "client"
+	if task.ParentTaskID != "" {
+		if task.ParentRunRetryIndex.Valid {
+			trigger = fmt.Sprintf("%s/r%d", task.ParentTaskID, task.ParentRunRetryIndex.Int64)
+		} else {
+			trigger = "task:" + task.ParentTaskID
+		}
+	}
+	s.logger.Info().
+		Str("run_ref", runRef).
+		Str("station", rev.StationID).
+		Str("working_root", prepared.WorkingRoot).
+		Time("window_start", task.WindowStart).
+		Time("window_end", task.WindowEnd).
+		Str("trigger", trigger).
+		Msg("run prepared")
+	return prepared, nil
 }
 
 // Dispatch submits a "ready" run to the executor and records the resulting
@@ -367,6 +388,13 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	if err != nil {
 		return nil, err
 	}
+	s.logger.Info().
+		Str("run_ref", runRef).
+		Str("station", rev.StationID).
+		Time("window_start", task.WindowStart).
+		Time("window_end", task.WindowEnd).
+		Str("scheduler_id", schedID).
+		Msg("run dispatched")
 	return s.store.Runs().Get(ctx, run.RunID)
 }
 

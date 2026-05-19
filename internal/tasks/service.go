@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
+
 	"github.com/eum/veriproc/internal/policy"
 	"github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/store"
@@ -56,6 +58,11 @@ type SubmitInput struct {
 	// run_ref key. Used by the group-complete notifier so that fan-in
 	// tasks (e.g. aggregation) carry the full ancestral chain.
 	History []any
+	// TriggerID is an opaque string identifying the caller or upstream
+	// entity that caused this task to be submitted. Used for logging only;
+	// not persisted. Examples: remote IP for HTTP clients, group ID for
+	// fan-in triggers, parent run_ref for programmatic submissions.
+	TriggerID string
 }
 
 // Destination identifies a target station.
@@ -93,6 +100,7 @@ type Service struct {
 	idFactory      func() string
 	naming         policy.Naming
 	idempotencyTTL time.Duration
+	logger         zerolog.Logger
 }
 
 // NewService constructs a Service. now and idFactory are injected for tests;
@@ -105,6 +113,9 @@ func NewService(s *store.Store, r stations.Resolver, now func() time.Time, idFac
 }
 
 func (s *Service) SetNaming(n policy.Naming) { s.naming = n.WithDefaults() }
+
+// SetLogger configures the logger used for task-lifecycle events.
+func (s *Service) SetLogger(l zerolog.Logger) { s.logger = l }
 
 // SetIdempotencyTTL overrides the default 24h retention window for newly
 // inserted idempotency_records (Spec §3.3 retention). A non-positive value
@@ -235,6 +246,24 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (*SubmitResult, er
 		}
 		return nil, err
 	}
+	trigger := in.TriggerID
+	if trigger == "" && in.Parent != nil {
+		if in.Parent.RunRef != "" {
+			trigger = in.Parent.RunRef
+		} else if in.Parent.TaskID != "" {
+			trigger = "task:" + in.Parent.TaskID
+		}
+	}
+	if trigger == "" {
+		trigger = "client"
+	}
+	s.logger.Info().
+		Str("task_id", task.TaskID).
+		Str("station", task.DestinationStationID).
+		Time("window_start", task.WindowStart).
+		Time("window_end", task.WindowEnd).
+		Str("trigger", trigger).
+		Msg("task submitted")
 	return &SubmitResult{Task: task, Created: true}, nil
 }
 

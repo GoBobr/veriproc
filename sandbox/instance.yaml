@@ -5,7 +5,7 @@ http:
   bind_addr: 127.0.0.1:8080
 
 log:
-  level: debug
+  level: info
   format: console
 
 db:

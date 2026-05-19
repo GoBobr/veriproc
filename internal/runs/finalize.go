@@ -93,24 +93,22 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 
 	// Emit a structured log explaining the canonicality decision so operators
 	// can diagnose why a run is or is not triggering downstream tasks.
+	canonRunRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
 	switch canonicality {
 	case "canonical":
-		s.logger.Info().
-			Str("run_id", run.RunID).
-			Str("task_id", run.TaskID).
+		s.logger.Debug().
+			Str("run_ref", canonRunRef).
 			Str("fingerprint", run.ProcessingFingerprint).
-			Msg("run elected canonical — fingerprint claimed; downstream tasks will be triggered")
+			Msg("run elected canonical")
 	case "duplicate":
 		s.logger.Warn().
-			Str("run_id", run.RunID).
-			Str("task_id", run.TaskID).
+			Str("run_ref", canonRunRef).
 			Str("fingerprint", run.ProcessingFingerprint).
-			Msg("run is duplicate — fingerprint already owned (concurrent execution race); downstream tasks will still be triggered")
+			Msg("run is duplicate — fingerprint already owned; downstream tasks will still be triggered")
 	case "forced":
 		s.logger.Info().
-			Str("run_id", run.RunID).
-			Str("task_id", run.TaskID).
-			Msg("run is forced — force=true; run does not compete for fingerprint ownership; downstream tasks will be triggered")
+			Str("run_ref", canonRunRef).
+			Msg("run is forced — does not compete for fingerprint ownership")
 	}
 
 	now := s.clock().UTC()
@@ -125,15 +123,15 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 		return nil, err
 	}
 	downstreamTasks := downstreamPlan.Tasks
-	if len(downstreamTasks) > 0 {
-		ids := make([]string, 0, len(downstreamTasks))
-		for _, dt := range downstreamTasks {
-			ids = append(ids, dt.TaskID)
-		}
+	parentRunRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
+	for _, dt := range downstreamTasks {
 		s.logger.Info().
-			Str("run_id", run.RunID).
-			Strs("downstream_task_ids", ids).
-			Msg("triggering downstream tasks")
+			Str("task_id", dt.TaskID).
+			Str("station", dt.DestinationStationID).
+			Time("window_start", dt.WindowStart).
+			Time("window_end", dt.WindowEnd).
+			Str("trigger", parentRunRef).
+			Msg("downstream task generated")
 	}
 
 	err = s.store.InTx(ctx, func(tx *store.Tx) error {
@@ -209,6 +207,16 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 	if err != nil {
 		return nil, err
 	}
+	// Log task finalization at INFO so operators can track end-to-end progress.
+	finalRunRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
+	s.logger.Info().
+		Str("run_ref", finalRunRef).
+		Str("station", task.DestinationStationID).
+		Time("window_start", task.WindowStart).
+		Time("window_end", task.WindowEnd).
+		Str("canonicality", canonicality).
+		Time("finalized_at", now).
+		Msg("task finalized")
 	// After the transaction commits, fire the group-complete notifier if this
 	// run became canonical and belongs to a split group. Run in a goroutine so
 	// finalization is not delayed by downstream submission latency.

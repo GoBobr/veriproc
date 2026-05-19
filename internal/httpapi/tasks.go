@@ -118,6 +118,7 @@ func (h *taskHandler) submit(w http.ResponseWriter, r *http.Request) {
 		Parent:         req.Parent,
 		SplitGroupID:   req.SplitGroupID,
 		ClientMetadata: req.ClientMetadata,
+		TriggerID:      r.RemoteAddr,
 	}
 	res, err := h.svc.Submit(r.Context(), in)
 	if err != nil {
