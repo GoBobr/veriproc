@@ -546,7 +546,7 @@ func TestClassicalMatcher_DebugLogs(t *testing.T) {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
 	logs := buf.String()
-	for _, want := range []string{"run_id", "matcher", "PRIMARY_INPUT___", "selected winner"} {
+	for _, want := range []string{"run_ref", "matcher", "PRIMARY_INPUT___", "selected winner"} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("logs missing %q\n%s", want, logs)
 		}

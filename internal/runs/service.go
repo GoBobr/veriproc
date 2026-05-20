@@ -217,7 +217,8 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	if err := materializeWorkingRoot(workingRoot); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
 	}
-	manifest, err := s.resolveManifest(ctx, runID, task, rev, workingRoot)
+	runRef := fmt.Sprintf("%s/r%d", taskID, retryIndex)
+	manifest, err := s.resolveManifest(ctx, runID, runRef, task, rev, workingRoot)
 	if err != nil {
 		_ = os.RemoveAll(workingRoot)
 		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
@@ -232,7 +233,11 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	if !task.Force {
 		if fp, gerr := s.store.Fingerprints().GetByValue(ctx, fingerprintValue); gerr == nil && fp.CanonicalRunID != "" {
 			_ = os.RemoveAll(workingRoot)
-			return nil, fmt.Errorf("%w: duplicate fingerprint — already canonically processed as run %s", ErrFatalPrepare, fp.CanonicalRunID)
+			canonRef := fp.CanonicalRunID // fallback to raw ID
+			if cr, rerr := s.store.Runs().Get(ctx, fp.CanonicalRunID); rerr == nil {
+				canonRef = fmt.Sprintf("%s/r%d", cr.TaskID, cr.RetryIndex)
+			}
+			return nil, fmt.Errorf("%w: duplicate fingerprint — already canonically processed as %s", ErrFatalPrepare, canonRef)
 		}
 	}
 
@@ -263,7 +268,6 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	if err != nil {
 		return nil, err
 	}
-	runRef := fmt.Sprintf("%s/r%d", prepared.TaskID, prepared.RetryIndex)
 	trigger := "client"
 	if task.ParentTaskID != "" {
 		if task.ParentRunRetryIndex.Valid {
@@ -388,7 +392,7 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	if err != nil {
 		return nil, err
 	}
-	s.logger.Info().
+	s.logger.Debug().
 		Str("run_ref", runRef).
 		Str("station", rev.StationID).
 		Time("window_start", task.WindowStart).
@@ -429,18 +433,21 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		return nil, err
 	}
 
+	runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
 	switch obs.Status {
 	case executor.StatusRunning:
 		if run.State == "dispatched" {
 			if err := s.store.Runs().MarkRunning(ctx, runID, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 				return nil, err
 			}
+			s.logger.Info().Str("run_ref", runRef).Msg("job started")
 		}
 	case executor.StatusSucceeded:
 		// Move to finalizing; Finalize() will gate completion on artifacts.
 		if err := s.store.Runs().MarkReadyForFinalization(ctx, runID); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		s.logger.Info().Str("run_ref", runRef).Str("status", "succeeded").Msg("job finished")
 	case executor.StatusFailed:
 		reason := obs.FailureMsg
 		if reason == "" {
@@ -449,6 +456,7 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if err := s.store.Runs().MarkFailed(ctx, runID, reason, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		s.logger.Info().Str("run_ref", runRef).Str("status", "failed").Str("reason", reason).Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
 		if logArts, werr := s.collectRunLogs(run); werr == nil {
 			for _, logArt := range logArts {
@@ -460,6 +468,7 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
 	}
 	return s.store.Runs().Get(ctx, runID)
@@ -546,7 +555,7 @@ func materializeWorkingRoot(root string) error {
 	return nil
 }
 
-func (s *Service) resolveManifest(ctx context.Context, runID string, task *store.TaskRecord, rev *store.StationRevisionRecord, workingRoot string) (*store.ManifestRecord, error) {
+func (s *Service) resolveManifest(ctx context.Context, runID string, runRef string, task *store.TaskRecord, rev *store.StationRevisionRecord, workingRoot string) (*store.ManifestRecord, error) {
 	manifest := &store.ManifestRecord{ManifestID: "mf-" + sha12(runID), RunID: runID}
 	if rev.DeclaredInputs == "" {
 		return manifest, nil
@@ -569,7 +578,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 		if override := rollingFolders[input.Category]; len(override) > 0 {
 			folders = override
 		}
-		winners, missingReason, err := s.classicalSelectCandidates(runID, input, folders, task)
+		winners, missingReason, err := s.classicalSelectCandidates(runRef, input, folders, task)
 		if err != nil {
 			return nil, err
 		}
@@ -590,7 +599,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, task *store
 			if !input.Optional {
 				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, missingReason)
 			}
-			s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+			s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 				Str("input_key", input.FileType).Bool("optional", input.Optional).
 				Str("reason", missingReason).Msg("matcher: missing optional input")
 			continue
@@ -685,7 +694,7 @@ type classicalCandidate struct {
 // It returns one selectedInputCandidate per logical interval group. The second
 // return value is the reason string for a missing-input entry when the slice is empty.
 func (s *Service) classicalSelectCandidates(
-	runID string,
+	runRef string,
 	input stations.InputDefinition,
 	folders []string,
 	task *store.TaskRecord,
@@ -694,7 +703,7 @@ func (s *Service) classicalSelectCandidates(
 	windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
 	patternHasFileType := s.inputPatternHasFileType(input)
 
-	s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+	s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 		Str("input_key", input.FileType).
 		Str("file_type", input.FileType).
 		Str("category", input.Category).
@@ -705,7 +714,7 @@ func (s *Service) classicalSelectCandidates(
 		Msg("matcher: resolving input")
 
 	if len(folders) == 0 {
-		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).Msg("matcher: no configured folders")
 		return nil, "no configured folders", nil
 	}
@@ -717,7 +726,7 @@ func (s *Service) classicalSelectCandidates(
 		if err != nil {
 			return nil, "", err
 		}
-		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).
 			Int("folder_priority", priority).
 			Str("folder_ref", folderRef).
@@ -740,7 +749,7 @@ func (s *Service) classicalSelectCandidates(
 			if effectivePattern != "" {
 				components, err := policy.ParseFilename(filepath.Base(raw.Path), effectivePattern, s.naming.Filenames.Components)
 				if err != nil {
-					s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+					s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 						Str("input_key", input.FileType).
 						Str("path", raw.Path).
 						Str("parse_error", err.Error()).
@@ -751,7 +760,7 @@ func (s *Service) classicalSelectCandidates(
 					components["file_type"] = input.FileType
 				}
 				if !candidateMatchesWindow(components, windowMatch, input, task) {
-					s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+					s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 						Str("input_key", input.FileType).
 						Str("path", raw.Path).
 						Str("window_policy", windowMatch).
@@ -766,7 +775,7 @@ func (s *Service) classicalSelectCandidates(
 				candidate.Discriminator = components["suffix"]
 				candidate.ParsedComponents = components
 				candidate.IntervalGroupKey = input.FileType + "|" + components["start_time"] + "|" + components["end_time"]
-				s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+				s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 					Str("input_key", input.FileType).
 					Str("path", raw.Path).
 					Str("interval_group_key", candidate.IntervalGroupKey).
@@ -784,7 +793,7 @@ func (s *Service) classicalSelectCandidates(
 	}
 
 	if len(allCandidates) == 0 {
-		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).Msg("matcher: no matching candidates")
 		return nil, "no matching candidate", nil
 	}
@@ -849,7 +858,7 @@ func (s *Service) classicalSelectCandidates(
 			filenameComponentsJSON = string(b)
 		}
 
-		s.logger.Debug().Str("run_id", runID).Str("component", "matcher").
+		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).
 			Str("interval_group_key", groupKey).
 			Str("winner_path", winner.Path).

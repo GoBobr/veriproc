@@ -539,8 +539,8 @@ func (c *client) cmdSubmit(args []string) int {
 		return c.reportErr(err)
 	}
 	task, _ := m["task"].(map[string]any)
-	c.renderResource(raw, map[string]any{"task": task, "links": m["links"]},
-		[]string{"task_id", "station_id", "start", "end", "state", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id"})
+	c.renderResource(raw, task,
+		[]string{"task_id", "station_id", "state", "start", "end", "split_group_id", "failure_summary"})
 	return ExitOK
 }
 
