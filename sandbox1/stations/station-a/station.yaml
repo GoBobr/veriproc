@@ -7,7 +7,7 @@ description: |
   publishes it back to proc-ra, and triggers STATION-B.
 
 execution:
-  mode: local
+  mode: slurm-native
   executable: ./scripts/run.sh
 
 joborder:

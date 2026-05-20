@@ -37,6 +37,8 @@ type runWire struct {
 	InternalState           string     `json:"internal_state"` // raw lifecycle state
 	Canonicality            string     `json:"canonicality"`
 	RetryIndex              int        `json:"retry_index"`
+	ExecutorType            string     `json:"executor_type,omitempty"`
+	ExecutionNode           string     `json:"execution_node,omitempty"`
 	WorkingRoot             string     `json:"working_root,omitempty"`
 	ProcessingFingerprint   string     `json:"processing_fingerprint,omitempty"`
 	FailureReason           string     `json:"failure_reason,omitempty"`
@@ -61,6 +63,7 @@ type jobWire struct {
 	ExecutorType      string     `json:"executor_type"`
 	SchedulerID       string     `json:"scheduler_id,omitempty"`
 	SchedulerState    string     `json:"scheduler_native_state,omitempty"`
+	ExecutionNode     string     `json:"execution_node,omitempty"`
 	SubmissionAttempt int        `json:"submission_attempt"`
 	SubmittedAt       *time.Time `json:"submitted_at,omitempty"`
 	LastObservedAt    *time.Time `json:"last_observed_at,omitempty"`
@@ -146,6 +149,8 @@ func (h *runHandler) get(w http.ResponseWriter, r *http.Request) {
 		}
 		jw := toJobWire(active)
 		detail.ActiveJob = &jw
+		detail.ExecutorType = active.Executor
+		detail.ExecutionNode = active.Node
 	}
 	for _, a := range arts {
 		detail.Artifacts = append(detail.Artifacts, toArtifactWire(a))
@@ -212,7 +217,13 @@ func (h *runHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rec := range page.Items {
 		task, _ := h.svc.GetTask(r.Context(), rec.TaskID)
-		resp.Items = append(resp.Items, toRunWire(rec, task))
+		rw := toRunWire(rec, task)
+		if jobs, jerr := h.svc.ListJobsForRun(r.Context(), rec.RunID); jerr == nil && len(jobs) > 0 {
+			last := jobs[len(jobs)-1]
+			rw.ExecutorType = last.Executor
+			rw.ExecutionNode = last.Node
+		}
+		resp.Items = append(resp.Items, rw)
 	}
 	if page.HasMore {
 		resp.NextCursor = encodeCursor(page.NextCreatedAt, page.NextRunID)
@@ -470,6 +481,7 @@ func toJobWire(j *store.JobRecord) jobWire {
 		ExecutorType:      j.Executor,
 		SchedulerID:       j.SchedulerID,
 		SchedulerState:    j.SchedulerState,
+		ExecutionNode:     j.Node,
 		SubmissionAttempt: j.SubmissionAttempt,
 		SubmittedAt:       nullableTime(j.SubmittedAt),
 		LastObservedAt:    nullableTime(j.LastObservedAt),

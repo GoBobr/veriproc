@@ -56,7 +56,7 @@ func newRunAPI(t *testing.T) *runAPI {
 	tsvc := tasks.NewService(st, reg, func() time.Time { return now }, taskIDs)
 	exec := executor.NewStubExecutor(func() time.Time { return now })
 	rsvc := runspkg.NewService(runspkg.Config{
-		Store: st, Executor: exec, Resolver: reg,
+		Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,
 		WorkingRootBase: t.TempDir(),
 		Clock:           func() time.Time { return now },
 		IDFactory:       runIDs,

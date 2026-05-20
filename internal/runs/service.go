@@ -51,30 +51,34 @@ var (
 	// to transition the task to "failed" instead of looping indefinitely.
 	// Examples: mandatory input not found, working root cannot be created.
 	ErrFatalPrepare = errors.New("runs: fatal preparation error")
+	// ErrFatalDispatch is returned by Dispatch when the failure is permanent
+	// and the run must not be retried automatically. Examples: executor type
+	// not configured in instance.yaml.
+	ErrFatalDispatch = errors.New("runs: fatal dispatch error")
 )
 
 // Service drives the run lifecycle. It is safe for concurrent use; per-run
 // state transitions are guarded by conditional UPDATE statements at the store
 // layer (Spec §5.6 lag tolerance).
 type Service struct {
-	store             *store.Store
-	exec              executor.Executor
-	resolver          stations.Resolver
-	workingRootBase   string
-	clock             func() time.Time
-	idFactory         func() string
-	registerGroup        GroupRegistrar
-	notifyGroupComplete  GroupCompleteNotifier
-	instanceID           string
-	definitions       map[string]any
-	facility          map[string]string
-	rollingArchives   map[string]string
-	productCategories map[string][]string
-	generators        map[string]string
-	jobOrderPaths     string // "relative" or "absolute"
-	naming            policy.Naming
-	integrity         policy.Integrity
-	logger            zerolog.Logger
+	store               *store.Store
+	execRegistry        *executor.Registry
+	resolver            stations.Resolver
+	workingRootBase     string
+	clock               func() time.Time
+	idFactory           func() string
+	registerGroup       GroupRegistrar
+	notifyGroupComplete GroupCompleteNotifier
+	instanceID          string
+	definitions         map[string]any
+	facility            map[string]string
+	rollingArchives     map[string]string
+	productCategories   map[string][]string
+	generators          map[string]string
+	jobOrderPaths       string // "relative" or "absolute"
+	naming              policy.Naming
+	integrity           policy.Integrity
+	logger              zerolog.Logger
 }
 
 // GroupRegistrar is the optional callback invoked after PrepareRun when a
@@ -91,24 +95,24 @@ type GroupCompleteNotifier func(ctx context.Context, splitGroupID string)
 
 // Config configures a Service.
 type Config struct {
-	Store             *store.Store
-	Executor          executor.Executor
-	Resolver          stations.Resolver
-	WorkingRootBase   string
-	Clock             func() time.Time
-	IDFactory         func() string
-	RegisterGroup        GroupRegistrar
-	NotifyGroupComplete  GroupCompleteNotifier
-	InstanceID           string
-	Definitions       map[string]any
-	Facility          map[string]string
-	RollingArchives   map[string]string
-	ProductCategories map[string][]string
-	Generators        map[string]string
-	JobOrderPaths     string // "relative" (default) or "absolute"
-	Naming            policy.Naming
-	Integrity         policy.Integrity
-	Logger            zerolog.Logger
+	Store               *store.Store
+	Executors           *executor.Registry
+	Resolver            stations.Resolver
+	WorkingRootBase     string
+	Clock               func() time.Time
+	IDFactory           func() string
+	RegisterGroup       GroupRegistrar
+	NotifyGroupComplete GroupCompleteNotifier
+	InstanceID          string
+	Definitions         map[string]any
+	Facility            map[string]string
+	RollingArchives     map[string]string
+	ProductCategories   map[string][]string
+	Generators          map[string]string
+	JobOrderPaths       string // "relative" (default) or "absolute"
+	Naming              policy.Naming
+	Integrity           policy.Integrity
+	Logger              zerolog.Logger
 }
 
 // NewService constructs a Service. WorkingRootBase defaults to
@@ -135,24 +139,24 @@ func NewService(cfg Config) *Service {
 	cfg.Naming = cfg.Naming.WithDefaults()
 	cfg.Integrity = cfg.Integrity.WithDefaults()
 	return &Service{
-		store:             cfg.Store,
-		exec:              cfg.Executor,
-		resolver:          cfg.Resolver,
-		workingRootBase:   cfg.WorkingRootBase,
-		clock:             cfg.Clock,
-		idFactory:         cfg.IDFactory,
+		store:               cfg.Store,
+		execRegistry:        cfg.Executors,
+		resolver:            cfg.Resolver,
+		workingRootBase:     cfg.WorkingRootBase,
+		clock:               cfg.Clock,
+		idFactory:           cfg.IDFactory,
 		registerGroup:       cfg.RegisterGroup,
 		notifyGroupComplete: cfg.NotifyGroupComplete,
 		instanceID:          cfg.InstanceID,
-		definitions:       cloneAnyMap(cfg.Definitions),
-		facility:          cloneStringMap(cfg.Facility),
-		rollingArchives:   cloneStringMap(cfg.RollingArchives),
-		productCategories: cloneStringSliceMap(cfg.ProductCategories),
-		generators:        cloneStringMap(cfg.Generators),
-		jobOrderPaths:     cfg.JobOrderPaths,
-		naming:            cfg.Naming,
-		integrity:         cfg.Integrity,
-		logger:            cfg.Logger,
+		definitions:         cloneAnyMap(cfg.Definitions),
+		facility:            cloneStringMap(cfg.Facility),
+		rollingArchives:     cloneStringMap(cfg.RollingArchives),
+		productCategories:   cloneStringSliceMap(cfg.ProductCategories),
+		generators:          cloneStringMap(cfg.Generators),
+		jobOrderPaths:       cfg.JobOrderPaths,
+		naming:              cfg.Naming,
+		integrity:           cfg.Integrity,
+		logger:              cfg.Logger,
 	}
 }
 
@@ -319,6 +323,7 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	// Resolve the station execution from the station revision's declared execution.
 	var executable string
 	var resolvedArgs []string
+	var execCfg stations.Execution
 	rev, rerr := s.store.Stations().Get(ctx, run.StationRevisionID)
 	if rerr != nil {
 		return nil, rerr
@@ -330,7 +335,6 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	}
 
 	if rev.DeclaredExecution != "" {
-		var execCfg stations.Execution
 		if jerr := json.Unmarshal([]byte(rev.DeclaredExecution), &execCfg); jerr == nil {
 			executable = execCfg.Executable
 			// Build runtime context and resolve args.
@@ -355,19 +359,43 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		Args:         resolvedArgs,
 		WindowStart:  task.WindowStart,
 		WindowEnd:    task.WindowEnd,
+		Mode:         execCfg.Mode,
+		Resources: executor.ResourceRequest{
+			CPUsPerTask: execCfg.Resources.CPUsPerTask,
+			MemGB:       execCfg.Resources.MemGB,
+			Walltime:    execCfg.Resources.Walltime,
+		},
+		Slurm: executor.SlurmOverrides{
+			Partition: execCfg.Slurm.Partition,
+			Account:   execCfg.Slurm.Account,
+			QOS:       execCfg.Slurm.QOS,
+			ExtraArgs: append([]string(nil), execCfg.Slurm.ExtraArgs...),
+		},
+		Container: executor.ContainerConfig{
+			Image:  execCfg.Container.Image,
+			Mounts: append([]string(nil), execCfg.Container.Mounts...),
+			User:   execCfg.Container.User,
+		},
 		SplitGroupID: task.SplitGroupID,
 	}
-	schedID, err := s.exec.Submit(ctx, desc)
+	exec, err := s.execRegistry.Resolve(desc.Mode)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrFatalDispatch, err)
+	}
+	submission, err := exec.Submit(ctx, desc)
 	if err != nil {
 		return nil, fmt.Errorf("executor submit: %w", err)
+	}
+	if submission.ExecutorType == "" {
+		submission.ExecutorType = exec.Type()
 	}
 
 	now := s.clock().UTC()
 	job := &store.JobRecord{
-		JobID:             "job-" + sha12(run.RunID+"-"+schedID),
+		JobID:             "job-" + sha12(run.RunID+"-"+submission.SchedulerID),
 		RunID:             run.RunID,
-		Executor:          s.exec.Type(),
-		SchedulerID:       schedID,
+		Executor:          submission.ExecutorType,
+		SchedulerID:       submission.SchedulerID,
 		SchedulerState:    string(executor.StatusQueued),
 		SubmissionAttempt: 1,
 		SubmittedAt:       nullTime(now),
@@ -397,7 +425,8 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		Str("station", rev.StationID).
 		Time("window_start", task.WindowStart).
 		Time("window_end", task.WindowEnd).
-		Str("scheduler_id", schedID).
+		Str("executor", submission.ExecutorType).
+		Str("scheduler_id", submission.SchedulerID).
 		Msg("run dispatched")
 	return s.store.Runs().Get(ctx, run.RunID)
 }
@@ -424,13 +453,20 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 	if job.SchedulerID == "" {
 		return run, nil
 	}
-	obs, err := s.exec.Poll(ctx, job.SchedulerID)
+	exec, err := s.execRegistry.Resolve(job.Executor)
+	if err != nil {
+		return nil, fmt.Errorf("executor poll: resolve executor %q for job %s: %w", job.Executor, job.JobID, err)
+	}
+	obs, err := exec.Poll(ctx, job.SchedulerID)
 	if err != nil {
 		return nil, fmt.Errorf("executor poll: %w", err)
 	}
 	now := s.clock().UTC()
 	if err := s.store.Jobs().UpdateState(ctx, job.JobID, string(obs.Status), now, obs.Status.IsTerminal()); err != nil {
 		return nil, err
+	}
+	if obs.Node != "" {
+		_ = s.store.Jobs().SetNode(ctx, job.JobID, obs.Node) // best-effort; non-fatal
 	}
 
 	runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
@@ -440,14 +476,22 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 			if err := s.store.Runs().MarkRunning(ctx, runID, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 				return nil, err
 			}
-			s.logger.Info().Str("run_ref", runRef).Msg("job started")
+			ev := s.logger.Info().Str("run_ref", runRef).Str("executor", job.Executor)
+			if obs.Node != "" {
+				ev = ev.Str("node", obs.Node)
+			}
+			ev.Msg("job started")
 		}
 	case executor.StatusSucceeded:
 		// Move to finalizing; Finalize() will gate completion on artifacts.
 		if err := s.store.Runs().MarkReadyForFinalization(ctx, runID); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
-		s.logger.Info().Str("run_ref", runRef).Str("status", "succeeded").Msg("job finished")
+		ev := s.logger.Info().Str("run_ref", runRef).Str("status", "succeeded").Str("executor", job.Executor)
+		if obs.Node != "" {
+			ev = ev.Str("node", obs.Node)
+		}
+		ev.Msg("job finished")
 	case executor.StatusFailed:
 		reason := obs.FailureMsg
 		if reason == "" {
@@ -456,7 +500,11 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if err := s.store.Runs().MarkFailed(ctx, runID, reason, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
-		s.logger.Info().Str("run_ref", runRef).Str("status", "failed").Str("reason", reason).Msg("job finished")
+		ev := s.logger.Info().Str("run_ref", runRef).Str("status", "failed").Str("reason", reason).Str("executor", job.Executor)
+		if obs.Node != "" {
+			ev = ev.Str("node", obs.Node)
+		}
+		ev.Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason)
 		if logArts, werr := s.collectRunLogs(run); werr == nil {
 			for _, logArt := range logArts {
@@ -468,7 +516,11 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
-		s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Msg("job finished")
+		ev := s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Str("executor", job.Executor)
+		if obs.Node != "" {
+			ev = ev.Str("node", obs.Node)
+		}
+		ev.Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
 	}
 	return s.store.Runs().Get(ctx, runID)
@@ -599,7 +651,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 			if !input.Optional {
 				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, missingReason)
 			}
-			s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+			s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 				Str("input_key", input.FileType).Bool("optional", input.Optional).
 				Str("reason", missingReason).Msg("matcher: missing optional input")
 			continue
@@ -703,7 +755,7 @@ func (s *Service) classicalSelectCandidates(
 	windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
 	patternHasFileType := s.inputPatternHasFileType(input)
 
-	s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+	s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 		Str("input_key", input.FileType).
 		Str("file_type", input.FileType).
 		Str("category", input.Category).
@@ -714,7 +766,7 @@ func (s *Service) classicalSelectCandidates(
 		Msg("matcher: resolving input")
 
 	if len(folders) == 0 {
-		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+		s.logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).Msg("matcher: no configured folders")
 		return nil, "no configured folders", nil
 	}
@@ -726,7 +778,7 @@ func (s *Service) classicalSelectCandidates(
 		if err != nil {
 			return nil, "", err
 		}
-		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+		s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).
 			Int("folder_priority", priority).
 			Str("folder_ref", folderRef).
@@ -749,7 +801,7 @@ func (s *Service) classicalSelectCandidates(
 			if effectivePattern != "" {
 				components, err := policy.ParseFilename(filepath.Base(raw.Path), effectivePattern, s.naming.Filenames.Components)
 				if err != nil {
-					s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+					s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 						Str("input_key", input.FileType).
 						Str("path", raw.Path).
 						Str("parse_error", err.Error()).
@@ -760,7 +812,7 @@ func (s *Service) classicalSelectCandidates(
 					components["file_type"] = input.FileType
 				}
 				if !candidateMatchesWindow(components, windowMatch, input, task) {
-					s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+					s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 						Str("input_key", input.FileType).
 						Str("path", raw.Path).
 						Str("window_policy", windowMatch).
@@ -775,7 +827,7 @@ func (s *Service) classicalSelectCandidates(
 				candidate.Discriminator = components["suffix"]
 				candidate.ParsedComponents = components
 				candidate.IntervalGroupKey = input.FileType + "|" + components["start_time"] + "|" + components["end_time"]
-				s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+				s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 					Str("input_key", input.FileType).
 					Str("path", raw.Path).
 					Str("interval_group_key", candidate.IntervalGroupKey).
@@ -793,7 +845,7 @@ func (s *Service) classicalSelectCandidates(
 	}
 
 	if len(allCandidates) == 0 {
-		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+		s.logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).Msg("matcher: no matching candidates")
 		return nil, "no matching candidate", nil
 	}
@@ -858,7 +910,7 @@ func (s *Service) classicalSelectCandidates(
 			filenameComponentsJSON = string(b)
 		}
 
-		s.logger.Debug().Str("run_ref", runRef).Str("component", "matcher").
+		s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 			Str("input_key", input.FileType).
 			Str("interval_group_key", groupKey).
 			Str("winner_path", winner.Path).

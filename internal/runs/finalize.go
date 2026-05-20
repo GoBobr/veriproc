@@ -574,8 +574,8 @@ func (s *Service) collectRunLogs(run *store.RunRecord) ([]*store.ArtifactRecord,
 		body, err := os.ReadFile(path)
 		if err != nil {
 			if spec.name == "run_err.log" {
-				body = []byte(fmt.Sprintf("run=%s task=%s state=finalizing executor=%s\n",
-					run.RunID, run.TaskID, s.exec.Type()))
+				body = []byte(fmt.Sprintf("run=%s task=%s state=finalizing\n",
+					run.RunID, run.TaskID))
 			} else {
 				body = nil
 			}

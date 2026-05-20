@@ -650,7 +650,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "station_id", "start", "end", "state", "canonicality", "created_at", "working_root"})
+		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "station_id", "start", "end", "state", "canonicality", "executor_type", "execution_node", "created_at", "working_root"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
@@ -658,7 +658,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_ref", "state", "working_root", "canonicality", "created_at"})
+		c.renderList(raw, m, []string{"run_ref", "state", "executor_type", "working_root", "canonicality", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
@@ -673,7 +673,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"job_id", "executor_type", "scheduler_native_state", "submitted_at"})
+		c.renderList(raw, m, []string{"job_id", "executor_type", "scheduler_native_state", "execution_node", "submitted_at"})
 		return ExitOK
 	default:
 		fmt.Fprintln(c.stderr, "veriproc run {get|list|jobs}")

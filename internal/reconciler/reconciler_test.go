@@ -44,7 +44,7 @@ func newHarness(t *testing.T, clock func() time.Time) *harness {
 	}
 	exec := executor.NewStubExecutor(clock)
 	rsvc := runs.NewService(runs.Config{
-		Store: st, Executor: exec, Resolver: reg,
+		Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,
 		WorkingRootBase: t.TempDir(),
 		Clock:           clock,
 	})

@@ -9,7 +9,7 @@ description: |
   its assigned sub-window. Station-E (statE) aggregates the results once all
   group members are complete.
 execution:
-  mode: local
+  mode: slurm-native
   executable: ./scripts/run.sh
 inputs:
   - file_type: SCE_2__BIG______

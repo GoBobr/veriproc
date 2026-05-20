@@ -10,7 +10,7 @@ description: |
   all members of the same split group created by station C. Once all ten
   members are terminal, the backend automatically submits station E (statE).
 execution:
-  mode: local
+  mode: slurm-native
   executable: ./scripts/run.sh
 inputs:
   - file_type: SCE_2__BIG______

@@ -49,7 +49,7 @@ func TestTaskHistory_RootTask_2_6_1(t *testing.T) {
 	runN := 0
 	tsvc := tasks.NewService(st, reg, fixedClock(now), func() string { return "000001" })
 	rsvc := runs.NewService(runs.Config{
-		Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg,
+		Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg,
 		WorkingRootBase: filepath.Join(dir, "work"),
 		Clock:           fixedClock(now),
 		IDFactory:       func() string { runN++; return "run-root-" + strconv.Itoa(runN) },
@@ -159,7 +159,7 @@ func TestTaskHistory_DownstreamTask_2_6_1(t *testing.T) {
 	runN := 0
 	tsvc := tasks.NewService(st, reg, fixedClock(now), func() string { return "000002" })
 	rsvc := runs.NewService(runs.Config{
-		Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg,
+		Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg,
 		WorkingRootBase: filepath.Join(dir, "work"),
 		Clock:           fixedClock(now),
 		IDFactory:       func() string { runN++; return "run-ds-" + strconv.Itoa(runN) },

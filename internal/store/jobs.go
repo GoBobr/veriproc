@@ -15,6 +15,7 @@ type JobRecord struct {
 	Executor                string
 	SchedulerID             string
 	SchedulerState          string
+	Node                    string // scheduler-allocated node(s); empty until first observed
 	SubmissionAttempt       int
 	SubmittedAt             sql.NullTime
 	LastObservedAt          sql.NullTime
@@ -77,6 +78,19 @@ func (r *JobRepo) StampCancellationRequested(ctx context.Context, jobID string, 
 	return err
 }
 
+// SetNode records the scheduler-allocated node(s) for a job. It is a no-op if
+// node is empty, and never overwrites a known node with an empty string so
+// that existing node info is preserved after the scheduler releases the
+// allocation.
+func (r *JobRepo) SetNode(ctx context.Context, jobID, node string) error {
+	if node == "" {
+		return nil
+	}
+	_, err := r.q.ExecContext(ctx,
+		`UPDATE jobs SET execution_node = ? WHERE job_id = ?`, node, jobID)
+	return err
+}
+
 // Get returns a job by id.
 func (r *JobRepo) Get(ctx context.Context, jobID string) (*JobRecord, error) {
 	row := r.q.QueryRowContext(ctx, jobSelect+` WHERE job_id = ?`, jobID)
@@ -102,7 +116,7 @@ func (r *JobRepo) ListByRun(ctx context.Context, runID string) ([]*JobRecord, er
 }
 
 const jobSelect = `SELECT job_id, run_id, executor,
-	COALESCE(scheduler_id, ''), COALESCE(scheduler_state, ''),
+	COALESCE(scheduler_id, ''), COALESCE(scheduler_state, ''), COALESCE(execution_node, ''),
 	submission_attempt, submitted_at, last_observed_at, terminal_at,
 	cancellation_requested_at, COALESCE(reconciliation_status, '')
 FROM jobs`
@@ -110,7 +124,7 @@ FROM jobs`
 func scanJob(s scanner) (*JobRecord, error) {
 	var j JobRecord
 	if err := s.Scan(&j.JobID, &j.RunID, &j.Executor,
-		&j.SchedulerID, &j.SchedulerState,
+		&j.SchedulerID, &j.SchedulerState, &j.Node,
 		&j.SubmissionAttempt, &j.SubmittedAt, &j.LastObservedAt, &j.TerminalAt,
 		&j.CancellationRequestedAt, &j.ReconciliationStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

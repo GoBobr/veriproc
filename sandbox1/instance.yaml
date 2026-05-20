@@ -92,7 +92,23 @@ product_categories:
       - rolling:micro-ra
 
 executor:
-  type: local
+  default: slurm-native
+  executors:
+    local: {}
+    slurm-native:
+      slurm:
+        connection:
+          mode: local
+        account: co2m
+        partition: unlim
+        submit_command: sbatch
+        query_command: sacct
+        cancel_command: scancel
+        poll_interval: 30s
+        defaults:
+          cpus_per_task: 8
+          mem_gb: 20
+          walltime: "01:00:00"
 
 generators:
   job_order:

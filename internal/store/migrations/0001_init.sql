@@ -23,7 +23,6 @@ CREATE TABLE station_revisions (
 );
 
 CREATE INDEX idx_station_revisions_station ON station_revisions (station_id);
-CREATE UNIQUE INDEX uq_station_revisions_name ON station_revisions (station_name);
 
 CREATE TABLE idempotency_records (
     idempotency_record_id TEXT PRIMARY KEY,
@@ -142,6 +141,7 @@ CREATE TABLE jobs (
     executor          TEXT NOT NULL,
     scheduler_id      TEXT,
     scheduler_state   TEXT,
+    execution_node    TEXT,
     submission_attempt INTEGER NOT NULL DEFAULT 1,
     submitted_at      TIMESTAMP,
     last_observed_at  TIMESTAMP,

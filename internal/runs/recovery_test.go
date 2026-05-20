@@ -44,7 +44,7 @@ func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
 			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("%06x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
-			Store: st, Executor: exec, Resolver: reg,
+			Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,
 			WorkingRootBase: workRoot, Clock: clk,
 			IDFactory: func() string { runN++; return "run-r" + strconv.Itoa(runN) },
 		})
@@ -118,7 +118,7 @@ func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5(t *testing.T) {
 			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("00%04x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
-			Store: st, Executor: exec, Resolver: reg,
+			Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,
 			WorkingRootBase: workRoot, Clock: clk,
 			IDFactory: func() string { runN++; return "rn-" + strconv.Itoa(runN) },
 		})

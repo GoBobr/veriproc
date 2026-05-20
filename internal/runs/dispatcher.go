@@ -106,6 +106,17 @@ func (d *Dispatcher) dispatchReady(ctx context.Context) error {
 	for _, r := range ready {
 		if _, err := d.svc.Dispatch(ctx, r.RunID); err != nil {
 			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("dispatch failed")
+			if errors.Is(err, ErrFatalDispatch) {
+				reason := err.Error()
+				if ferr := d.svc.store.Runs().MarkFailed(ctx, r.RunID, reason, d.svc.clock()); ferr != nil {
+					d.logger.Error().Str("run_id", r.RunID).Err(ferr).Msg("could not mark run failed after fatal dispatch error")
+				}
+				if ferr := d.svc.store.Tasks().SetState(ctx, r.TaskID, "failed", reason); ferr != nil {
+					d.logger.Error().Str("run_id", r.RunID).Err(ferr).Msg("could not mark task failed after fatal dispatch error")
+				} else {
+					d.logger.Error().Str("run_id", r.RunID).Str("task_id", r.TaskID).Err(err).Msg("task failed due to fatal dispatch error")
+				}
+			}
 		}
 	}
 	return nil

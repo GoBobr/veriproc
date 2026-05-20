@@ -38,7 +38,7 @@ func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 	}
 	right := stations.Definition{
 		StationName: "SCE_2", StationID: "STATION-A",
-		Execution:   stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
+		Execution: stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
 	}
 	lh, err := stations.ComputeContentHash(left)
 	if err != nil {
@@ -225,5 +225,60 @@ func TestLoader_Execution_RelativePath(t *testing.T) {
 	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoader_ExecutionSlurmDockerSettings(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", `station_id: SLURM-DOCKER
+station_name: Slurm Docker
+execution:
+  mode: slurm-docker
+  executable: /opt/proc/run.sh
+  args:
+    - --task
+    - "{{ task_id }}"
+  resources:
+    cpus_per_task: 4
+    mem_gb: 16
+    walltime: PT1H
+  slurm:
+    partition: gpu
+    account: co2m
+    qos: normal
+    extra_args:
+      - --constraint=a100
+  container:
+    image: registry.example.test/proc:latest
+    mounts:
+      - /shared:/shared
+    user: host
+`)
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	exec := specs[0].Execution
+	if exec.Mode != "slurm-docker" || exec.Resources.CPUsPerTask != 4 || exec.Resources.MemGB != 16 {
+		t.Fatalf("execution = %+v", exec)
+	}
+	if exec.Slurm.Partition != "gpu" || len(exec.Slurm.ExtraArgs) != 1 {
+		t.Fatalf("slurm = %+v", exec.Slurm)
+	}
+	if exec.Container.Image == "" || exec.Container.User != "host" || len(exec.Container.Mounts) != 1 {
+		t.Fatalf("container = %+v", exec.Container)
+	}
+}
+
+func TestLoader_SlurmDockerRequiresImage(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", `station_id: SLURM-NO-IMAGE
+station_name: Slurm No Image
+execution:
+	mode: slurm-docker
+	executable: /opt/proc/run.sh
+`)
+	if _, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil); err == nil {
+		t.Fatal("expected validation error")
 	}
 }

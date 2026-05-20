@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/eum/veriproc/internal/store"
 	"gopkg.in/yaml.v3"
@@ -37,9 +39,42 @@ type Definition struct {
 
 // Execution describes how to invoke the station workload.
 type Execution struct {
-	Mode       string   `yaml:"mode,omitempty" json:"mode,omitempty"`
-	Executable string   `yaml:"executable,omitempty" json:"executable,omitempty"`
-	Args       []string `yaml:"args,omitempty" json:"args,omitempty"`
+	Mode       string          `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Executable string          `yaml:"executable,omitempty" json:"executable,omitempty"`
+	Args       []string        `yaml:"args,omitempty" json:"args,omitempty"`
+	Resources  ResourceRequest `yaml:"resources,omitempty" json:"resources,omitempty"`
+	Slurm      SlurmSettings   `yaml:"slurm,omitempty" json:"slurm,omitempty"`
+	Container  ContainerConfig `yaml:"container,omitempty" json:"container,omitempty"`
+}
+
+// ResourceRequest describes station-level scheduler resource requirements.
+type ResourceRequest struct {
+	CPUsPerTask int    `yaml:"cpus_per_task,omitempty" json:"cpus_per_task,omitempty"`
+	MemGB       int    `yaml:"mem_gb,omitempty" json:"mem_gb,omitempty"`
+	Walltime    string `yaml:"walltime,omitempty" json:"walltime,omitempty"`
+}
+
+// SlurmSettings describes station-level SLURM submission overrides.
+type SlurmSettings struct {
+	Partition string   `yaml:"partition,omitempty" json:"partition,omitempty"`
+	Account   string   `yaml:"account,omitempty" json:"account,omitempty"`
+	QOS       string   `yaml:"qos,omitempty" json:"qos,omitempty"`
+	ExtraArgs []string `yaml:"extra_args,omitempty" json:"extra_args,omitempty"`
+}
+
+// ContainerConfig describes station-level container runtime settings.
+type ContainerConfig struct {
+	Image  string   `yaml:"image,omitempty" json:"image,omitempty"`
+	Mounts []string `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	User   string   `yaml:"user,omitempty" json:"user,omitempty"`
+}
+
+// IsZero reports whether the station declares no execution configuration.
+func (e Execution) IsZero() bool {
+	return e.Mode == "" && e.Executable == "" && len(e.Args) == 0 &&
+		e.Resources.CPUsPerTask == 0 && e.Resources.MemGB == 0 && e.Resources.Walltime == "" &&
+		e.Slurm.Partition == "" && e.Slurm.Account == "" && e.Slurm.QOS == "" && len(e.Slurm.ExtraArgs) == 0 &&
+		e.Container.Image == "" && len(e.Container.Mounts) == 0 && e.Container.User == ""
 }
 
 // JobOrderConfig holds the station's joborder rendering configuration.
@@ -254,8 +289,20 @@ func normalizeDefinition(def Definition) Definition {
 	}
 	def.ContentHash = strings.TrimSpace(def.ContentHash)
 	def.Description = strings.TrimSpace(def.Description)
-	def.Execution.Mode = strings.TrimSpace(def.Execution.Mode)
+	def.Execution.Mode = strings.TrimSpace(strings.ToLower(def.Execution.Mode))
 	def.Execution.Executable = strings.TrimSpace(def.Execution.Executable)
+	def.Execution.Resources.Walltime = strings.TrimSpace(def.Execution.Resources.Walltime)
+	def.Execution.Slurm.Partition = strings.TrimSpace(def.Execution.Slurm.Partition)
+	def.Execution.Slurm.Account = strings.TrimSpace(def.Execution.Slurm.Account)
+	def.Execution.Slurm.QOS = strings.TrimSpace(def.Execution.Slurm.QOS)
+	def.Execution.Container.Image = strings.TrimSpace(def.Execution.Container.Image)
+	def.Execution.Container.User = strings.TrimSpace(def.Execution.Container.User)
+	for i := range def.Execution.Slurm.ExtraArgs {
+		def.Execution.Slurm.ExtraArgs[i] = strings.TrimSpace(def.Execution.Slurm.ExtraArgs[i])
+	}
+	for i := range def.Execution.Container.Mounts {
+		def.Execution.Container.Mounts[i] = strings.TrimSpace(def.Execution.Container.Mounts[i])
+	}
 	// Normalize joborder format default.
 	def.JobOrder.Format = strings.TrimSpace(strings.ToLower(def.JobOrder.Format))
 	if def.JobOrder.Format == "" {
@@ -329,6 +376,33 @@ func validateDefinition(def Definition) error {
 	if def.SchemaVersion == "" {
 		return errors.New("schema_version must not be empty")
 	}
+	switch def.Execution.Mode {
+	case "", "local", "slurm-native", "slurm-docker":
+		// valid
+	default:
+		return fmt.Errorf("execution.mode %q invalid", def.Execution.Mode)
+	}
+	if def.Execution.Resources.CPUsPerTask < 0 || def.Execution.Resources.MemGB < 0 {
+		return errors.New("execution.resources values must be non-negative")
+	}
+	if def.Execution.Resources.Walltime != "" {
+		if _, err := validateWalltime(def.Execution.Resources.Walltime); err != nil {
+			return fmt.Errorf("execution.resources.walltime %q invalid: %w", def.Execution.Resources.Walltime, err)
+		}
+	}
+	for _, arg := range def.Execution.Slurm.ExtraArgs {
+		if arg == "" {
+			return errors.New("execution.slurm.extra_args must not contain empty entries")
+		}
+	}
+	if def.Execution.Mode == "slurm-docker" && def.Execution.Container.Image == "" {
+		return errors.New("execution.container.image is required for slurm-docker")
+	}
+	for _, mount := range def.Execution.Container.Mounts {
+		if mount == "" {
+			return errors.New("execution.container.mounts must not contain empty entries")
+		}
+	}
 	// Validate joborder section.
 	switch def.JobOrder.Format {
 	case "yaml", "toml", "json", "none":
@@ -392,6 +466,57 @@ func validateDefinition(def Definition) error {
 		}
 	}
 	return nil
+}
+
+func validateWalltime(value string) (string, error) {
+	if strings.Contains(value, ":") {
+		return value, nil
+	}
+	d, err := parseDurationLike(value)
+	if err != nil {
+		return "", err
+	}
+	totalSeconds := int64(d / time.Second)
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds), nil
+}
+
+func parseDurationLike(value string) (time.Duration, error) {
+	if d, err := time.ParseDuration(value); err == nil {
+		return d, nil
+	}
+	if len(value) < 3 || value[0] != 'P' || value[1] != 'T' {
+		return 0, fmt.Errorf("expected Go duration or ISO-8601 PT duration")
+	}
+	var total time.Duration
+	start := 2
+	for i := 2; i < len(value); i++ {
+		switch value[i] {
+		case 'H', 'M', 'S':
+			if start == i {
+				return 0, fmt.Errorf("missing number before %c", value[i])
+			}
+			n, err := strconv.Atoi(value[start:i])
+			if err != nil {
+				return 0, err
+			}
+			switch value[i] {
+			case 'H':
+				total += time.Duration(n) * time.Hour
+			case 'M':
+				total += time.Duration(n) * time.Minute
+			case 'S':
+				total += time.Duration(n) * time.Second
+			}
+			start = i + 1
+		}
+	}
+	if start != len(value) || total == 0 {
+		return 0, fmt.Errorf("expected Go duration or ISO-8601 PT duration")
+	}
+	return total, nil
 }
 
 func validObjectKind(kind string) bool {

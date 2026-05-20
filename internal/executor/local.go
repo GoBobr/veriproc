@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,9 +67,12 @@ func (e *LocalExecutor) SupportsCancellation() bool { return false }
 //
 // VERIPROC_RUN_ID is intentionally NOT exposed: the surrogate run_id is
 // internal-only per Spec §3.6.1.
-func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, error) {
+func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (Submission, error) {
+	if mode := strings.TrimSpace(strings.ToLower(desc.Mode)); mode != "" && mode != e.Type() {
+		return Submission{}, fmt.Errorf("local executor cannot run station execution mode %q", desc.Mode)
+	}
 	if desc.Executable == "" {
-		return "", fmt.Errorf("local executor: Executable is empty for run %s (station has no executable?)", desc.RunID)
+		return Submission{}, fmt.Errorf("local executor: Executable is empty for run %s (station has no executable?)", desc.RunID)
 	}
 
 	id := "local-" + desc.RunID
@@ -79,11 +83,11 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 	e.mu.Unlock()
 
 	if err := os.MkdirAll(filepath.Join(desc.WorkingRoot, "logs"), 0o755); err != nil {
-		return "", fmt.Errorf("local executor: mkdir logs: %w", err)
+		return Submission{}, fmt.Errorf("local executor: mkdir logs: %w", err)
 	}
 	outDir := filepath.Join(desc.WorkingRoot, "output")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", fmt.Errorf("local executor: mkdir output: %w", err)
+		return Submission{}, fmt.Errorf("local executor: mkdir output: %w", err)
 	}
 
 	go func() {
@@ -145,7 +149,7 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (string, 
 		}
 	}()
 
-	return id, nil
+	return Submission{SchedulerID: id, ExecutorType: e.Type()}, nil
 }
 
 // Poll returns the current status of a previously-submitted job.

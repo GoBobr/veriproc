@@ -49,25 +49,59 @@ func (s Status) IsTerminal() bool {
 type JobDescription struct {
 	// RunID is the internal surrogate, retained for executor bookkeeping
 	// (scheduler IDs, log paths) but NOT exposed to the workload via env.
-	RunID        string
-	TaskID       string
-	RetryIndex   int
-	RunRef       string
-	StationID    string
-	WorkingRoot  string
+	RunID       string
+	TaskID      string
+	RetryIndex  int
+	RunRef      string
+	StationID   string
+	WorkingRoot string
 	// JobOrderPath is the absolute path of the written joborder file.
 	// Empty when joborder.format is "none" — VERIPROC_JOBORDER_PATH is not
 	// injected in that case.
 	JobOrderPath string
 	// Executable is the resolved absolute path of the binary or script to run.
-	Executable  string
+	Executable string
 	// Args are the resolved argument strings to pass to the executable.
-	Args         []string
-	WindowStart  time.Time
-	WindowEnd    time.Time
+	Args        []string
+	WindowStart time.Time
+	WindowEnd   time.Time
+	// Mode is the station-declared execution mode. Empty means use the executor
+	// default selected by instance configuration.
+	Mode      string
+	Resources ResourceRequest
+	Slurm     SlurmOverrides
+	Container ContainerConfig
 	// SplitGroupID is the split-group this run belongs to, if any. Exposed
 	// to the workload as VERIPROC_SPLIT_GROUP_ID (empty string → not set).
 	SplitGroupID string
+}
+
+// ResourceRequest captures scheduler resource requirements for one run.
+type ResourceRequest struct {
+	CPUsPerTask int
+	MemGB       int
+	Walltime    string
+}
+
+// SlurmOverrides captures station-level scheduler option overrides.
+type SlurmOverrides struct {
+	Partition string
+	Account   string
+	QOS       string
+	ExtraArgs []string
+}
+
+// ContainerConfig captures runtime container settings for containerized executors.
+type ContainerConfig struct {
+	Image  string
+	Mounts []string
+	User   string
+}
+
+// Submission is the result of a scheduler submission.
+type Submission struct {
+	SchedulerID  string
+	ExecutorType string
 }
 
 // Observation is the result of polling.
@@ -77,6 +111,7 @@ type Observation struct {
 	ExitCode    int
 	FailureMsg  string
 	NativeState string // free-form executor-native state string for diagnostics
+	Node        string // scheduler-allocated node(s), if available (e.g. sacct NodeList)
 }
 
 // Executor is the abstraction used by the runs service. Implementations must
@@ -90,8 +125,9 @@ type Executor interface {
 	// CodeCancellationUnsupported (Spec §5.8).
 	SupportsCancellation() bool
 
-	// Submit dispatches a job and returns the scheduler-assigned identifier.
-	Submit(ctx context.Context, desc JobDescription) (schedulerID string, err error)
+	// Submit dispatches a job and returns the scheduler-assigned identifier and
+	// the effective executor type used for the submitted job.
+	Submit(ctx context.Context, desc JobDescription) (Submission, error)
 
 	// Poll returns the current status of a previously-submitted job.
 	Poll(ctx context.Context, schedulerID string) (Observation, error)
@@ -191,8 +227,12 @@ func (e *StubExecutor) SubmitWith(ctx context.Context, desc JobDescription, opts
 }
 
 // Submit dispatches a job using the default transition sequence.
-func (e *StubExecutor) Submit(ctx context.Context, desc JobDescription) (string, error) {
-	return e.SubmitWith(ctx, desc)
+func (e *StubExecutor) Submit(ctx context.Context, desc JobDescription) (Submission, error) {
+	id, err := e.SubmitWith(ctx, desc)
+	if err != nil {
+		return Submission{}, err
+	}
+	return Submission{SchedulerID: id, ExecutorType: e.Type()}, nil
 }
 
 // SetOutcome rewrites the planned transitions for an already-submitted job;

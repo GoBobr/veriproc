@@ -81,7 +81,7 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	}
 	tsvc := tasks.NewService(st, reg, nil, func() string { return "00000a" })
 	runN := 0
-	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), InstanceID: "test-instance", Facility: map[string]string{"environment": "TEST"}, RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, Generators: map[string]string{"job_order": "test-generator-v1"}, IDFactory: func() string { runN++; return "run-local-" + strconv.Itoa(runN) }})
+	rsvc := runs.NewService(runs.Config{Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), InstanceID: "test-instance", Facility: map[string]string{"environment": "TEST"}, RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, Generators: map[string]string{"job_order": "test-generator-v1"}, IDFactory: func() string { runN++; return "run-local-" + strconv.Itoa(runN) }})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
 	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "STATION-A"}, Window: tasks.Window{Start: time.Date(2025, 7, 3, 11, 15, 0, 0, time.UTC), End: time.Date(2025, 7, 3, 11, 30, 0, 0, time.UTC)}})
 	if err != nil {
@@ -200,7 +200,7 @@ cp input/20250703_AUX_DIR_v1/data.nc "$VERIPROC_RUN_DIR/dir-output/data.nc"
 		t.Fatalf("seed: %v", err)
 	}
 	tsvc := tasks.NewService(st, reg, nil, func() string { return "00d1a0" })
-	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, IDFactory: func() string { return "run-dir" }})
+	rsvc := runs.NewService(runs.Config{Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, IDFactory: func() string { return "run-dir" }})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
 	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "DIR-STATION"}, Window: tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()}})
 	if err != nil {
@@ -253,7 +253,7 @@ func TestRuns_LocalExecutionMissingOutputFails_5_6_7_5_4(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tsvc := tasks.NewService(st, reg, nil, func() string { return "0b0b0b" })
-	rsvc := runs.NewService(runs.Config{Store: st, Executor: executor.NewLocalExecutor(nil), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), IDFactory: func() string { return "run-broken" }})
+	rsvc := runs.NewService(runs.Config{Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), IDFactory: func() string { return "run-broken" }})
 	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
 	res, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "BROKEN"}, Window: tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()}})
 	if err != nil {
@@ -306,7 +306,7 @@ func newFixture(t *testing.T) *fixture {
 	exec := executor.NewStubExecutor(fixedClock(now))
 	rsvc := runs.NewService(runs.Config{
 		Store:             st,
-		Executor:          exec,
+		Executors:         executor.NewSingleExecutorRegistry(exec),
 		Resolver:          reg,
 		WorkingRootBase:   t.TempDir(),
 		RollingArchives:   map[string]string{"hot": archive},
@@ -638,7 +638,7 @@ func TestRuns_JobOrderFormatJSON(t *testing.T) {
 	runN := 0
 	rsvc := runs.NewService(runs.Config{
 		Store:           st,
-		Executor:        executor.NewLocalExecutor(nil),
+		Executors:       executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
 		Resolver:        reg,
 		WorkingRootBase: filepath.Join(dir, "work"),
 		IDFactory:       func() string { runN++; return "run-jojson-" + strconv.Itoa(runN) },
@@ -704,7 +704,7 @@ func TestRuns_JobOrderFormatNone(t *testing.T) {
 	runN := 0
 	rsvc := runs.NewService(runs.Config{
 		Store:           st,
-		Executor:        executor.NewLocalExecutor(nil),
+		Executors:       executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
 		Resolver:        reg,
 		WorkingRootBase: filepath.Join(dir, "work"),
 		IDFactory:       func() string { runN++; return "run-jonone-" + strconv.Itoa(runN) },

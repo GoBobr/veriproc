@@ -5,7 +5,7 @@ description: |
   Sandbox station B consumes STATION-A's published output from the rolling
   archive and writes a small CSV product.
 execution:
-  mode: local
+  mode: slurm-native
   executable: ./scripts/run.sh
 
 inputs:

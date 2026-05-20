@@ -92,6 +92,7 @@ product_categories:
       - rolling:micro-ra
 
 executor:
+  # can be local, slurm-docker or slurm-native
   type: local
 
 generators:

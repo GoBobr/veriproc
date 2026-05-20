@@ -86,18 +86,9 @@ func run(args []string) error {
 	taskSvc.SetNaming(cfg.Naming)
 	taskSvc.SetLogger(logger)
 
-	var exec executor.Executor
-	execType := cfg.Executor.Type
-	if execType == "" {
-		execType = os.Getenv("VERIPROC_EXECUTOR")
-	}
-	switch execType {
-	case "local":
-		exec = executor.NewLocalExecutor(nil)
-		logger.Info().Msg("executor: local (runs station scripts as OS processes)")
-	default:
-		exec = executor.NewStubExecutor(nil)
-		logger.Info().Msg("executor: stub (simulates lifecycle without running scripts)")
+	execRegistry, err := buildExecutorRegistry(cfg.Executor, logger)
+	if err != nil {
+		return err
 	}
 	groupSvc := groups.NewService(st, nil)
 	archivePaths := map[string]string{}
@@ -118,7 +109,7 @@ func run(args []string) error {
 	}
 	runsSvc := runs.NewService(runs.Config{
 		Store:             st,
-		Executor:          exec,
+		Executors:         execRegistry,
 		Resolver:          registry,
 		WorkingRootBase:   cfg.Storage.WorkingRootBase,
 		Naming:            cfg.Naming,
@@ -250,6 +241,107 @@ func run(args []string) error {
 	}
 	logger.Info().Msg("veriprocd stopped cleanly")
 	return nil
+}
+
+func buildExecutorRegistry(cfg config.ExecutorConfig, logger zerolog.Logger) (*executor.Registry, error) {
+	// Multi-executor format: executor.executors is populated.
+	if len(cfg.Executors) > 0 {
+		execs := make(map[string]executor.Executor, len(cfg.Executors))
+		for typeName, spec := range cfg.Executors {
+			switch typeName {
+			case "stub":
+				execs[typeName] = executor.NewStubExecutor(nil)
+				logger.Info().Str("type", typeName).Msg("executor registered")
+			case "local":
+				execs[typeName] = executor.NewLocalExecutor(nil)
+				logger.Info().Str("type", typeName).Msg("executor registered")
+			case executor.SlurmNative, executor.SlurmDocker:
+				execs[typeName] = executor.NewSlurmExecutor(slurmSpecConfig(typeName, spec))
+				logger.Info().Str("type", typeName).Msg("executor registered")
+			}
+		}
+		return executor.NewRegistry(execs, cfg.Default), nil
+	}
+
+	// Legacy single-executor format.
+	execType := strings.TrimSpace(strings.ToLower(cfg.Type))
+	if execType == "" {
+		execType = strings.TrimSpace(strings.ToLower(os.Getenv("VERIPROC_EXECUTOR")))
+	}
+	if execType == "" {
+		execType = "stub"
+	}
+	var exec executor.Executor
+	switch execType {
+	case "stub":
+		exec = executor.NewStubExecutor(nil)
+		logger.Info().Msg("executor: stub (simulates lifecycle without running scripts)")
+	case "local":
+		exec = executor.NewLocalExecutor(nil)
+		logger.Info().Msg("executor: local (runs station scripts as OS processes)")
+	case executor.SlurmNative, executor.SlurmDocker:
+		exec = executor.NewSlurmExecutor(slurmExecutorConfig(cfg))
+		logger.Info().Str("type", execType).Msg("executor: slurm")
+	default:
+		return nil, fmt.Errorf("executor: unsupported type %q", execType)
+	}
+	return executor.NewSingleExecutorRegistry(exec), nil
+}
+
+func slurmSpecConfig(typeName string, spec config.ExecutorSpec) executor.SlurmConfig {
+	return executor.SlurmConfig{
+		Type: typeName,
+		Connection: executor.SlurmConnection{
+			Mode:    spec.Slurm.Connection.Mode,
+			Host:    spec.Slurm.Connection.Host,
+			User:    spec.Slurm.Connection.User,
+			KeyFile: spec.Slurm.Connection.KeyFile,
+		},
+		Account:       spec.Slurm.Account,
+		Partition:     spec.Slurm.Partition,
+		QOS:           spec.Slurm.QOS,
+		SubmitCommand: spec.Slurm.SubmitCommand,
+		QueryCommand:  spec.Slurm.QueryCommand,
+		CancelCommand: spec.Slurm.CancelCommand,
+		Defaults: executor.ResourceRequest{
+			CPUsPerTask: spec.Slurm.Defaults.CPUsPerTask,
+			MemGB:       spec.Slurm.Defaults.MemGB,
+			Walltime:    spec.Slurm.Defaults.Walltime,
+		},
+		SharedRoots: append([]string(nil), spec.Slurm.SharedRoots...),
+		Docker: executor.DockerDefaults{
+			DefaultMounts: append([]string(nil), spec.Docker.DefaultMounts...),
+			User:          spec.Docker.User,
+		},
+	}
+}
+
+func slurmExecutorConfig(cfg config.ExecutorConfig) executor.SlurmConfig {
+	return executor.SlurmConfig{
+		Type: cfg.Type,
+		Connection: executor.SlurmConnection{
+			Mode:    cfg.Slurm.Connection.Mode,
+			Host:    cfg.Slurm.Connection.Host,
+			User:    cfg.Slurm.Connection.User,
+			KeyFile: cfg.Slurm.Connection.KeyFile,
+		},
+		Account:       cfg.Slurm.Account,
+		Partition:     cfg.Slurm.Partition,
+		QOS:           cfg.Slurm.QOS,
+		SubmitCommand: cfg.Slurm.SubmitCommand,
+		QueryCommand:  cfg.Slurm.QueryCommand,
+		CancelCommand: cfg.Slurm.CancelCommand,
+		Defaults: executor.ResourceRequest{
+			CPUsPerTask: cfg.Slurm.Defaults.CPUsPerTask,
+			MemGB:       cfg.Slurm.Defaults.MemGB,
+			Walltime:    cfg.Slurm.Defaults.Walltime,
+		},
+		SharedRoots: append([]string(nil), cfg.Slurm.SharedRoots...),
+		Docker: executor.DockerDefaults{
+			DefaultMounts: append([]string(nil), cfg.Docker.DefaultMounts...),
+			User:          cfg.Docker.User,
+		},
+	}
 }
 
 func firstArchiveBase(paths map[string]string) string {

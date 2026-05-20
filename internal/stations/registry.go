@@ -100,7 +100,7 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			rollingFolders = string(b)
 		}
 		declaredExecution := ""
-		if sp.Execution.Executable != "" || len(sp.Execution.Args) > 0 {
+		if !sp.Execution.IsZero() {
 			b, _ := json.Marshal(sp.Execution)
 			declaredExecution = string(b)
 		}

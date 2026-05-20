@@ -13,16 +13,16 @@ import (
 // queued → running → succeeded; further polls are sticky on succeeded.
 func TestExecutorStub_DefaultLifecycle_3_9_M3(t *testing.T) {
 	e := NewStubExecutor(func() time.Time { return time.Unix(100, 0).UTC() })
-	id, err := e.Submit(context.Background(), JobDescription{RunID: "r1"})
+	submission, err := e.Submit(context.Background(), JobDescription{RunID: "r1"})
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	if id == "" {
+	if submission.SchedulerID == "" {
 		t.Fatal("empty scheduler id")
 	}
 	wantSeq := []Status{StatusQueued, StatusRunning, StatusSucceeded, StatusSucceeded}
 	for i, want := range wantSeq {
-		obs, err := e.Poll(context.Background(), id)
+		obs, err := e.Poll(context.Background(), submission.SchedulerID)
 		if err != nil {
 			t.Fatalf("poll %d: %v", i, err)
 		}
@@ -56,11 +56,11 @@ func TestExecutorStub_FailureOption_M3(t *testing.T) {
 // TestExecutorStub_Cancel_M3 — cancel marks an unfinished job cancelled.
 func TestExecutorStub_Cancel_M3(t *testing.T) {
 	e := NewStubExecutor(nil)
-	id, _ := e.Submit(context.Background(), JobDescription{RunID: "r-c"})
-	if err := e.Cancel(context.Background(), id); err != nil {
+	submission, _ := e.Submit(context.Background(), JobDescription{RunID: "r-c"})
+	if err := e.Cancel(context.Background(), submission.SchedulerID); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	obs, err := e.Poll(context.Background(), id)
+	obs, err := e.Poll(context.Background(), submission.SchedulerID)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestLocalExecutor_SplitsStdoutAndStderrLogs(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	e := NewLocalExecutor(nil)
-	id, err := e.Submit(context.Background(), JobDescription{
+	submission, err := e.Submit(context.Background(), JobDescription{
 		RunID:       "run-log-split",
 		TaskID:      "task-log-split",
 		RetryIndex:  0,
@@ -104,7 +104,7 @@ func TestLocalExecutor_SplitsStdoutAndStderrLogs(t *testing.T) {
 	var obs Observation
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		obs, err = e.Poll(context.Background(), id)
+		obs, err = e.Poll(context.Background(), submission.SchedulerID)
 		if err != nil {
 			t.Fatalf("poll: %v", err)
 		}

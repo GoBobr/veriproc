@@ -115,7 +115,7 @@ func TestRuns_CancelUnsupported_5_8_M5(t *testing.T) {
 	}
 	noCancelSvc := runs.NewService(runs.Config{
 		Store:           f.st,
-		Executor:        nonCancellableExec{f.exec},
+		Executors:       executor.NewRegistry(map[string]executor.Executor{"stub": nonCancellableExec{f.exec}}, "stub"),
 		Resolver:        reg,
 		WorkingRootBase: t.TempDir(),
 	})
@@ -130,7 +130,7 @@ type nonCancellableExec struct{ inner executor.Executor }
 
 func (e nonCancellableExec) Type() string               { return e.inner.Type() }
 func (e nonCancellableExec) SupportsCancellation() bool { return false }
-func (e nonCancellableExec) Submit(ctx context.Context, d executor.JobDescription) (string, error) {
+func (e nonCancellableExec) Submit(ctx context.Context, d executor.JobDescription) (executor.Submission, error) {
 	return e.inner.Submit(ctx, d)
 }
 func (e nonCancellableExec) Poll(ctx context.Context, id string) (executor.Observation, error) {

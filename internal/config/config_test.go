@@ -217,3 +217,76 @@ func TestConfig_Definitions_AcceptsUserKeys(t *testing.T) {
 		t.Errorf("definitions[facility] = %v, want map with center=SAF", cfg.Definitions["facility"])
 	}
 }
+
+func TestConfig_SlurmExecutorConfig(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	content := `executor:
+  type: slurm-docker
+  slurm:
+    connection:
+      mode: ssh
+      host: login.example.test
+      user: veriproc
+      key_file: /keys/id_rsa
+    account: co2m
+    partition: batch
+    qos: normal
+    poll_interval: PT30S
+    defaults:
+      cpus_per_task: 8
+      mem_gb: 32
+      walltime: PT2H
+    shared_roots:
+      - /shared/veriproc
+  docker:
+    default_mounts:
+      - /shared/veriproc:/work
+    user: host
+`
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load([]string{"--config", p}, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Executor.Type != "slurm-docker" {
+		t.Fatalf("executor.type = %q", cfg.Executor.Type)
+	}
+	if cfg.Executor.Slurm.Connection.Mode != "ssh" || cfg.Executor.Slurm.Connection.Host != "login.example.test" {
+		t.Fatalf("connection = %+v", cfg.Executor.Slurm.Connection)
+	}
+	if cfg.Executor.Slurm.SubmitCommand != "sbatch" || cfg.Executor.Slurm.QueryCommand != "sacct" {
+		t.Fatalf("commands = submit %q query %q", cfg.Executor.Slurm.SubmitCommand, cfg.Executor.Slurm.QueryCommand)
+	}
+	if cfg.Executor.Slurm.Defaults.CPUsPerTask != 8 || cfg.Executor.Slurm.Defaults.MemGB != 32 {
+		t.Fatalf("defaults = %+v", cfg.Executor.Slurm.Defaults)
+	}
+	if len(cfg.Executor.Docker.DefaultMounts) != 1 || cfg.Executor.Docker.User != "host" {
+		t.Fatalf("docker = %+v", cfg.Executor.Docker)
+	}
+}
+
+func TestConfig_SlurmSSHRequiresHostAndUser(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	content := "executor:\n  type: slurm-native\n  slurm:\n    connection:\n      mode: ssh\n      host: login.example.test\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := Load([]string{"--config", p}, nil); err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestConfig_InvalidExecutorType(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte("executor:\n  type: grid-engine\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := Load([]string{"--config", p}, nil); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

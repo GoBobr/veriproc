@@ -46,8 +46,27 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 	case "complete", "failed", "cancelled":
 		return &CancelOutcome{Run: run, AlreadyTerminal: true, CancellationComplete: true}, nil
 	}
-	if !s.exec.SupportsCancellation() {
-		return nil, ErrCancellationUnsupported
+
+	// Resolve the executor for the most-recent job (if any) before stamping
+	// the run, so we can reject unsupported cancellation early.
+	jobs, err := s.store.Jobs().ListByRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+
+	var activeExec executor.Executor
+	var activeJob *store.JobRecord
+	if len(jobs) > 0 {
+		j := jobs[len(jobs)-1]
+		activeJob = j
+		exec, resolveErr := s.execRegistry.Resolve(j.Executor)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("cancel: resolve executor: %w", resolveErr)
+		}
+		activeExec = exec
+		if !activeExec.SupportsCancellation() {
+			return nil, ErrCancellationUnsupported
+		}
 	}
 
 	now := s.clock().UTC()
@@ -66,20 +85,14 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 		return nil, err
 	}
 
-	jobs, err := s.store.Jobs().ListByRun(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-
 	out := &CancelOutcome{Accepted: true}
 
-	if len(jobs) > 0 {
-		job := jobs[len(jobs)-1]
-		if err := s.store.Jobs().StampCancellationRequested(ctx, job.JobID, now); err != nil {
+	if activeJob != nil {
+		if err := s.store.Jobs().StampCancellationRequested(ctx, activeJob.JobID, now); err != nil {
 			return nil, err
 		}
-		if job.SchedulerID != "" {
-			if cerr := s.exec.Cancel(ctx, job.SchedulerID); cerr != nil {
+		if activeJob.SchedulerID != "" {
+			if cerr := activeExec.Cancel(ctx, activeJob.SchedulerID); cerr != nil {
 				if errors.Is(cerr, executor.ErrCancellationUnsupported) {
 					return nil, ErrCancellationUnsupported
 				}
@@ -92,8 +105,8 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 			} else {
 				// On stub-executor profile, Cancel is synchronous; observe the
 				// resulting state so callers can see the run as cancelled.
-				if obs, perr := s.exec.Poll(ctx, job.SchedulerID); perr == nil && obs.Status == executor.StatusCancelled {
-					if uerr := s.store.Jobs().UpdateState(ctx, job.JobID, string(obs.Status), now, true); uerr != nil {
+				if obs, perr := activeExec.Poll(ctx, activeJob.SchedulerID); perr == nil && obs.Status == executor.StatusCancelled {
+					if uerr := s.store.Jobs().UpdateState(ctx, activeJob.JobID, string(obs.Status), now, true); uerr != nil {
 						return nil, uerr
 					}
 					if merr := s.store.Runs().MarkCancelled(ctx, runID, now); merr != nil && !errors.Is(merr, store.ErrInvalidTransition) {
