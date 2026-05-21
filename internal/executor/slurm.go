@@ -243,6 +243,12 @@ func (e *SlurmExecutor) sbatchArgs(desc JobDescription, effective effectiveSlurm
 	if effective.Resources.Walltime != "" {
 		args = append(args, "--time="+normalizeSlurmWalltime(effective.Resources.Walltime))
 	}
+	// Redirect SLURM's own stdout/stderr into the standard run log files so
+	// no extra slurm-JOBID.out files accumulate anywhere and all output is
+	// consolidated in one place.
+	logsDir := filepath.Join(desc.WorkingRoot, "logs")
+	args = append(args, "--output="+filepath.Join(logsDir, "run_out.log"))
+	args = append(args, "--error="+filepath.Join(logsDir, "run_err.log"))
 	args = append(args, effective.Slurm.ExtraArgs...)
 	args = append(args, wrapperPath)
 	return args

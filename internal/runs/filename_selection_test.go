@@ -30,9 +30,9 @@ func structuredNaming() policy.Naming {
 	}}
 }
 
-// svcWithLog returns a Service that writes debug logs to buf.
+// svcWithLog returns a Service that writes trace logs to buf.
 func svcWithLog(naming policy.Naming, buf *bytes.Buffer) *Service {
-	lg := zerolog.New(buf).Level(zerolog.DebugLevel)
+	lg := zerolog.New(buf).Level(zerolog.TraceLevel)
 	return &Service{naming: naming, logger: lg}
 }
 

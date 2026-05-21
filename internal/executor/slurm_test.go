@@ -65,16 +65,14 @@ func TestSlurmExecutorSubmitBuildsSbatchArgsAndWrapper(t *testing.T) {
 		t.Fatalf("calls = %d", len(runner.calls))
 	}
 	args := runner.calls[0].args
-	for _, want := range []string{"--parsable", "--job-name=vp-task-1-r0", "--partition=batch", "--account=co2m", "--cpus-per-task=2", "--mem=8G", "--time=00:30:00"} {
+	for _, want := range []string{
+		"--parsable", "--job-name=vp-task-1-r0", "--partition=batch", "--account=co2m",
+		"--cpus-per-task=2", "--mem=8G", "--time=00:30:00",
+		"--output=" + filepath.Join(dir, "logs", "run_out.log"),
+		"--error=" + filepath.Join(dir, "logs", "run_err.log"),
+	} {
 		if !contains(args, want) {
 			t.Fatalf("sbatch args missing %q: %v", want, args)
-		}
-	}
-	for _, notWant := range []string{"--output=", "--error="} {
-		for _, arg := range args {
-			if strings.HasPrefix(arg, notWant) {
-				t.Fatalf("sbatch args should not contain %q: %v", notWant, args)
-			}
 		}
 	}
 	wrapperPath := args[len(args)-1]
