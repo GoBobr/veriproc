@@ -2,9 +2,9 @@ package runs_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
-	"fmt"
 	"testing"
 	"time"
 
@@ -15,11 +15,11 @@ import (
 	"github.com/eum/veriproc/internal/tasks"
 )
 
-// TestRecovery_RestartReadsPersistedRun_2_15_M5 — after a "restart" (closing
+// TestRecovery_RestartReadsPersistedRun_2_15 — after a "restart" (closing
 // and reopening the store + service against the same on-disk DB), runs that
 // were prepared but not yet dispatched are still visible and the dispatcher
 // picks them up. Spec §2.15 / §7.8.
-func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
+func TestRecovery_RestartReadsPersistedRun_2_15(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "recover.db")
 	workRoot := t.TempDir()
 
@@ -41,7 +41,7 @@ func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
 		taskN := 0
 		runN := 0
 		clk := func() time.Time { return time.Date(2025, 7, 3, 11, 50, 0, 0, time.UTC) }
-			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("%06x", taskN) })
+		ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("%06x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
 			Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,
@@ -92,9 +92,9 @@ func TestRecovery_RestartReadsPersistedRun_2_15_M5(t *testing.T) {
 	}
 }
 
-// TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5 — a cancellation
+// TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8 — a cancellation
 // request stamped before a crash is observable after restart. Spec §2.15.
-func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5(t *testing.T) {
+func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "recover2.db")
 	workRoot := t.TempDir()
 	build := func() (*store.Store, *tasks.Service, *runs.Service) {
@@ -115,7 +115,7 @@ func TestRecovery_CancelStampPersistedAcrossRestart_2_15_5_8_M5(t *testing.T) {
 		clk := func() time.Time { return time.Date(2025, 7, 3, 12, 0, 0, 0, time.UTC) }
 		taskN := 0
 		runN := 0
-			ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("00%04x", taskN) })
+		ts := tasks.NewService(st, reg, clk, func() string { taskN++; return fmt.Sprintf("00%04x", taskN) })
 		exec := executor.NewStubExecutor(clk)
 		rs := runs.NewService(runs.Config{
 			Store: st, Executors: executor.NewSingleExecutorRegistry(exec), Resolver: reg,

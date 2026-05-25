@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// TestAPI_RunCancel_Dispatched_5_4_10_M5 — POST /runs/{id}/cancel on a
+// TestAPI_RunCancel_Dispatched_5_4_10 — POST /runs/{id}/cancel on a
 // dispatched run returns 200 with cancellation_complete=true (stub executor
 // cancels synchronously). Spec §5.4.10 + §5.8.
-func TestAPI_RunCancel_Dispatched_5_4_10_M5(t *testing.T) {
+func TestAPI_RunCancel_Dispatched_5_4_10(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 2) // prepare + dispatch
@@ -33,9 +33,9 @@ func TestAPI_RunCancel_Dispatched_5_4_10_M5(t *testing.T) {
 	}
 }
 
-// TestAPI_RunCancel_Idempotent_5_4_10_M5 — re-cancelling a terminal run
+// TestAPI_RunCancel_Idempotent_5_4_10 — re-cancelling a terminal run
 // returns 200 with already_terminal=true.
-func TestAPI_RunCancel_Idempotent_5_4_10_M5(t *testing.T) {
+func TestAPI_RunCancel_Idempotent_5_4_10(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 2)
@@ -50,8 +50,8 @@ func TestAPI_RunCancel_Idempotent_5_4_10_M5(t *testing.T) {
 	}
 }
 
-// TestAPI_RunCancel_NotFound_5_4_10_M5 — unknown run id → 404 envelope.
-func TestAPI_RunCancel_NotFound_5_4_10_M5(t *testing.T) {
+// TestAPI_RunCancel_NotFound_5_4_10 — unknown run id → 404 envelope.
+func TestAPI_RunCancel_NotFound_5_4_10(t *testing.T) {
 	a := newRunAPI(t)
 	resp, body := postCancel(t, a.srv, "no-such")
 	if resp.StatusCode != http.StatusNotFound {

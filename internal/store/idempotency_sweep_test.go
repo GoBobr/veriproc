@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// TestIdempotency_TTLSweep_3_3_M5 — Sweep deletes records strictly older than
+// TestIdempotency_TTLSweep_3_3 — Sweep deletes records strictly older than
 // the cutoff and reports the count; non-expired and NULL-expiry records are
 // retained. Spec §3.3 retention.
-func TestIdempotency_TTLSweep_3_3_M5(t *testing.T) {
+func TestIdempotency_TTLSweep_3_3(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "idem.db")
 	s, err := Open("sqlite://" + dbPath)
 	if err != nil {
@@ -57,9 +57,9 @@ func TestIdempotency_TTLSweep_3_3_M5(t *testing.T) {
 	}
 }
 
-// TestIdempotency_SweepDeterministic_M5 — re-running Sweep with no expired
+// TestIdempotency_SweepDeterministic — re-running Sweep with no expired
 // rows returns 0 and is a no-op.
-func TestIdempotency_SweepDeterministic_M5(t *testing.T) {
+func TestIdempotency_SweepDeterministic(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "idem.db")
 	s, err := Open("sqlite://" + dbPath)
 	if err != nil {

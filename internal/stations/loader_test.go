@@ -11,7 +11,7 @@ import (
 	"github.com/eum/veriproc/internal/store"
 )
 
-func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
+func TestLoader_ComputesContentHash(t *testing.T) {
 	def := stations.Definition{
 		StationID:   "STATION-A",
 		StationName: "SCE_2",
@@ -31,7 +31,7 @@ func TestLoader_ComputesContentHash_M7Refined(t *testing.T) {
 	}
 }
 
-func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
+func TestLoader_DeterministicHashForEquivalentConfig(t *testing.T) {
 	left := stations.Definition{
 		StationID: "STATION-A", StationName: "SCE_2",
 		Execution: stations.Execution{Executable: "./scripts/run.sh", Args: []string{"--validate"}},
@@ -53,7 +53,7 @@ func TestLoader_DeterministicHashForEquivalentConfig_M7Refined(t *testing.T) {
 	}
 }
 
-func TestLoader_RejectsMismatchedExplicitHash_M7Refined(t *testing.T) {
+func TestLoader_RejectsMismatchedExplicitHash(t *testing.T) {
 	_, err := stations.SpecFromDefinition(stations.Definition{
 		StationID: "STATION-A", StationName: "SCE_2", ContentHash: "sha256:wrong",
 	})
@@ -62,7 +62,7 @@ func TestLoader_RejectsMismatchedExplicitHash_M7Refined(t *testing.T) {
 	}
 }
 
-func TestLoader_LoadsMultipleStationsFromDirectory_M7Refined(t *testing.T) {
+func TestLoader_LoadsMultipleStationsFromDirectory(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "station-a", `station_id: STATION-A
 station_name: Scenario 2
@@ -94,7 +94,7 @@ outputs:
 	}
 }
 
-func TestLoader_DuplicateStationDetection_M7Refined(t *testing.T) {
+func TestLoader_DuplicateStationDetection(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "one", `station_id: DUP
 station_name: Alpha
@@ -108,7 +108,7 @@ station_name: Beta
 	}
 }
 
-func TestRegistry_RejectsConflictingSeedAfterLoad_M7Refined(t *testing.T) {
+func TestRegistry_RejectsConflictingSeedAfterLoad(t *testing.T) {
 	reg := stations.NewRegistry()
 	ctx := context.Background()
 	first, err := stations.SpecFromSeed("STATION-A", "Scenario 2")

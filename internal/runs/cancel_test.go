@@ -11,9 +11,9 @@ import (
 	"github.com/eum/veriproc/internal/store"
 )
 
-// TestRuns_CancelDispatched_5_8_M5 — happy-path: cancel a dispatched run.
+// TestRuns_CancelDispatched_5_8 — happy-path: cancel a dispatched run.
 // Spec §5.8 + §7.5.7.
-func TestRuns_CancelDispatched_5_8_M5(t *testing.T) {
+func TestRuns_CancelDispatched_5_8(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, err := f.runs.PrepareRun(context.Background(), taskID)
@@ -41,9 +41,9 @@ func TestRuns_CancelDispatched_5_8_M5(t *testing.T) {
 	}
 }
 
-// TestRuns_CancelTerminal_5_8_M5 — re-cancelling a terminal run is a no-op
+// TestRuns_CancelTerminal_5_8 — re-cancelling a terminal run is a no-op
 // returning AlreadyTerminal=true with no error.
-func TestRuns_CancelTerminal_5_8_M5(t *testing.T) {
+func TestRuns_CancelTerminal_5_8(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, err := f.runs.PrepareRun(context.Background(), taskID)
@@ -65,8 +65,8 @@ func TestRuns_CancelTerminal_5_8_M5(t *testing.T) {
 	}
 }
 
-// TestRuns_CancelNotFound_5_8_M5 — unknown run returns ErrRunNotFound.
-func TestRuns_CancelNotFound_5_8_M5(t *testing.T) {
+// TestRuns_CancelNotFound_5_8 — unknown run returns ErrRunNotFound.
+func TestRuns_CancelNotFound_5_8(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.runs.Cancel(context.Background(), "run-does-not-exist")
 	if !errors.Is(err, runs.ErrRunNotFound) {
@@ -74,9 +74,9 @@ func TestRuns_CancelNotFound_5_8_M5(t *testing.T) {
 	}
 }
 
-// TestRuns_CancelBeforeDispatch_5_8_M5 — a ready run can be cancelled before
+// TestRuns_CancelBeforeDispatch_5_8 — a ready run can be cancelled before
 // any job is submitted.
-func TestRuns_CancelBeforeDispatch_5_8_M5(t *testing.T) {
+func TestRuns_CancelBeforeDispatch_5_8(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, err := f.runs.PrepareRun(context.Background(), taskID)
@@ -95,9 +95,9 @@ func TestRuns_CancelBeforeDispatch_5_8_M5(t *testing.T) {
 	}
 }
 
-// TestRuns_CancelUnsupported_5_8_M5 — an executor that reports
+// TestRuns_CancelUnsupported_5_8 — an executor that reports
 // SupportsCancellation()=false yields ErrCancellationUnsupported.
-func TestRuns_CancelUnsupported_5_8_M5(t *testing.T) {
+func TestRuns_CancelUnsupported_5_8(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, err := f.runs.PrepareRun(context.Background(), taskID)

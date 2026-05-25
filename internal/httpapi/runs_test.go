@@ -113,9 +113,9 @@ func getJSONMap(t *testing.T, srv *httptest.Server, path string) (*http.Response
 	return resp, out
 }
 
-// TestAPI_RunGet_5_4_3_5_5_4_M4 — GET /runs/{id} returns RunDetail with all
+// TestAPI_RunGet_5_4_3_5_5_4 — GET /runs/{id} returns RunDetail with all
 // required Spec §5.5.4 fields, simplified public state, plus jobs/artifacts.
-func TestAPI_RunGet_5_4_3_5_5_4_M4(t *testing.T) {
+func TestAPI_RunGet_5_4_3_5_5_4(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -145,8 +145,8 @@ func TestAPI_RunGet_5_4_3_5_5_4_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunGet_NotFound_M4 — unknown run id returns 404 with apierr envelope.
-func TestAPI_RunGet_NotFound_M4(t *testing.T) {
+// TestAPI_RunGet_NotFound — unknown run id returns 404 with apierr envelope.
+func TestAPI_RunGet_NotFound(t *testing.T) {
 	a := newRunAPI(t)
 	resp, body := getJSONMap(t, a.srv, "/api/v1/runs/no-such")
 	if resp.StatusCode != http.StatusNotFound {
@@ -157,9 +157,9 @@ func TestAPI_RunGet_NotFound_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunList_Pagination_5_4_4_5_5_9_M4 — list envelope must include items,
+// TestAPI_RunList_Pagination_5_4_4_5_5_9 — list envelope must include items,
 // page_size, ordering, filters, and next_cursor when more results exist.
-func TestAPI_RunList_Pagination_5_4_4_5_5_9_M4(t *testing.T) {
+func TestAPI_RunList_Pagination_5_4_4_5_5_9(t *testing.T) {
 	a := newRunAPI(t)
 	for i := 0; i < 3; i++ {
 		a.submitOne(t)
@@ -183,8 +183,8 @@ func TestAPI_RunList_Pagination_5_4_4_5_5_9_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunList_InvalidLimit_5_7_M4 — invalid query param → 400 invalid_request.
-func TestAPI_RunList_InvalidLimit_5_7_M4(t *testing.T) {
+// TestAPI_RunList_InvalidLimit_5_7 — invalid query param → 400 invalid_request.
+func TestAPI_RunList_InvalidLimit_5_7(t *testing.T) {
 	a := newRunAPI(t)
 	resp, body := getJSONMap(t, a.srv, "/api/v1/runs?limit=abc")
 	if resp.StatusCode != http.StatusBadRequest {
@@ -196,9 +196,9 @@ func TestAPI_RunList_InvalidLimit_5_7_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunArtifacts_5_4_6_5_5_6_M4 — GET /runs/{id}/artifacts returns the
+// TestAPI_RunArtifacts_5_4_6_5_5_6 — GET /runs/{id}/artifacts returns the
 // artifact representation per §5.5.6 (must include availability + logical_type).
-func TestAPI_RunArtifacts_5_4_6_5_5_6_M4(t *testing.T) {
+func TestAPI_RunArtifacts_5_4_6_5_5_6(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -219,8 +219,8 @@ func TestAPI_RunArtifacts_5_4_6_5_5_6_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunLogs_5_4_7_M4 — /runs/{id}/logs returns log artifacts only.
-func TestAPI_RunLogs_5_4_7_M4(t *testing.T) {
+// TestAPI_RunLogs_5_4_7 — /runs/{id}/logs returns log artifacts only.
+func TestAPI_RunLogs_5_4_7(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -240,8 +240,8 @@ func TestAPI_RunLogs_5_4_7_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_JobGet_5_4_5_5_5_5_M4 — /jobs/{id} returns required JobSummary fields.
-func TestAPI_JobGet_5_4_5_5_5_5_M4(t *testing.T) {
+// TestAPI_JobGet_5_4_5_5_5_5 — /jobs/{id} returns required JobSummary fields.
+func TestAPI_JobGet_5_4_5_5_5_5(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -261,8 +261,8 @@ func TestAPI_JobGet_5_4_5_5_5_5_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_ArtifactContent_M4 — fetching artifact bytes returns the stored file.
-func TestAPI_ArtifactContent_M4(t *testing.T) {
+// TestAPI_ArtifactContent — fetching artifact bytes returns the stored file.
+func TestAPI_ArtifactContent(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -310,10 +310,10 @@ func TestAPI_DirectoryArtifactContentRejected(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4 — after finalization the task
+// TestAPI_TaskShowsLatestAndCanonical_5_5_1 — after finalization the task
 // representation exposes both latest_retry_index/latest_run_ref and
 // canonical_retry_index/canonical_run_ref (Spec §3.6.1, §5.5.1 updated).
-func TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4(t *testing.T) {
+func TestAPI_TaskShowsLatestAndCanonical_5_5_1(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)
@@ -335,11 +335,11 @@ func TestAPI_TaskShowsLatestAndCanonical_5_5_1_M4(t *testing.T) {
 	}
 }
 
-// TestAPI_RunNotComplete_BeforeFinalization_5_6_M4 — verifies the Spec §5.6
+// TestAPI_RunNotComplete_BeforeFinalization_5_6 — verifies the Spec §5.6
 // completion gate at the API surface: a run whose underlying executor has
 // reported success but which has not yet been finalized must NOT be reported
 // as state=complete.
-func TestAPI_RunNotComplete_BeforeFinalization_5_6_M4(t *testing.T) {
+func TestAPI_RunNotComplete_BeforeFinalization_5_6(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	ctx := context.Background()

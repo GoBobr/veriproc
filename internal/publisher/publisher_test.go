@@ -49,9 +49,9 @@ func writeArtifact(t *testing.T, st *store.Store, runID, payload string) *store.
 	return a
 }
 
-// TestPublisher_Happy_M6 — Tick copies the source file to archiveBase and
+// TestPublisher_Happy — Tick copies the source file to archiveBase and
 // transitions the publication to "published".
-func TestPublisher_Happy_M6(t *testing.T) {
+func TestPublisher_Happy(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	a := writeArtifact(t, st, "run-x", "hello world")
@@ -135,9 +135,9 @@ func TestPublisher_DirectoryArtifact(t *testing.T) {
 	}
 }
 
-// TestPublisher_FailureMissingSource_M6 — when the artifact's source file is
+// TestPublisher_FailureMissingSource — when the artifact's source file is
 // missing, the publication is marked failed with a recorded reason.
-func TestPublisher_FailureMissingSource_M6(t *testing.T) {
+func TestPublisher_FailureMissingSource(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	a := &store.ArtifactRecord{

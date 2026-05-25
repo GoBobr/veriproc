@@ -11,9 +11,9 @@ import (
 	"github.com/eum/veriproc/internal/logging"
 )
 
-// TestAPIErr_Envelope_AllCodes_5_7_M5 — every advertised code maps to a
+// TestAPIErr_Envelope_AllCodes_5_7 — every advertised code maps to a
 // well-formed envelope with a sensible default status.
-func TestAPIErr_Envelope_AllCodes_5_7_M5(t *testing.T) {
+func TestAPIErr_Envelope_AllCodes_5_7(t *testing.T) {
 	cases := []struct {
 		code   apierr.Code
 		status int
@@ -40,9 +40,9 @@ func TestAPIErr_Envelope_AllCodes_5_7_M5(t *testing.T) {
 	}
 }
 
-// TestAPIErr_DetailFields_5_7_M5 — Retryable/Dependency/ConflictingResourceID
+// TestAPIErr_DetailFields_5_7 — Retryable/Dependency/ConflictingResourceID
 // are emitted only when populated; CorrelationID is auto-injected.
-func TestAPIErr_DetailFields_5_7_M5(t *testing.T) {
+func TestAPIErr_DetailFields_5_7(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ctx := logging.WithCorrelationID(context.Background(), "corr-xyz")
 	r := httptest.NewRequest(http.MethodGet, "/x", nil).WithContext(ctx)

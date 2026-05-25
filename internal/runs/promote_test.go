@@ -41,10 +41,10 @@ func finalizeTaskRun(t *testing.T, f *fixture, taskID string) string {
 	return r.RunID
 }
 
-// TestRuns_ForcedRerunNonCanonical_3_15_M6 — submitting a forced rerun of an
+// TestRuns_ForcedRerunNonCanonical_3_15 — submitting a forced rerun of an
 // already-canonical task yields a "forced" run that does NOT replace the
 // task's canonical_run_id (Spec §3.15).
-func TestRuns_ForcedRerunNonCanonical_3_15_M6(t *testing.T) {
+func TestRuns_ForcedRerunNonCanonical_3_15(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
@@ -97,14 +97,14 @@ func TestRuns_ForcedRerunNonCanonical_3_15_M6(t *testing.T) {
 	}
 }
 
-// TestRuns_PromoteCanonical_M6 — a non-canonical complete run can be promoted
+// TestRuns_PromoteCanonical — a non-canonical complete run can be promoted
 // by an operator. The previous canonical run becomes "duplicate" and an audit
 // entry is recorded. Spec §3.16, §7.4.5.
 //
 // Both runs are prepared before either is finalized so neither triggers the
 // pre-dispatch duplicate check (the fingerprint has no canonical owner yet).
 // The first run to finalize claims canonical; the second becomes "duplicate".
-func TestRuns_PromoteCanonical_M6(t *testing.T) {
+func TestRuns_PromoteCanonical(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
@@ -172,9 +172,9 @@ func TestRuns_PromoteCanonical_M6(t *testing.T) {
 	}
 }
 
-// TestRuns_PromoteIneligible_M6 — promoting a non-complete run fails with
+// TestRuns_PromoteIneligible — promoting a non-complete run fails with
 // ErrPromoteIneligible.
-func TestRuns_PromoteIneligible_M6(t *testing.T) {
+func TestRuns_PromoteIneligible(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)

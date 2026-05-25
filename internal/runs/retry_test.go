@@ -9,9 +9,9 @@ import (
 	"github.com/eum/veriproc/internal/runs"
 )
 
-// TestRuns_Retry_FailedTask_3_7_M8 — Retry on a failed task creates a new run
+// TestRuns_Retry_FailedTask_3_7 — Retry on a failed task creates a new run
 // with RetryIndex 1 and resets the task state to "accepted". Spec §3.7.
-func TestRuns_Retry_FailedTask_3_7_M8(t *testing.T) {
+func TestRuns_Retry_FailedTask_3_7(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
@@ -81,9 +81,9 @@ func TestRuns_Retry_FailedTask_3_7_M8(t *testing.T) {
 	}
 }
 
-// TestRuns_Retry_NotFound_3_7_M8 — Retry on an unknown task returns
+// TestRuns_Retry_NotFound_3_7 — Retry on an unknown task returns
 // ErrTaskNotFound.
-func TestRuns_Retry_NotFound_3_7_M8(t *testing.T) {
+func TestRuns_Retry_NotFound_3_7(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.runs.Retry(context.Background(), "task-does-not-exist")
 	if !errors.Is(err, runs.ErrTaskNotFound) {
@@ -91,10 +91,10 @@ func TestRuns_Retry_NotFound_3_7_M8(t *testing.T) {
 	}
 }
 
-// TestRuns_Retry_IneligibleAccepted_3_7_M8 — Retry on a task that has just
+// TestRuns_Retry_IneligibleAccepted_3_7 — Retry on a task that has just
 // been submitted (state "accepted") returns ErrRetryIneligible because there
 // is already an active lifecycle in progress.
-func TestRuns_Retry_IneligibleAccepted_3_7_M8(t *testing.T) {
+func TestRuns_Retry_IneligibleAccepted_3_7(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 
@@ -104,9 +104,9 @@ func TestRuns_Retry_IneligibleAccepted_3_7_M8(t *testing.T) {
 	}
 }
 
-// TestRuns_Retry_IneligibleCompleted_3_7_M8 — Retry on a successfully
+// TestRuns_Retry_IneligibleCompleted_3_7 — Retry on a successfully
 // completed task returns ErrRetryIneligible.
-func TestRuns_Retry_IneligibleCompleted_3_7_M8(t *testing.T) {
+func TestRuns_Retry_IneligibleCompleted_3_7(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
@@ -120,10 +120,10 @@ func TestRuns_Retry_IneligibleCompleted_3_7_M8(t *testing.T) {
 	}
 }
 
-// TestRuns_Retry_DispatcherPicksUpRetry_3_7_M8 — after Retry creates a new
+// TestRuns_Retry_DispatcherPicksUpRetry_3_7 — after Retry creates a new
 // run in "ready" state, the dispatcher's dispatchReady pass picks it up and
 // drives it to completion. Spec §3.7.
-func TestRuns_Retry_DispatcherPicksUpRetry_3_7_M8(t *testing.T) {
+func TestRuns_Retry_DispatcherPicksUpRetry_3_7(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)

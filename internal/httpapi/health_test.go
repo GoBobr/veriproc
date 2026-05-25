@@ -25,8 +25,8 @@ func newTestRouter(t *testing.T, agg *health.Aggregator) http.Handler {
 	return NewRouter(Deps{Config: cfg, Health: agg, Logger: logger})
 }
 
-// TestAPI_Health_5_11_M0 — GET /health returns 200 + payload shape (Spec §5.11).
-func TestAPI_Health_5_11_M0(t *testing.T) {
+// TestAPI_Health_5_11 — GET /health returns 200 + payload shape (Spec §5.11).
+func TestAPI_Health_5_11(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 
 	for _, path := range []string{"/health", "/api/v1/health"} {
@@ -55,8 +55,8 @@ func TestAPI_Health_5_11_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_Health_Shutdown_M0 — once shutdown is initiated /health returns 503.
-func TestAPI_Health_Shutdown_M0(t *testing.T) {
+// TestAPI_Health_Shutdown — once shutdown is initiated /health returns 503.
+func TestAPI_Health_Shutdown(t *testing.T) {
 	agg := health.NewAggregator(0)
 	r := newTestRouter(t, agg)
 	agg.BeginShutdown()
@@ -69,8 +69,8 @@ func TestAPI_Health_Shutdown_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_Readiness_5_11_M0 — GET /readiness returns 200 with no deps configured.
-func TestAPI_Readiness_5_11_M0(t *testing.T) {
+// TestAPI_Readiness_5_11 — GET /readiness returns 200 with no deps configured.
+func TestAPI_Readiness_5_11(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/readiness", nil)
 	rr := httptest.NewRecorder()
@@ -97,8 +97,8 @@ func (downChecker) Check(_ context.Context) health.CheckResult {
 	return health.CheckResult{Name: "fake-dep", State: health.DepDown, Message: "boom"}
 }
 
-// TestAPI_Readiness_Unready_M0 — failing dependency surfaces 503 + message.
-func TestAPI_Readiness_Unready_M0(t *testing.T) {
+// TestAPI_Readiness_Unready — failing dependency surfaces 503 + message.
+func TestAPI_Readiness_Unready(t *testing.T) {
 	agg := health.NewAggregator(0)
 	agg.Register(downChecker{})
 	r := newTestRouter(t, agg)
@@ -117,8 +117,8 @@ func TestAPI_Readiness_Unready_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_CorrelationID_Echo_M0 — supplied X-Correlation-ID is echoed.
-func TestAPI_CorrelationID_Echo_M0(t *testing.T) {
+// TestAPI_CorrelationID_Echo — supplied X-Correlation-ID is echoed.
+func TestAPI_CorrelationID_Echo(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set(logging.CorrelationHeader, "abc-123")
@@ -129,8 +129,8 @@ func TestAPI_CorrelationID_Echo_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_CorrelationID_Generated_M0 — missing correlation header is generated.
-func TestAPI_CorrelationID_Generated_M0(t *testing.T) {
+// TestAPI_CorrelationID_Generated — missing correlation header is generated.
+func TestAPI_CorrelationID_Generated(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rr := httptest.NewRecorder()
@@ -140,8 +140,8 @@ func TestAPI_CorrelationID_Generated_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_MethodNotAllowed_M0 — wrong method on /health returns 405 with envelope.
-func TestAPI_MethodNotAllowed_M0(t *testing.T) {
+// TestAPI_MethodNotAllowed — wrong method on /health returns 405 with envelope.
+func TestAPI_MethodNotAllowed(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
 	rr := httptest.NewRecorder()
@@ -158,8 +158,8 @@ func TestAPI_MethodNotAllowed_M0(t *testing.T) {
 	}
 }
 
-// TestAPI_NotFound_M0 — unknown route returns 404 with envelope (Spec §5.5.8).
-func TestAPI_NotFound_M0(t *testing.T) {
+// TestAPI_NotFound — unknown route returns 404 with envelope (Spec §5.5.8).
+func TestAPI_NotFound(t *testing.T) {
 	r := newTestRouter(t, health.NewAggregator(0))
 	req := httptest.NewRequest(http.MethodGet, "/does-not-exist", nil)
 	req.Header.Set(logging.CorrelationHeader, "corr-xyz")

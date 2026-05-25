@@ -382,9 +382,9 @@ func waitForTaskCount(t *testing.T, ctx context.Context, st *store.Store, disp *
 	t.Fatalf("task count = %d, want at least %d", len(page.Items), want)
 }
 
-// TestRuns_PrepareAndFreeze_3_8_3_10_M3 — PrepareRun creates a run, persists a
+// TestRuns_PrepareAndFreeze_3_8_3_10 — PrepareRun creates a run, persists a
 // frozen manifest, computes a fingerprint, and leaves the run in state=ready.
-func TestRuns_PrepareAndFreeze_3_8_3_10_M3(t *testing.T) {
+func TestRuns_PrepareAndFreeze_3_8_3_10(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, err := f.runs.PrepareRun(context.Background(), taskID)
@@ -409,9 +409,9 @@ func TestRuns_PrepareAndFreeze_3_8_3_10_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_RetryCreatesNewIdentity_3_7_M3 — preparing a second run for the
+// TestRuns_RetryCreatesNewIdentity_3_7 — preparing a second run for the
 // same task yields a distinct run_id and incremented retry_index.
-func TestRuns_RetryCreatesNewIdentity_3_7_M3(t *testing.T) {
+func TestRuns_RetryCreatesNewIdentity_3_7(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r1, err := f.runs.PrepareRun(context.Background(), taskID)
@@ -430,9 +430,9 @@ func TestRuns_RetryCreatesNewIdentity_3_7_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_DispatchOnlyFromReady_5_6_M3 — Dispatch on a non-ready run returns
+// TestRuns_DispatchOnlyFromReady_5_6 — Dispatch on a non-ready run returns
 // ErrInvalidStateTransition; idempotent re-dispatch from dispatched is a no-op.
-func TestRuns_DispatchOnlyFromReady_5_6_M3(t *testing.T) {
+func TestRuns_DispatchOnlyFromReady_5_6(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	r, _ := f.runs.PrepareRun(context.Background(), taskID)
@@ -450,10 +450,10 @@ func TestRuns_DispatchOnlyFromReady_5_6_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_FullLifecycle_5_6_7_5_M3 — end-to-end via dispatcher ticks: a
+// TestRuns_FullLifecycle_5_6_7_5 — end-to-end via dispatcher ticks: a
 // submitted task progresses through prepare → dispatch → poll → finalize, and
 // the run ends complete with canonicality=canonical and a log artifact.
-func TestRuns_FullLifecycle_5_6_7_5_M3(t *testing.T) {
+func TestRuns_FullLifecycle_5_6_7_5(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	ctx := context.Background()
@@ -485,9 +485,9 @@ func TestRuns_FullLifecycle_5_6_7_5_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_FailedJob_3_9_M3 — when the executor returns FAILED, the run ends
+// TestRuns_FailedJob_3_9 — when the executor returns FAILED, the run ends
 // in state=failed with a recorded reason and the task moves to state=failed.
-func TestRuns_FailedJob_3_9_M3(t *testing.T) {
+func TestRuns_FailedJob_3_9(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	ctx := context.Background()
@@ -514,9 +514,9 @@ func TestRuns_FailedJob_3_9_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_FinalizeRequiresFinalizingState_5_6_M3 — Finalize on a non-finalizing
+// TestRuns_FinalizeRequiresFinalizingState_5_6 — Finalize on a non-finalizing
 // run is rejected as ErrInvalidStateTransition (Spec §5.6 completion gate).
-func TestRuns_FinalizeRequiresFinalizingState_5_6_M3(t *testing.T) {
+func TestRuns_FinalizeRequiresFinalizingState_5_6(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)
 	ctx := context.Background()
@@ -526,10 +526,10 @@ func TestRuns_FinalizeRequiresFinalizingState_5_6_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_DuplicateFingerprintMarkedDuplicate_3_10_M3 — when a second run
+// TestRuns_DuplicateFingerprintMarkedDuplicate_3_10 — when a second run
 // completes for the same fingerprint, it is marked canonicality=duplicate
 // and the task's canonical_run_id stays pinned to the first.
-func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10_M3(t *testing.T) {
+func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
@@ -574,11 +574,11 @@ func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10_M3(t *testing.T) {
 	}
 }
 
-// TestRuns_DuplicateFailsBeforeDispatch_3_15_M4 — when a second task is
+// TestRuns_DuplicateFailsBeforeDispatch_3_15 — when a second task is
 // submitted for a fingerprint already canonically owned by an earlier
 // completed run, the dispatcher fails the task at preparation time without
 // creating a run record (Spec §3.15).
-func TestRuns_DuplicateFailsBeforeDispatch_3_15_M4(t *testing.T) {
+func TestRuns_DuplicateFailsBeforeDispatch_3_15(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 

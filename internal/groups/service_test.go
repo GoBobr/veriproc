@@ -51,10 +51,10 @@ func mkRun(t *testing.T, st *store.Store, runID, state, canon string) {
 	}
 }
 
-// TestGroups_RegisterAndAggregate_M7 — RegisterRun creates the group on first
+// TestGroups_RegisterAndAggregate — RegisterRun creates the group on first
 // reference, AddMember is idempotent, and Aggregate produces the expected
 // derived state from member runs.
-func TestGroups_RegisterAndAggregate_M7(t *testing.T) {
+func TestGroups_RegisterAndAggregate(t *testing.T) {
 	st := newStore(t)
 	svc := groups.NewService(st, nil)
 	ctx := context.Background()
@@ -88,8 +88,8 @@ func TestGroups_RegisterAndAggregate_M7(t *testing.T) {
 	}
 }
 
-// TestGroups_FailedDerivation_M7 — all-failed members → group state "failed".
-func TestGroups_FailedDerivation_M7(t *testing.T) {
+// TestGroups_FailedDerivation — all-failed members → group state "failed".
+func TestGroups_FailedDerivation(t *testing.T) {
 	st := newStore(t)
 	svc := groups.NewService(st, nil)
 	ctx := context.Background()
@@ -107,9 +107,9 @@ func TestGroups_FailedDerivation_M7(t *testing.T) {
 	}
 }
 
-// TestGroups_OpenWithActiveMembers_M7 — Aggregate on an open group with at
+// TestGroups_OpenWithActiveMembers — Aggregate on an open group with at
 // least one non-terminal member keeps the state "open".
-func TestGroups_OpenWithActiveMembers_M7(t *testing.T) {
+func TestGroups_OpenWithActiveMembers(t *testing.T) {
 	st := newStore(t)
 	svc := groups.NewService(st, nil)
 	ctx := context.Background()

@@ -87,9 +87,9 @@ func readAll(t *testing.T, resp *http.Response) []byte {
 	return buf.Bytes()
 }
 
-// TestAPI_TaskSubmit_Created_5_3_1_M2 — POST /tasks returns 201 with the
+// TestAPI_TaskSubmit_Created_5_3_1 — POST /tasks returns 201 with the
 // canonical envelope and links.
-func TestAPI_TaskSubmit_Created_5_3_1_M2(t *testing.T) {
+func TestAPI_TaskSubmit_Created_5_3_1(t *testing.T) {
 	srv, _ := newAPI(t)
 	resp, body := postJSON(t, srv, "/api/v1/tasks", validBody(), nil)
 	if resp.StatusCode != http.StatusCreated {
@@ -110,9 +110,9 @@ func TestAPI_TaskSubmit_Created_5_3_1_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskSubmit_IdempotencyHeaderReplay_5_3_5_M2 — header-driven
+// TestAPI_TaskSubmit_IdempotencyHeaderReplay_5_3_5 — header-driven
 // idempotency replay returns 200 with the same task_id.
-func TestAPI_TaskSubmit_IdempotencyHeaderReplay_5_3_5_M2(t *testing.T) {
+func TestAPI_TaskSubmit_IdempotencyHeaderReplay_5_3_5(t *testing.T) {
 	srv, _ := newAPI(t)
 	hdr := map[string]string{"Idempotency-Key": "client-abc"}
 	r1, b1 := postJSON(t, srv, "/api/v1/tasks", validBody(), hdr)
@@ -130,9 +130,9 @@ func TestAPI_TaskSubmit_IdempotencyHeaderReplay_5_3_5_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskSubmit_IdempotencyConflict_5_3_5_M2 — same key, different body
+// TestAPI_TaskSubmit_IdempotencyConflict_5_3_5 — same key, different body
 // returns 409 with idempotency_conflict envelope code.
-func TestAPI_TaskSubmit_IdempotencyConflict_5_3_5_M2(t *testing.T) {
+func TestAPI_TaskSubmit_IdempotencyConflict_5_3_5(t *testing.T) {
 	srv, _ := newAPI(t)
 	hdr := map[string]string{"Idempotency-Key": "client-xyz"}
 	postJSON(t, srv, "/api/v1/tasks", validBody(), hdr)
@@ -147,9 +147,9 @@ func TestAPI_TaskSubmit_IdempotencyConflict_5_3_5_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskSubmit_UnknownStation_5_3_2_M2 — unresolvable station → 400 with
+// TestAPI_TaskSubmit_UnknownStation_5_3_2 — unresolvable station → 400 with
 // unknown_station envelope code.
-func TestAPI_TaskSubmit_UnknownStation_5_3_2_M2(t *testing.T) {
+func TestAPI_TaskSubmit_UnknownStation_5_3_2(t *testing.T) {
 	srv, _ := newAPI(t)
 	b := validBody()
 	b["destination"] = map[string]any{"station_id": "GHOST"}
@@ -162,8 +162,8 @@ func TestAPI_TaskSubmit_UnknownStation_5_3_2_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskSubmit_InvalidWindow_5_3_3_M2 — end < start → 400 invalid_request.
-func TestAPI_TaskSubmit_InvalidWindow_5_3_3_M2(t *testing.T) {
+// TestAPI_TaskSubmit_InvalidWindow_5_3_3 — end < start → 400 invalid_request.
+func TestAPI_TaskSubmit_InvalidWindow_5_3_3(t *testing.T) {
 	srv, _ := newAPI(t)
 	b := validBody()
 	b["window"] = map[string]any{
@@ -179,9 +179,9 @@ func TestAPI_TaskSubmit_InvalidWindow_5_3_3_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskSubmit_MalformedJSON_5_5_8_M2 — invalid body returns the
+// TestAPI_TaskSubmit_MalformedJSON_5_5_8 — invalid body returns the
 // envelope with a correlation id.
-func TestAPI_TaskSubmit_MalformedJSON_5_5_8_M2(t *testing.T) {
+func TestAPI_TaskSubmit_MalformedJSON_5_5_8(t *testing.T) {
 	srv, _ := newAPI(t)
 	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/tasks", strings.NewReader("{not json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -198,8 +198,8 @@ func TestAPI_TaskSubmit_MalformedJSON_5_5_8_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskGet_NotFound_5_4_1_M2 — unknown task returns 404 envelope.
-func TestAPI_TaskGet_NotFound_5_4_1_M2(t *testing.T) {
+// TestAPI_TaskGet_NotFound_5_4_1 — unknown task returns 404 envelope.
+func TestAPI_TaskGet_NotFound_5_4_1(t *testing.T) {
 	srv, _ := newAPI(t)
 	resp, raw := getJSON(t, srv, "/api/v1/tasks/nonexistent")
 	if resp.StatusCode != http.StatusNotFound {
@@ -210,8 +210,8 @@ func TestAPI_TaskGet_NotFound_5_4_1_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskGetRoundTrip_5_4_1_M2 — POST then GET returns matching record.
-func TestAPI_TaskGetRoundTrip_5_4_1_M2(t *testing.T) {
+// TestAPI_TaskGetRoundTrip_5_4_1 — POST then GET returns matching record.
+func TestAPI_TaskGetRoundTrip_5_4_1(t *testing.T) {
 	srv, _ := newAPI(t)
 	_, body := postJSON(t, srv, "/api/v1/tasks", validBody(), nil)
 	id := taskIDFrom(t, body)
@@ -237,9 +237,9 @@ func TestAPI_TaskGetRoundTrip_5_4_1_M2(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskList_Pagination_5_4_2_M2 — returns next_cursor and is consistent
+// TestAPI_TaskList_Pagination_5_4_2 — returns next_cursor and is consistent
 // across pages.
-func TestAPI_TaskList_Pagination_5_4_2_M2(t *testing.T) {
+func TestAPI_TaskList_Pagination_5_4_2(t *testing.T) {
 	srv, _ := newAPI(t)
 	for i := 0; i < 3; i++ {
 		body := validBody()

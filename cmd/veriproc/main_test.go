@@ -67,14 +67,14 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("/api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.URL.Query().Get("task_id")
 		sampleRun := map[string]any{
-			"run_id":      "run-internal-001",
-			"run_ref":     "task-1/r0",
-			"task_id":     "task-1",
-			"retry_index": 0,
-			"state":       "complete",
+			"run_id":       "run-internal-001",
+			"run_ref":      "task-1/r0",
+			"task_id":      "task-1",
+			"retry_index":  0,
+			"state":        "complete",
 			"canonicality": "canonical",
 			"working_root": "/data/work/STATION-A/task-1/r0",
-			"created_at":  "2025-07-03T11:00:00Z",
+			"created_at":   "2025-07-03T11:00:00Z",
 		}
 		items := []any{}
 		if taskID == "" || taskID == "task-1" {
@@ -165,8 +165,8 @@ func runCLI(t *testing.T, baseURL string, args ...string) (int, string, string) 
 	return code, stdout.String(), stderr.String()
 }
 
-// TestCLI_Submit_M7 — submit succeeds, prints task JSON, exits 0.
-func TestCLI_Submit_M7(t *testing.T) {
+// TestCLI_Submit — submit succeeds, prints task JSON, exits 0.
+func TestCLI_Submit(t *testing.T) {
 	api := newFakeAPI(t)
 	code, out, errs := runCLI(t, api.server.URL,
 		"submit", "--station", "S1",
@@ -181,8 +181,8 @@ func TestCLI_Submit_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_TaskGet_NotFound_ExitCode_M7 — Spec §6.10: 404 → exit 4.
-func TestCLI_TaskGet_NotFound_ExitCode_M7(t *testing.T) {
+// TestCLI_TaskGet_NotFound_ExitCode — Spec §6.10: 404 → exit 4.
+func TestCLI_TaskGet_NotFound_ExitCode(t *testing.T) {
 	api := newFakeAPI(t)
 	code, _, _ := runCLI(t, api.server.URL, "task", "get", "missing")
 	if code != ExitNotFound {
@@ -190,8 +190,8 @@ func TestCLI_TaskGet_NotFound_ExitCode_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_Cancel_RequiresYes_M7 — operator safety: refuse without --yes.
-func TestCLI_Cancel_RequiresYes_M7(t *testing.T) {
+// TestCLI_Cancel_RequiresYes — operator safety: refuse without --yes.
+func TestCLI_Cancel_RequiresYes(t *testing.T) {
 	api := newFakeAPI(t)
 	code, _, _ := runCLI(t, api.server.URL, "cancel", "run-x")
 	if code != ExitUsage {
@@ -199,9 +199,9 @@ func TestCLI_Cancel_RequiresYes_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_Cancel_ReconciliationInProgress_ExitCode_M7 — 409
+// TestCLI_Cancel_ReconciliationInProgress_ExitCode — 409
 // reconciliation_in_progress → exit 5 (conflict). Spec §6.10.
-func TestCLI_Cancel_ReconciliationInProgress_ExitCode_M7(t *testing.T) {
+func TestCLI_Cancel_ReconciliationInProgress_ExitCode(t *testing.T) {
 	api := newFakeAPI(t)
 	code, _, errs := runCLI(t, api.server.URL, "cancel", "--yes", "run-conflict")
 	if code != ExitConflict {
@@ -212,8 +212,8 @@ func TestCLI_Cancel_ReconciliationInProgress_ExitCode_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_GroupList_M7 — group list returns JSON envelope.
-func TestCLI_GroupList_M7(t *testing.T) {
+// TestCLI_GroupList — group list returns JSON envelope.
+func TestCLI_GroupList(t *testing.T) {
 	api := newFakeAPI(t)
 	code, out, _ := runCLI(t, api.server.URL, "group", "list")
 	if code != ExitOK {
@@ -224,8 +224,8 @@ func TestCLI_GroupList_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_GroupClose_M7 — group close transitions to complete.
-func TestCLI_GroupClose_M7(t *testing.T) {
+// TestCLI_GroupClose — group close transitions to complete.
+func TestCLI_GroupClose(t *testing.T) {
 	api := newFakeAPI(t)
 	code, out, _ := runCLI(t, api.server.URL, "group", "close", "g1")
 	if code != ExitOK {
@@ -236,8 +236,8 @@ func TestCLI_GroupClose_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_Version_NoNetwork_M7 — local version command never hits the API.
-func TestCLI_Version_NoNetwork_M7(t *testing.T) {
+// TestCLI_Version_NoNetwork — local version command never hits the API.
+func TestCLI_Version_NoNetwork(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--api-url", "http://invalid.invalid:9", "version"}, &stdout, &stderr)
 	if code != ExitOK {
@@ -248,8 +248,8 @@ func TestCLI_Version_NoNetwork_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_UnknownCommand_M7 — usage error → exit 2.
-func TestCLI_UnknownCommand_M7(t *testing.T) {
+// TestCLI_UnknownCommand — usage error → exit 2.
+func TestCLI_UnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"frobnicate"}, &stdout, &stderr)
 	if code != ExitUsage {
@@ -257,8 +257,8 @@ func TestCLI_UnknownCommand_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_OutputFormatYAML_M7 — --output yaml emits key/value lines.
-func TestCLI_OutputFormatYAML_M7(t *testing.T) {
+// TestCLI_OutputFormatYAML — --output yaml emits key/value lines.
+func TestCLI_OutputFormatYAML(t *testing.T) {
 	api := newFakeAPI(t)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
@@ -273,9 +273,9 @@ func TestCLI_OutputFormatYAML_M7(t *testing.T) {
 	}
 }
 
-// TestCLI_RunList_ShowsRunRef_M10 — run list output must include run_ref and
+// TestCLI_RunList_ShowsRunRef — run list output must include run_ref and
 // must not surface raw run_id as the primary locator in table output.
-func TestCLI_RunList_ShowsRunRef_M10(t *testing.T) {
+func TestCLI_RunList_ShowsRunRef(t *testing.T) {
 	api := newFakeAPI(t)
 	// table output
 	var stdout, stderr bytes.Buffer
@@ -300,8 +300,8 @@ func TestCLI_RunList_ShowsRunRef_M10(t *testing.T) {
 	}
 }
 
-// TestCLI_RunList_JSON_ShowsRunRef_M10 — run list JSON output includes run_ref.
-func TestCLI_RunList_JSON_ShowsRunRef_M10(t *testing.T) {
+// TestCLI_RunList_JSON_ShowsRunRef — run list JSON output includes run_ref.
+func TestCLI_RunList_JSON_ShowsRunRef(t *testing.T) {
 	api := newFakeAPI(t)
 	code, out, errs := runCLI(t, api.server.URL, "run", "list")
 	if code != ExitOK {
@@ -315,8 +315,8 @@ func TestCLI_RunList_JSON_ShowsRunRef_M10(t *testing.T) {
 	}
 }
 
-// TestCLI_RunGet_CompositeIdentity_M10 — run get TASK_ID/rN resolves via list.
-func TestCLI_RunGet_CompositeIdentity_M10(t *testing.T) {
+// TestCLI_RunGet_CompositeIdentity — run get TASK_ID/rN resolves via list.
+func TestCLI_RunGet_CompositeIdentity(t *testing.T) {
 	api := newFakeAPI(t)
 	// Pre-populate the runs map so direct GET by run_id works after resolution.
 	api.runs["run-internal-001"] = map[string]any{
@@ -347,8 +347,8 @@ func TestCLI_RunGet_CompositeIdentity_M10(t *testing.T) {
 	}
 }
 
-// TestCLI_RunGet_MissingArg_M10 — run get with no arg returns usage error.
-func TestCLI_RunGet_MissingArg_M10(t *testing.T) {
+// TestCLI_RunGet_MissingArg — run get with no arg returns usage error.
+func TestCLI_RunGet_MissingArg(t *testing.T) {
 	api := newFakeAPI(t)
 	code, _, _ := runCLI(t, api.server.URL, "run", "get")
 	if code != ExitUsage {
@@ -356,8 +356,8 @@ func TestCLI_RunGet_MissingArg_M10(t *testing.T) {
 	}
 }
 
-// TestCLI_Cancel_CompositeIdentity_M10 — cancel accepts TASK_ID/rN locator.
-func TestCLI_Cancel_CompositeIdentity_M10(t *testing.T) {
+// TestCLI_Cancel_CompositeIdentity — cancel accepts TASK_ID/rN locator.
+func TestCLI_Cancel_CompositeIdentity(t *testing.T) {
 	api := newFakeAPI(t)
 	api.runs["run-internal-001"] = map[string]any{
 		"run_id":       "run-internal-001",

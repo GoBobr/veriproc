@@ -16,16 +16,16 @@ func (s stubChecker) Check(_ context.Context) CheckResult {
 	return CheckResult{Name: s.name, State: s.state, Message: s.msg}
 }
 
-// TestHealth_Liveness_Default_M0 — fresh aggregator reports ok liveness.
-func TestHealth_Liveness_Default_M0(t *testing.T) {
+// TestHealth_Liveness_Default — fresh aggregator reports ok liveness.
+func TestHealth_Liveness_Default(t *testing.T) {
 	a := NewAggregator(0)
 	if got := a.Liveness().Status; got != StateOK {
 		t.Errorf("liveness = %q, want %q", got, StateOK)
 	}
 }
 
-// TestHealth_Liveness_Shutdown_M0 — after BeginShutdown liveness flips to down.
-func TestHealth_Liveness_Shutdown_M0(t *testing.T) {
+// TestHealth_Liveness_Shutdown — after BeginShutdown liveness flips to down.
+func TestHealth_Liveness_Shutdown(t *testing.T) {
 	a := NewAggregator(0)
 	a.BeginShutdown()
 	if got := a.Liveness().Status; got != StateDown {
@@ -33,8 +33,8 @@ func TestHealth_Liveness_Shutdown_M0(t *testing.T) {
 	}
 }
 
-// TestHealth_Readiness_NoDeps_M0 — empty deps means ready.
-func TestHealth_Readiness_NoDeps_M0(t *testing.T) {
+// TestHealth_Readiness_NoDeps — empty deps means ready.
+func TestHealth_Readiness_NoDeps(t *testing.T) {
 	a := NewAggregator(0)
 	r := a.Readiness(context.Background())
 	if r.ReadinessState != StateReady {
@@ -45,8 +45,8 @@ func TestHealth_Readiness_NoDeps_M0(t *testing.T) {
 	}
 }
 
-// TestHealth_Readiness_AllUp_M0 — every checker up → ready.
-func TestHealth_Readiness_AllUp_M0(t *testing.T) {
+// TestHealth_Readiness_AllUp — every checker up → ready.
+func TestHealth_Readiness_AllUp(t *testing.T) {
 	a := NewAggregator(0)
 	a.Register(stubChecker{name: "db", state: DepUp})
 	a.Register(stubChecker{name: "scheduler", state: DepUp})
@@ -59,8 +59,8 @@ func TestHealth_Readiness_AllUp_M0(t *testing.T) {
 	}
 }
 
-// TestHealth_Readiness_OneDown_M0 — any down dep yields unready.
-func TestHealth_Readiness_OneDown_M0(t *testing.T) {
+// TestHealth_Readiness_OneDown — any down dep yields unready.
+func TestHealth_Readiness_OneDown(t *testing.T) {
 	a := NewAggregator(0)
 	a.Register(stubChecker{name: "db", state: DepUp})
 	a.Register(stubChecker{name: "scheduler", state: DepDown, msg: "connection refused"})
@@ -73,9 +73,9 @@ func TestHealth_Readiness_OneDown_M0(t *testing.T) {
 	}
 }
 
-// TestHealth_Readiness_ShutdownForcesUnready_M0 — readiness is unready while
+// TestHealth_Readiness_ShutdownForcesUnready — readiness is unready while
 // shutting down, regardless of dependency state.
-func TestHealth_Readiness_ShutdownForcesUnready_M0(t *testing.T) {
+func TestHealth_Readiness_ShutdownForcesUnready(t *testing.T) {
 	a := NewAggregator(0)
 	a.Register(stubChecker{name: "db", state: DepUp})
 	a.BeginShutdown()

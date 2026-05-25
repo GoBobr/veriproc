@@ -18,9 +18,9 @@ import (
 	"time"
 )
 
-// TestSmoke_StartShutdown_M0 — build veriprocd, start it on an ephemeral port,
+// TestSmoke_StartShutdown — build veriprocd, start it on an ephemeral port,
 // hit /health, then send SIGTERM and assert clean exit.
-func TestSmoke_StartShutdown_M0(t *testing.T) {
+func TestSmoke_StartShutdown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping smoke test in short mode")
 	}

@@ -51,10 +51,10 @@ func newHarness(t *testing.T, clock func() time.Time) *harness {
 	return &harness{store: st, runs: rsvc, now: clock}
 }
 
-// TestReconciler_StampsAndClearsMarker_M7 — a stale dispatched run gets the
+// TestReconciler_StampsAndClearsMarker — a stale dispatched run gets the
 // reconciliation_started_at marker stamped during reconcileOne and cleared
 // by the time Tick returns. Spec §3.13 / §7.8.
-func TestReconciler_StampsAndClearsMarker_M7(t *testing.T) {
+func TestReconciler_StampsAndClearsMarker(t *testing.T) {
 	now := time.Date(2025, 7, 3, 12, 0, 0, 0, time.UTC)
 	h := newHarness(t, func() time.Time { return now })
 
@@ -81,7 +81,7 @@ func TestReconciler_StampsAndClearsMarker_M7(t *testing.T) {
 	now = now.Add(2 * time.Minute)
 	rec := reconciler.New(reconciler.Config{
 		Store: h.store, Runs: h.runs,
-		Clock: func() time.Time { return now },
+		Clock:          func() time.Time { return now },
 		StaleThreshold: 30 * time.Second,
 		Interval:       time.Hour,
 		Logger:         zerolog.Nop(),
@@ -101,9 +101,9 @@ func TestReconciler_StampsAndClearsMarker_M7(t *testing.T) {
 	}
 }
 
-// TestReconciler_NotStaleSkipped_M7 — runs whose last_observed_at is fresh
+// TestReconciler_NotStaleSkipped — runs whose last_observed_at is fresh
 // must not be touched by the reconciler.
-func TestReconciler_NotStaleSkipped_M7(t *testing.T) {
+func TestReconciler_NotStaleSkipped(t *testing.T) {
 	now := time.Date(2025, 7, 3, 12, 0, 0, 0, time.UTC)
 	h := newHarness(t, func() time.Time { return now })
 
@@ -127,7 +127,7 @@ func TestReconciler_NotStaleSkipped_M7(t *testing.T) {
 
 	rec := reconciler.New(reconciler.Config{
 		Store: h.store, Runs: h.runs,
-		Clock: func() time.Time { return now },
+		Clock:          func() time.Time { return now },
 		StaleThreshold: 5 * time.Minute,
 		Logger:         zerolog.Nop(),
 	})

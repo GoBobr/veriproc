@@ -39,8 +39,8 @@ func mkTask(taskID string) *TaskRecord {
 	}
 }
 
-// TestTasks_InsertAndGet_4_3_1_M1 — round-trip a task with all fields preserved.
-func TestTasks_InsertAndGet_4_3_1_M1(t *testing.T) {
+// TestTasks_InsertAndGet_4_3_1 — round-trip a task with all fields preserved.
+func TestTasks_InsertAndGet_4_3_1(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -67,16 +67,16 @@ func TestTasks_InsertAndGet_4_3_1_M1(t *testing.T) {
 	}
 }
 
-// TestTasks_GetMissing_M1 — Get returns ErrNotFound for unknown id.
-func TestTasks_GetMissing_M1(t *testing.T) {
+// TestTasks_GetMissing — Get returns ErrNotFound for unknown id.
+func TestTasks_GetMissing(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.Tasks().Get(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
-// TestTasks_DuplicateID_4_3_1_M1 — re-inserting same task_id is ErrConflict.
-func TestTasks_DuplicateID_4_3_1_M1(t *testing.T) {
+// TestTasks_DuplicateID_4_3_1 — re-inserting same task_id is ErrConflict.
+func TestTasks_DuplicateID_4_3_1(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	if err := s.Tasks().Insert(ctx, mkTask("t-dup")); err != nil {
@@ -88,9 +88,9 @@ func TestTasks_DuplicateID_4_3_1_M1(t *testing.T) {
 	}
 }
 
-// TestRuns_InsertWithFK_4_3_7_M1 — run insert succeeds when task and station
+// TestRuns_InsertWithFK_4_3_7 — run insert succeeds when task and station
 // revision exist.
-func TestRuns_InsertWithFK_4_3_7_M1(t *testing.T) {
+func TestRuns_InsertWithFK_4_3_7(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	revID := mkStation(t, s, "SCENE-L2")
@@ -118,8 +118,8 @@ func TestRuns_InsertWithFK_4_3_7_M1(t *testing.T) {
 	}
 }
 
-// TestRuns_RejectMissingFK_4_3_7_M1 — inserting a run without a task is conflict.
-func TestRuns_RejectMissingFK_4_3_7_M1(t *testing.T) {
+// TestRuns_RejectMissingFK_4_3_7 — inserting a run without a task is conflict.
+func TestRuns_RejectMissingFK_4_3_7(t *testing.T) {
 	s := newTestStore(t)
 	revID := mkStation(t, s, "SCENE-L2")
 	err := s.Runs().Insert(context.Background(), &RunRecord{
@@ -131,9 +131,9 @@ func TestRuns_RejectMissingFK_4_3_7_M1(t *testing.T) {
 	}
 }
 
-// TestRuns_UniqueRetryIndex_7_4_1_M1 — two runs for the same task must have
+// TestRuns_UniqueRetryIndex_7_4_1 — two runs for the same task must have
 // distinct retry_index values (Spec §7.4.1: retries create new identity).
-func TestRuns_UniqueRetryIndex_7_4_1_M1(t *testing.T) {
+func TestRuns_UniqueRetryIndex_7_4_1(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	revID := mkStation(t, s, "SCENE-L2")
@@ -156,8 +156,8 @@ func TestRuns_UniqueRetryIndex_7_4_1_M1(t *testing.T) {
 	}
 }
 
-// TestRuns_UniqueWorkingRoot_7_4_1_M1 — working_root must be globally unique.
-func TestRuns_UniqueWorkingRoot_7_4_1_M1(t *testing.T) {
+// TestRuns_UniqueWorkingRoot_7_4_1 — working_root must be globally unique.
+func TestRuns_UniqueWorkingRoot_7_4_1(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	revID := mkStation(t, s, "SCENE-L2")
@@ -186,8 +186,8 @@ func TestRuns_UniqueWorkingRoot_7_4_1_M1(t *testing.T) {
 	}
 }
 
-// TestStations_DuplicateContentHash_M1 — (station_id, content_hash) is unique.
-func TestStations_DuplicateContentHash_M1(t *testing.T) {
+// TestStations_DuplicateContentHash — (station_id, content_hash) is unique.
+func TestStations_DuplicateContentHash(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	mkStation(t, s, "S1")
@@ -200,8 +200,8 @@ func TestStations_DuplicateContentHash_M1(t *testing.T) {
 	}
 }
 
-// TestIdempotency_InsertAndGet_M1 — basic round-trip with (scope, key) uniqueness.
-func TestIdempotency_InsertAndGet_M1(t *testing.T) {
+// TestIdempotency_InsertAndGet — basic round-trip with (scope, key) uniqueness.
+func TestIdempotency_InsertAndGet(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	rec := &IdempotencyRecord{
@@ -229,8 +229,8 @@ func TestIdempotency_InsertAndGet_M1(t *testing.T) {
 	}
 }
 
-// TestStore_InTx_RollbackOnError_M1 — failed transaction rolls back.
-func TestStore_InTx_RollbackOnError_M1(t *testing.T) {
+// TestStore_InTx_RollbackOnError — failed transaction rolls back.
+func TestStore_InTx_RollbackOnError(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	wantErr := errors.New("intentional")

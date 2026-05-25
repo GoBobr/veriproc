@@ -80,9 +80,9 @@ func validInput() tasks.SubmitInput {
 	}
 }
 
-// TestService_Submit_HappyPath_5_3_1_M2 — valid request → created task with
+// TestService_Submit_HappyPath_5_3_1 — valid request → created task with
 // state=accepted, submission_origin=client, force defaulted to false.
-func TestService_Submit_HappyPath_5_3_1_M2(t *testing.T) {
+func TestService_Submit_HappyPath_5_3_1(t *testing.T) {
 	svc, _ := newSvc(t)
 	res, err := svc.Submit(context.Background(), validInput())
 	if err != nil {
@@ -105,8 +105,8 @@ func TestService_Submit_HappyPath_5_3_1_M2(t *testing.T) {
 	}
 }
 
-// TestService_Submit_InvalidWindow_5_3_3_M2 — window end < start → invalid_request.
-func TestService_Submit_InvalidWindow_5_3_3_M2(t *testing.T) {
+// TestService_Submit_InvalidWindow_5_3_3 — window end < start → invalid_request.
+func TestService_Submit_InvalidWindow_5_3_3(t *testing.T) {
 	svc, _ := newSvc(t)
 	in := validInput()
 	in.Window.End = in.Window.Start.Add(-time.Hour)
@@ -116,8 +116,8 @@ func TestService_Submit_InvalidWindow_5_3_3_M2(t *testing.T) {
 	}
 }
 
-// TestService_Submit_UnknownStation_5_3_2_M2 — station_id not in registry.
-func TestService_Submit_UnknownStation_5_3_2_M2(t *testing.T) {
+// TestService_Submit_UnknownStation_5_3_2 — station_id not in registry.
+func TestService_Submit_UnknownStation_5_3_2(t *testing.T) {
 	svc, _ := newSvc(t)
 	in := validInput()
 	in.Destination.StationID = "NOPE"
@@ -127,9 +127,9 @@ func TestService_Submit_UnknownStation_5_3_2_M2(t *testing.T) {
 	}
 }
 
-// TestService_Submit_IdempotencyReplay_5_3_5_M2 — same key + same body returns
+// TestService_Submit_IdempotencyReplay_5_3_5 — same key + same body returns
 // the original task; Created=false; only one row in the store.
-func TestService_Submit_IdempotencyReplay_5_3_5_M2(t *testing.T) {
+func TestService_Submit_IdempotencyReplay_5_3_5(t *testing.T) {
 	svc, st := newSvc(t)
 	in := validInput()
 	in.IdempotencyKey = "client-req-1"
@@ -157,8 +157,8 @@ func TestService_Submit_IdempotencyReplay_5_3_5_M2(t *testing.T) {
 	}
 }
 
-// TestService_Submit_IdempotencyConflict_5_3_5_M2 — same key, different body.
-func TestService_Submit_IdempotencyConflict_5_3_5_M2(t *testing.T) {
+// TestService_Submit_IdempotencyConflict_5_3_5 — same key, different body.
+func TestService_Submit_IdempotencyConflict_5_3_5(t *testing.T) {
 	svc, _ := newSvc(t)
 	in := validInput()
 	in.IdempotencyKey = "client-req-2"
@@ -172,8 +172,8 @@ func TestService_Submit_IdempotencyConflict_5_3_5_M2(t *testing.T) {
 	}
 }
 
-// TestService_Get_NotFound_5_4_1_M2 — Get returns ErrTaskNotFound.
-func TestService_Get_NotFound_5_4_1_M2(t *testing.T) {
+// TestService_Get_NotFound_5_4_1 — Get returns ErrTaskNotFound.
+func TestService_Get_NotFound_5_4_1(t *testing.T) {
 	svc, _ := newSvc(t)
 	_, err := svc.Get(context.Background(), "nope")
 	if !errors.Is(err, tasks.ErrTaskNotFound) {
@@ -181,9 +181,9 @@ func TestService_Get_NotFound_5_4_1_M2(t *testing.T) {
 	}
 }
 
-// TestService_RoutingImmutable_7_4_1_M2 — routing_content and routing_content_hash
+// TestService_RoutingImmutable_7_4_1 — routing_content and routing_content_hash
 // are persisted exactly as computed and never re-derived on Get.
-func TestService_RoutingImmutable_7_4_1_M2(t *testing.T) {
+func TestService_RoutingImmutable_7_4_1(t *testing.T) {
 	svc, _ := newSvc(t)
 	res, err := svc.Submit(context.Background(), validInput())
 	if err != nil {
@@ -201,9 +201,9 @@ func TestService_RoutingImmutable_7_4_1_M2(t *testing.T) {
 	}
 }
 
-// TestService_List_PaginationDeterministic_5_4_2_M2 — list returns most-recent
+// TestService_List_PaginationDeterministic_5_4_2 — list returns most-recent
 // first, with a stable cursor across pages.
-func TestService_List_PaginationDeterministic_5_4_2_M2(t *testing.T) {
+func TestService_List_PaginationDeterministic_5_4_2(t *testing.T) {
 	svc, st := newSvc(t)
 
 	// Insert 5 tasks at distinct created_at to ensure deterministic order.

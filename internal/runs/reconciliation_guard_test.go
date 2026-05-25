@@ -9,10 +9,10 @@ import (
 	"github.com/eum/veriproc/internal/runs"
 )
 
-// TestCancel_BlockedByReconciliation_M7 — when reconciliation_started_at is
+// TestCancel_BlockedByReconciliation — when reconciliation_started_at is
 // stamped, Cancel must short-circuit with ErrReconciliationInProgress so the
 // HTTP layer can return 409 reconciliation_in_progress (Spec §3.13 / §7.8).
-func TestCancel_BlockedByReconciliation_M7(t *testing.T) {
+func TestCancel_BlockedByReconciliation(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)
@@ -32,9 +32,9 @@ func TestCancel_BlockedByReconciliation_M7(t *testing.T) {
 	}
 }
 
-// TestPromote_BlockedByReconciliation_M7 — likewise PromoteCanonical must
+// TestPromote_BlockedByReconciliation — likewise PromoteCanonical must
 // fail-fast while reconciliation is in progress.
-func TestPromote_BlockedByReconciliation_M7(t *testing.T) {
+func TestPromote_BlockedByReconciliation(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	taskID := submitTask(t, f)

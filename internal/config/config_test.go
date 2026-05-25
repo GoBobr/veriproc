@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestConfig_Defaults_M0 — defaults are usable and validate cleanly.
-func TestConfig_Defaults_M0(t *testing.T) {
+// TestConfig_Defaults — defaults are usable and validate cleanly.
+func TestConfig_Defaults(t *testing.T) {
 	cfg, err := Load(nil, nil)
 	if err != nil {
 		t.Fatalf("load defaults: %v", err)
@@ -24,8 +24,8 @@ func TestConfig_Defaults_M0(t *testing.T) {
 	}
 }
 
-// TestConfig_Precedence_M0 — flag > env > file > defaults.
-func TestConfig_Precedence_M0(t *testing.T) {
+// TestConfig_Precedence — flag > env > file > defaults.
+func TestConfig_Precedence(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "veriproc.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`
@@ -74,8 +74,8 @@ log:
 	}
 }
 
-// TestConfig_EnvDuration_M0 — duration env vars parse correctly.
-func TestConfig_EnvDuration_M0(t *testing.T) {
+// TestConfig_EnvDuration — duration env vars parse correctly.
+func TestConfig_EnvDuration(t *testing.T) {
 	cfg, err := Load(nil, map[string]string{
 		"VERIPROC_HTTP_SHUTDOWN_TIMEOUT": "3s",
 	})
@@ -87,32 +87,32 @@ func TestConfig_EnvDuration_M0(t *testing.T) {
 	}
 }
 
-// TestConfig_InvalidBindAddr_M0 — validation rejects malformed bind address.
-func TestConfig_InvalidBindAddr_M0(t *testing.T) {
+// TestConfig_InvalidBindAddr — validation rejects malformed bind address.
+func TestConfig_InvalidBindAddr(t *testing.T) {
 	_, err := Load([]string{"--http-addr", "not-a-host-port"}, nil)
 	if err == nil {
 		t.Fatalf("expected validation error for bad bind_addr")
 	}
 }
 
-// TestConfig_InvalidLogLevel_M0 — validation rejects unknown log level.
-func TestConfig_InvalidLogLevel_M0(t *testing.T) {
+// TestConfig_InvalidLogLevel — validation rejects unknown log level.
+func TestConfig_InvalidLogLevel(t *testing.T) {
 	_, err := Load([]string{"--log-level", "bogus"}, nil)
 	if err == nil {
 		t.Fatalf("expected validation error for bad log level")
 	}
 }
 
-// TestConfig_EmptyInstanceID_M0 — validation rejects blank instance_id.
-func TestConfig_EmptyInstanceID_M0(t *testing.T) {
+// TestConfig_EmptyInstanceID — validation rejects blank instance_id.
+func TestConfig_EmptyInstanceID(t *testing.T) {
 	_, err := Load([]string{"--instance-id", "   "}, nil)
 	if err == nil {
 		t.Fatalf("expected validation error for blank instance_id")
 	}
 }
 
-// TestConfig_MissingFile_M0 — explicit --config to a missing path is an error.
-func TestConfig_MissingFile_M0(t *testing.T) {
+// TestConfig_MissingFile — explicit --config to a missing path is an error.
+func TestConfig_MissingFile(t *testing.T) {
 	_, err := Load([]string{"--config", "/nonexistent/veriproc.yaml"}, nil)
 	if err == nil {
 		t.Fatalf("expected error for missing config file")

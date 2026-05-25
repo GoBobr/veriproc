@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// TestMigrate_FreshDB_7_3_2_M1 — migrations apply cleanly to an empty DB and
+// TestMigrate_FreshDB_7_3_2 — migrations apply cleanly to an empty DB and
 // the expected core tables exist (Spec §4.3, §7.3.2).
-func TestMigrate_FreshDB_7_3_2_M1(t *testing.T) {
+func TestMigrate_FreshDB_7_3_2(t *testing.T) {
 	s := newTestStore(t)
 	wantTables := []string{
 		"schema_migrations",
@@ -40,8 +40,8 @@ func TestMigrate_FreshDB_7_3_2_M1(t *testing.T) {
 	}
 }
 
-// TestMigrate_Idempotent_M1 — re-running Migrate is a no-op.
-func TestMigrate_Idempotent_M1(t *testing.T) {
+// TestMigrate_Idempotent — re-running Migrate is a no-op.
+func TestMigrate_Idempotent(t *testing.T) {
 	s := newTestStore(t)
 	// Migrate again; should not error or duplicate rows.
 	if err := Migrate(context.Background(), s); err != nil {
@@ -56,16 +56,16 @@ func TestMigrate_Idempotent_M1(t *testing.T) {
 	}
 }
 
-// TestStore_OpenUnsupportedScheme_M1 — non-sqlite/postgres DSN fails clearly.
-func TestStore_OpenUnsupportedScheme_M1(t *testing.T) {
+// TestStore_OpenUnsupportedScheme — non-sqlite/postgres DSN fails clearly.
+func TestStore_OpenUnsupportedScheme(t *testing.T) {
 	if _, err := Open("mysql://nope"); err == nil {
 		t.Error("expected error for unsupported scheme")
 	}
 }
 
-// TestStore_OpenPostgresDeferred_M1 — postgres scheme is recognized but
+// TestStore_OpenPostgresDeferred — postgres scheme is recognized but
 // returns a clear error until the adapter ships.
-func TestStore_OpenPostgresDeferred_M1(t *testing.T) {
+func TestStore_OpenPostgresDeferred(t *testing.T) {
 	_, err := Open("postgres://user:pw@localhost/db")
 	if err == nil {
 		t.Fatal("expected deferred error for postgres scheme")

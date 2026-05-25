@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// TestAPI_TaskRetry_FailedTask_5_3_M8 — POST /api/v1/tasks/{id}/retry on a
+// TestAPI_TaskRetry_FailedTask_5_3 — POST /api/v1/tasks/{id}/retry on a
 // failed task returns 201 with a new run record whose retry_index is
 // incremented and whose state is "pending". Spec §3.7.
-func TestAPI_TaskRetry_FailedTask_5_3_M8(t *testing.T) {
+func TestAPI_TaskRetry_FailedTask_5_3(t *testing.T) {
 	a := newRunAPI(t)
 	ctx := context.Background()
 	taskID := a.submitOne(t)
@@ -49,9 +49,9 @@ func TestAPI_TaskRetry_FailedTask_5_3_M8(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskRetry_NotFound_5_3_M8 — POST /api/v1/tasks/{id}/retry for an
+// TestAPI_TaskRetry_NotFound_5_3 — POST /api/v1/tasks/{id}/retry for an
 // unknown task returns 404 with the standard error envelope.
-func TestAPI_TaskRetry_NotFound_5_3_M8(t *testing.T) {
+func TestAPI_TaskRetry_NotFound_5_3(t *testing.T) {
 	a := newRunAPI(t)
 	resp, body := postRetry(t, a.srv, "task-does-not-exist")
 	if resp.StatusCode != http.StatusNotFound {
@@ -62,10 +62,10 @@ func TestAPI_TaskRetry_NotFound_5_3_M8(t *testing.T) {
 	}
 }
 
-// TestAPI_TaskRetry_IneligibleState_5_3_M8 — POST /api/v1/tasks/{id}/retry
+// TestAPI_TaskRetry_IneligibleState_5_3 — POST /api/v1/tasks/{id}/retry
 // on a task that is not in a terminal failed/cancelled state returns 409
 // invalid_state_transition.
-func TestAPI_TaskRetry_IneligibleState_5_3_M8(t *testing.T) {
+func TestAPI_TaskRetry_IneligibleState_5_3(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	// Task is freshly submitted ("accepted") — not eligible for retry.

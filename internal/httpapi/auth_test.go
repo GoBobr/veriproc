@@ -89,8 +89,8 @@ func errCode(t *testing.T, body []byte) string {
 	return env.Error.Code
 }
 
-// TestAPI_Auth_HealthSkipped_M6 — health and readiness are exempt from auth.
-func TestAPI_Auth_HealthSkipped_M6(t *testing.T) {
+// TestAPI_Auth_HealthSkipped — health and readiness are exempt from auth.
+func TestAPI_Auth_HealthSkipped(t *testing.T) {
 	a := newAuthAPI(t, 0)
 	resp, _ := doReq(t, "GET", a.srv.URL+"/api/v1/health", "")
 	if resp.StatusCode != http.StatusOK {
@@ -98,8 +98,8 @@ func TestAPI_Auth_HealthSkipped_M6(t *testing.T) {
 	}
 }
 
-// TestAPI_Auth_MissingToken_M6 — protected endpoint without token → 401.
-func TestAPI_Auth_MissingToken_M6(t *testing.T) {
+// TestAPI_Auth_MissingToken — protected endpoint without token → 401.
+func TestAPI_Auth_MissingToken(t *testing.T) {
 	a := newAuthAPI(t, 0)
 	resp, body := doReq(t, "GET", a.srv.URL+"/api/v1/runs", "")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -110,8 +110,8 @@ func TestAPI_Auth_MissingToken_M6(t *testing.T) {
 	}
 }
 
-// TestAPI_Auth_InvalidToken_M6 — unknown token → 401 unauthenticated.
-func TestAPI_Auth_InvalidToken_M6(t *testing.T) {
+// TestAPI_Auth_InvalidToken — unknown token → 401 unauthenticated.
+func TestAPI_Auth_InvalidToken(t *testing.T) {
 	a := newAuthAPI(t, 0)
 	resp, body := doReq(t, "GET", a.srv.URL+"/api/v1/runs", "wrong")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -122,8 +122,8 @@ func TestAPI_Auth_InvalidToken_M6(t *testing.T) {
 	}
 }
 
-// TestAPI_Auth_ReaderForbiddenOnMutator_M6 — reader role on POST → 403.
-func TestAPI_Auth_ReaderForbiddenOnMutator_M6(t *testing.T) {
+// TestAPI_Auth_ReaderForbiddenOnMutator — reader role on POST → 403.
+func TestAPI_Auth_ReaderForbiddenOnMutator(t *testing.T) {
 	a := newAuthAPI(t, 0)
 	resp, body := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", a.tok2)
 	if resp.StatusCode != http.StatusForbidden {
@@ -134,9 +134,9 @@ func TestAPI_Auth_ReaderForbiddenOnMutator_M6(t *testing.T) {
 	}
 }
 
-// TestAPI_Auth_OperatorAllowed_M6 — operator passes auth (response may be 404
+// TestAPI_Auth_OperatorAllowed — operator passes auth (response may be 404
 // because no Tasks service is mounted, but it must NOT be 401/403).
-func TestAPI_Auth_OperatorAllowed_M6(t *testing.T) {
+func TestAPI_Auth_OperatorAllowed(t *testing.T) {
 	a := newAuthAPI(t, 0)
 	resp, body := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", a.tok)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
@@ -144,9 +144,9 @@ func TestAPI_Auth_OperatorAllowed_M6(t *testing.T) {
 	}
 }
 
-// TestAPI_Quota_Exceeded_M6 — once an operator exceeds quotaPerMinute,
+// TestAPI_Quota_Exceeded — once an operator exceeds quotaPerMinute,
 // subsequent mutating requests return 429 quota_exceeded with retryable=true.
-func TestAPI_Quota_Exceeded_M6(t *testing.T) {
+func TestAPI_Quota_Exceeded(t *testing.T) {
 	a := newAuthAPI(t, 2)
 	for i := 0; i < 2; i++ {
 		resp, _ := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", a.tok)

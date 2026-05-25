@@ -14,12 +14,12 @@ import (
 	"github.com/eum/veriproc/internal/store"
 )
 
-// TestAPI_RunArtifacts_PublicationStatus_5_5_6_M6 — once a publication has
+// TestAPI_RunArtifacts_PublicationStatus_5_5_6 — once a publication has
 // been written for an artifact and the publisher marks it published, the
 // artifact representation returned by GET /runs/{id}/artifacts must surface
 // the publication summary (publication_summary.publications, published_count)
 // alongside the existing availability/logical_type fields. Spec §5.5.6.
-func TestAPI_RunArtifacts_PublicationStatus_5_5_6_M6(t *testing.T) {
+func TestAPI_RunArtifacts_PublicationStatus_5_5_6(t *testing.T) {
 	a := newRunAPI(t)
 	taskID := a.submitOne(t)
 	a.tickN(t, 6)

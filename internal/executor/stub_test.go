@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// TestExecutorStub_DefaultLifecycle_3_9_M3 — submit then poll twice yields
+// TestExecutorStub_DefaultLifecycle_3_9 — submit then poll twice yields
 // queued → running → succeeded; further polls are sticky on succeeded.
-func TestExecutorStub_DefaultLifecycle_3_9_M3(t *testing.T) {
+func TestExecutorStub_DefaultLifecycle_3_9(t *testing.T) {
 	e := NewStubExecutor(func() time.Time { return time.Unix(100, 0).UTC() })
 	submission, err := e.Submit(context.Background(), JobDescription{RunID: "r1"})
 	if err != nil {
@@ -32,9 +32,9 @@ func TestExecutorStub_DefaultLifecycle_3_9_M3(t *testing.T) {
 	}
 }
 
-// TestExecutorStub_FailureOption_M3 — WithFailure makes the job terminate
+// TestExecutorStub_FailureOption — WithFailure makes the job terminate
 // failed and surfaces the message + exit code.
-func TestExecutorStub_FailureOption_M3(t *testing.T) {
+func TestExecutorStub_FailureOption(t *testing.T) {
 	e := NewStubExecutor(nil)
 	id, err := e.SubmitWith(context.Background(), JobDescription{RunID: "r-fail"},
 		WithFailure("boom", 7))
@@ -53,8 +53,8 @@ func TestExecutorStub_FailureOption_M3(t *testing.T) {
 	}
 }
 
-// TestExecutorStub_Cancel_M3 — cancel marks an unfinished job cancelled.
-func TestExecutorStub_Cancel_M3(t *testing.T) {
+// TestExecutorStub_Cancel — cancel marks an unfinished job cancelled.
+func TestExecutorStub_Cancel(t *testing.T) {
 	e := NewStubExecutor(nil)
 	submission, _ := e.Submit(context.Background(), JobDescription{RunID: "r-c"})
 	if err := e.Cancel(context.Background(), submission.SchedulerID); err != nil {
@@ -69,8 +69,8 @@ func TestExecutorStub_Cancel_M3(t *testing.T) {
 	}
 }
 
-// TestExecutorStub_UnknownJob_M3 — poll/cancel on unknown ids returns ErrUnknownJob.
-func TestExecutorStub_UnknownJob_M3(t *testing.T) {
+// TestExecutorStub_UnknownJob — poll/cancel on unknown ids returns ErrUnknownJob.
+func TestExecutorStub_UnknownJob(t *testing.T) {
 	e := NewStubExecutor(nil)
 	if _, err := e.Poll(context.Background(), "no-such"); err != ErrUnknownJob {
 		t.Errorf("poll unknown: got %v", err)

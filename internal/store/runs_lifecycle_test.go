@@ -32,10 +32,10 @@ func mkRunReady(t *testing.T, s *Store, taskID, retryIdx string) string {
 	return r.RunID
 }
 
-// TestStore_RunStateTransitions_3_7_M3 — state machine progresses pending→
+// TestStore_RunStateTransitions_3_7 — state machine progresses pending→
 // preparing→ready→dispatched→running→finalizing→complete via conditional
 // updates; conflicting transitions are rejected.
-func TestStore_RunStateTransitions_3_7_M3(t *testing.T) {
+func TestStore_RunStateTransitions_3_7(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	runID := mkRunReady(t, s, "task-A", "0")
@@ -77,8 +77,8 @@ func TestStore_RunStateTransitions_3_7_M3(t *testing.T) {
 	}
 }
 
-// TestStore_RunListByStates_M3 — ListByStates returns ordered records.
-func TestStore_RunListByStates_M3(t *testing.T) {
+// TestStore_RunListByStates — ListByStates returns ordered records.
+func TestStore_RunListByStates(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	r1 := mkRunReady(t, s, "task-1", "0")
@@ -96,9 +96,9 @@ func TestStore_RunListByStates_M3(t *testing.T) {
 	}
 }
 
-// TestStore_Manifest_FrozenAtConstruction_3_8_M3 — manifest insert is atomic
+// TestStore_Manifest_FrozenAtConstruction_3_8 — manifest insert is atomic
 // header+entries; one manifest per run.
-func TestStore_Manifest_FrozenAtConstruction_3_8_M3(t *testing.T) {
+func TestStore_Manifest_FrozenAtConstruction_3_8(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	runID := mkRunReady(t, s, "task-mf", "0")
@@ -131,9 +131,9 @@ func TestStore_Manifest_FrozenAtConstruction_3_8_M3(t *testing.T) {
 	}
 }
 
-// TestStore_Fingerprint_UniqueAndClaim_3_10_M3 — fingerprints are unique by
+// TestStore_Fingerprint_UniqueAndClaim_3_10 — fingerprints are unique by
 // value and canonical claim is exclusive (first wins).
-func TestStore_Fingerprint_UniqueAndClaim_3_10_M3(t *testing.T) {
+func TestStore_Fingerprint_UniqueAndClaim_3_10(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	runID1 := mkRunReady(t, s, "task-fp1", "0")
@@ -160,8 +160,8 @@ func TestStore_Fingerprint_UniqueAndClaim_3_10_M3(t *testing.T) {
 	}
 }
 
-// TestStore_Job_FK_4_3_8_M3 — job referencing an unknown run is rejected.
-func TestStore_Job_FK_4_3_8_M3(t *testing.T) {
+// TestStore_Job_FK_4_3_8 — job referencing an unknown run is rejected.
+func TestStore_Job_FK_4_3_8(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	j := &JobRecord{JobID: "j1", RunID: "no-such-run", Executor: "stub"}
