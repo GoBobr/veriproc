@@ -9,11 +9,35 @@ description: |
   slice of the result as SCE_2__PROCBIG__. Ten statD tasks run concurrently,
   all members of the same split group created by station C. Once all ten
   members are terminal, the backend automatically submits station E (statE).
+
 execution:
+  # Explicit mode: overrides the instance executor.default for this station.
+  # Fan-out workers often benefit from overriding mode to tune their queue.
   mode: slurm-native
   executable: ./scripts/run.sh
+
+  # Per-station resource overrides applied to every run of this station.
+  # These replace (not merge with) the executor.slurm.defaults for fields
+  # that are set. Omit a field to inherit the instance default.
+  # resources:
+  #   cpus_per_task: 2     # fan-out slices are lightweight; fewer cores
+  #   mem_gb: 4
+  #   walltime: "00:15:00"
+
+  # Station-level SLURM scheduling overrides. Applied on top of the
+  # executor-level account/partition/qos defaults.
+  # slurm:
+  #   partition: short       # short-walltime queue for parallel slices
+  #   account: co2m
+  #   qos: ""
+  #   extra_args:
+  #     - "--constraint=avx512"
+
 inputs:
   - file_type: SCE_2__BIG______
+    # The full parent product is resolved once per task via the "product"
+    # category. Each statD task processes only the sub-window declared by
+    # station C's task-out.yaml (delivered as VERIPROC_WINDOW_START/END).
     category: product
     window_match: overlaps
     margins: [0, 0]
@@ -23,5 +47,7 @@ outputs:
   - file_type: SCE_2__PROCBIG__
     mandatory: true
     publish:
+      # Publish into micro-ra so the fan-in aggregator (station E) can find
+      # all slices via the "micro-ra" product_category.
       rolling_archive: micro-ra
       mode: copy

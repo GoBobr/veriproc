@@ -4,22 +4,36 @@ schema_version: veriproc.station/v1
 description: |
   Sandbox station B consumes STATION-A's published output from the rolling
   archive and writes a small CSV product.
+
 execution:
+  # Uses the instance default executor (executor.default: slurm-native).
+  # Set mode explicitly to override, e.g. mode: local for a lighter workload.
   mode: slurm-native
   executable: ./scripts/run.sh
 
+# joborder block is omitted: defaults to format: yaml, name: joborder.yaml.
+# The daemon still writes the standard job order document; the workload can
+# read it via VERIPROC_JOBORDER_PATH.
+
 inputs:
   - file_type: SCE_2__ICM______
+    # Searches all folders listed under the "product" product_category in
+    # instance.yaml (proc-ra first, then prods).
     category: product
     window_match: overlaps
     margins: [0, 0]
     mandatory: true
+
 outputs:
   - file_type: SCE_2__BIG______
     mandatory: true
     publish:
+      # Publish into proc-ra so downstream stations can find it via the
+      # "product" category (which includes rolling:proc-ra).
       rolling_archive: proc-ra
       mode: copy
 
 downstream:
+  # statC is triggered immediately (mode: normal, the default) when this
+  # run is finalised successfully.
   - station_id: statC

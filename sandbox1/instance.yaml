@@ -1,37 +1,147 @@
+# ─── VeriProc Instance Configuration ─────────────────────────────────────────
+# Schema:  veriproc.instance/v1
+#
+# Configuration sources (lowest to highest precedence):
+#   1. Built-in defaults
+#   2. This YAML file      (path via --config flag or VERIPROC_CONFIG env var)
+#   3. Environment variables  VERIPROC_*
+#   4. Command-line flags     --http-addr  --log-level  --log-format
+#                             --instance-id  --db-dsn
+
+# Schema identifier. Must always be "veriproc.instance/v1".
 schema_version: veriproc.instance/v1
+
+# Unique identifier for this daemon deployment. Embedded in audit records and
+# job orders (Spec §2.3.1).
+# Override: VERIPROC_INSTANCE_ID env var or --instance-id flag.
 instance_id: sandbox-local
 
+# ─── HTTP server ──────────────────────────────────────────────────────────────
 http:
+  # Listen address in host:port form.
+  # Use 0.0.0.0:8080 to accept connections on all network interfaces.
+  # Default: 127.0.0.1:8080
+  # Override: VERIPROC_HTTP_ADDR env or --http-addr flag.
   bind_addr: 127.0.0.1:8080
 
+  # Maximum time to read a complete request (header + body).
+  # Go duration strings accepted: "15s", "1m", "1m30s". Default: 15s.
+  # Override: VERIPROC_HTTP_READ_TIMEOUT env.
+  # read_timeout: 15s
+
+  # Maximum time to write a complete response. Default: 30s.
+  # Override: VERIPROC_HTTP_WRITE_TIMEOUT env.
+  # write_timeout: 30s
+
+  # Grace period for in-flight requests to finish on daemon shutdown.
+  # Default: 15s. Override: VERIPROC_HTTP_SHUTDOWN_TIMEOUT env.
+  # shutdown_timeout: 15s
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
 log:
+  # Verbosity level.
+  # Options: trace | debug | info | warn | error. Default: info.
+  # Override: VERIPROC_LOG_LEVEL env or --log-level flag.
   level: debug
+
+  # Output format.
+  # Options:
+  #   json    – structured JSON lines; recommended for log-aggregation pipelines.
+  #   console – human-readable colourised output; recommended for development.
+  # Default: json. Override: VERIPROC_LOG_FORMAT env or --log-format flag.
   format: console
 
+# ─── State-store database ─────────────────────────────────────────────────────
 db:
+  # Data source name for the backing state store.
+  # SQLite  (sandbox / single-node):
+  #   sqlite://relative/path/to/file.db
+  #   sqlite:///absolute/path/to/file.db
+  # PostgreSQL (production):
+  #   postgres://user:password@host:5432/dbname?sslmode=require
+  # Override: VERIPROC_DB_DSN env or --db-dsn flag.
   dsn: sqlite://sandbox1/data/veriproc.db
 
+# ─── Filesystem paths ─────────────────────────────────────────────────────────
 storage:
+  # Root directory under which per-run working directories are created.
+  # The daemon writes <working_root_base>/<expanded naming.working_root path>
+  # for every run. Relative paths are resolved from the daemon's cwd.
+  # Override: VERIPROC_WORKING_ROOT_BASE env.
   working_root_base: sandbox1/data/working-roots
+
+  # Directory scanned at startup for station.yaml files.
+  # The loader looks one level deep: <root>/<station-dir>/station.yaml.
   station_config_root: sandbox1/stations
 
+# ─── Naming policy ────────────────────────────────────────────────────────────
 naming:
-  # can be "start" or "creation"
+  # Which timestamp to embed in the auto-generated task ID.
+  # Options:
+  #   creation – wall-clock time when the task record is first created (default).
+  #   start    – task processing-window start time; yields deterministic IDs.
   task_id_timestamp: start
+
+  # Working-root path layout. The final on-disk path is:
+  #   <working_root_base> / <expanded path_template>
+  # where {station}, {task}, {run} are replaced by the segment expansions below.
+  # Available template variables (usable in any segment):
+  #   {station_id}   – station identifier string
+  #   {task_id}      – full task ID (stationid-timestamp-hex6)
+  #   {retry_index}  – zero-based retry counter (decimal)
+  #   {short_run_id} – first 8 hex chars of the internal run UUID
   working_root:
+    # High-level template composing the three segments.
+    # Supported tokens: {station} {task} {run}. Default: "{station}/{task}/{run}".
     path_template: "{task}-{run}"
+
+    # Expansion of the {station} token. Default: "{station_id}".
     station_segment: "{station_id}"
+
+    # Expansion of the {task} token. Default: "{task_id}".
     task_segment: "{task_id}"
+
+    # Expansion of the {run} token. Default: "r{retry_index}".
     run_segment: "r{retry_index}"
+
+    # Suffix appended if the constructed path already exists on disk.
+    # Default: "-{short_run_id}".
     collision_suffix: "-{short_run_id}"
+
+  # Filename validation rules applied when output files are resolved and when
+  # the classical input matcher searches rolling archives.
   filenames:
+    # Characters valid in any output filename segment. Space-separated ranges
+    # and literal characters. Default: "A-Z a-z 0-9 - _ ."
     allowed_charset: "A-Z a-z 0-9 - _ ."
+
+    # Character substituted for any char not in allowed_charset. Default: "_".
     replace_invalid: "_"
+
+    # Maximum character length of any single normalised filename segment.
+    # Default: 128.
     max_segment_length: 128
+
+    # Case transformation applied to station_id when embedded in filenames.
+    # Options: preserve | upper | lower. Default: preserve.
     station_case: preserve
+
+    # Glob-style pattern used by the classical input/output file matcher.
+    # Use <COMPONENT> placeholders defined in components below.
+    # <FILE_TYPE> is substituted with the station's declared file_type at
+    # match time. '*' is a wildcard (captured as "suffix"). '?' matches one char.
     filename_pattern: "<MISSION_ID>_<FILE_TYPE>_??_<START_TIME>_<END_TIME>_<GENERATION_TIME>_*"
+
+    # Component definitions for each named <PLACEHOLDER> in filename_pattern.
+    # Each component must specify exactly one matching rule:
+    #   pattern          – literal string with '?' as single-char wildcard.
+    #   length + charset – fixed-width ASCII or UTF-8 field.
+    #   format           – built-in date-time format:
+    #                        YYYYMMDDTHHmmSS  (15 chars, compact UTC, no Z)
+    #                        YYYYMMDDTHHmmSSZ (16 chars, compact UTC with Z)
     components:
       MISSION_ID:
+        # Matches "CDM" followed by exactly one arbitrary character (e.g. "CDM1").
         pattern: "CDM?"
         length: 4
         charset: ascii
@@ -48,12 +158,34 @@ naming:
         format: "YYYYMMDDTHHmmSS"
         length: 15
 
+# ─── Integrity policy ─────────────────────────────────────────────────────────
 integrity:
+  # Controls when checksums are required on published artifacts.
+  # Options:
+  #   available_only – record checksum when the executor provides it; never
+  #                    fail publication for a missing checksum (default).
+  #   required       – reject any publication without a valid checksum.
+  #   none           – skip checksum computation and validation entirely.
   checksum_policy: available_only
+
+  # Checksum algorithms accepted for artifact validation.
+  # Currently only "sha256" is supported.
   allowed_algorithms: [sha256]
+
+  # When true, record byte-size of each published file via stat(). Default: true.
   record_size_when_available: true
+
+  # When true, record filesystem mtime of each published file. Default: true.
   record_mtime_when_available: true
 
+# ─── Context definitions ──────────────────────────────────────────────────────
+# Arbitrary YAML mapping injected into the station context-reference namespace.
+# Values are accessible in station joborder.include blocks using the syntax
+# <key> or <key.subkey>.
+#
+# Top-level keys must NOT collide with reserved runtime context names:
+#   task_id  task_ref  run_id  run_ref  station_id  retry_index
+#   window_start  window_end  inputs  outputs  split_group_id
 definitions:
   facility:
     processing_center: SANDBOX1
@@ -61,29 +193,61 @@ definitions:
     acquisition_station: Testbed
   generic_mode: TEST
 
+# ─── Rolling archives ─────────────────────────────────────────────────────────
+# Named filesystem directories that store published artifacts. Each key becomes
+# the archive ID referenced in station output publish.rolling_archive fields and
+# in product_categories folder entries (rolling:<archive-id>).
 rolling_archives:
+  # Input-only auxiliary product archive (calibration files, look-up tables, …).
   aux:
+    # Filesystem root of this archive. Relative paths are resolved from the
+    # daemon's cwd; use absolute paths in production deployments.
     path: sandbox1/rolling-archives/aux
+
+    # Retention hint consumed by archive-management tooling. Not validated or
+    # enforced by the daemon itself.
+    # Common values (not an exhaustive set):
+    #   keep-fixtures – preserve test/fixture data; do not purge automatically.
+    #   keep-none     – no retention; files may be purged after first use.
     retention: keep-fixtures
+
+    # Archive access mode:
+    #   read_write – station outputs may be published into this archive.
+    #   read_only  – inputs may be matched from this archive, but publication
+    #                is refused at run-finalisation time.
     mode: read_write
+
+  # Pre-seeded input products and inter-station published outputs.
   prods:
     path: sandbox1/rolling-archives/prods
     retention: keep-fixtures
     mode: read_write
+
+  # Primary inter-station product archive (processing chain outputs).
   proc-ra:
     path: sandbox1/data/temp-rolling-archives/proc
     retention: keep-fixtures
     mode: read_write
+
+  # Intermediate micro-granule archive used by the fan-out chain (stations D/E).
   micro-ra:
     path: sandbox1/data/temp-rolling-archives/micro
     retention: keep-fixtures
     mode: read_write
 
+# ─── Product categories ───────────────────────────────────────────────────────
+# Named search-path lists used by the classical input matcher. Each category
+# maps to an ordered sequence of directories; the matcher searches them in order,
+# left-to-right, stopping at the first qualifying file per input definition.
+#
+# Folder entry formats:
+#   rolling:<archive-id>  – resolves to the path of that rolling archive.
+#   /absolute/path        – searched directly as a filesystem directory.
 product_categories:
   - name: product
     folders:
-      - rolling:proc-ra
-      - rolling:prods
+      - rolling:proc-ra   # search recent processed outputs first
+      - rolling:prods     # fall back to pre-seeded fixture products
   - name: aux
     folders:
       - rolling:aux
@@ -91,31 +255,154 @@ product_categories:
     folders:
       - rolling:micro-ra
 
+# ─── Executor configuration ───────────────────────────────────────────────────
+# VeriProc supports four executor types:
+#
+#   local        – Runs station scripts as child OS processes on the daemon host.
+#                  Intended for sandbox / developer workstations.
+#                  Note: cancellation is NOT supported (in-flight goroutines
+#                  run to completion regardless of a cancel request).
+#   stub         – Deterministic in-memory executor for unit tests and CI.
+#                  Never use in production.
+#   slurm-native – Submits station scripts directly to SLURM via sbatch/sacct.
+#                  The working root and station executable must be accessible
+#                  from compute nodes (typically a shared filesystem).
+#   slurm-docker – Like slurm-native but wraps the executable inside a Docker
+#                  container on the compute node. Requires
+#                  execution.container.image in each station.yaml.
+#
+# Two configuration formats are accepted:
+#
+#   Multi-executor (preferred, shown here): populate executor.executors with
+#   one entry per type and set executor.default to the type used when a station
+#   omits execution.mode. Stations may override with execution.mode: local |
+#   slurm-native | slurm-docker.
+#
+#   Legacy single-executor: set executor.type (and executor.slurm /
+#   executor.docker as needed). Treated as executors: {type: {…}} with
+#   default: type. Supported for backward compatibility only.
 executor:
+  # Executor type used when a station declares no execution.mode.
+  # Must match one of the keys declared in executors below.
   default: slurm-native
+
   executors:
+    # ── local ────────────────────────────────────────────────────────────────
+    # No configuration fields are required. Include the key to make
+    # execution.mode: local available in station definitions.
     local: {}
+
+    # ── stub (example – disabled here) ───────────────────────────────────────
+    # Deterministic in-memory executor. Suitable for CI / functional testing;
+    # disable in any environment that runs real scheduler workloads.
+    # stub: {}
+
+    # ── slurm-native ─────────────────────────────────────────────────────────
+    # Submits station scripts directly to SLURM. The executable and working
+    # root must be accessible from compute nodes (shared filesystem required).
     slurm-native:
       slurm:
         connection:
+          # Where scheduler CLI commands (sbatch, sacct, scancel) are invoked.
+          # Options:
+          #   local – run commands directly on the daemon host (default).
+          #   ssh   – tunnel commands via SSH to a SLURM login node.
+          #           host and user are required; key_file is optional
+          #           (SSH agent is used when key_file is absent).
           mode: local
-        account: co2m
-        partition: unlim
+          # host: slurm-login.example.org    # required when mode: ssh
+          # user: slurmuser                  # required when mode: ssh
+          # key_file: /home/user/.ssh/id_ed25519  # optional
+
+        # SLURM scheduling parameters applied to every job from this executor.
+        # All optional; per-station overrides via execution.slurm.* in station.yaml.
+        account: co2m     # --account= passed to sbatch; omit to use cluster default
+        partition: unlim  # --partition= passed to sbatch; omit to use cluster default
+        qos: ""           # --qos= passed to sbatch; omit or leave empty to skip flag
+
+        # Scheduler command name or absolute path.
+        # Defaults: sbatch (submit), sacct (query). Override only when the
+        # scheduler commands are not on PATH or have a non-standard name.
         submit_command: sbatch
         query_command: sacct
+
+        # Command used to cancel running jobs (POST /api/v1/runs/:id/cancel).
+        # When empty the API returns 409 cancellation_unsupported for all runs
+        # on this executor. Default: empty (cancellation disabled).
         cancel_command: scancel
+
+        # How often the daemon polls SLURM for job status updates.
+        # Accepts Go duration ("30s", "2m") or ISO-8601 PT string ("PT30S").
         poll_interval: 30s
+
+        # Default resource requests for jobs whose station.yaml does not set
+        # execution.resources. All fields are optional; 0 means "let SLURM decide".
         defaults:
-          cpus_per_task: 8
-          mem_gb: 20
+          cpus_per_task: 8    # --cpus-per-task=
+          mem_gb: 20          # --mem=<N>G
+          # Walltime formats: HH:MM:SS, Go duration ("1h"), or ISO-8601 PT ("PT1H").
+          # Converted to HH:MM:SS before passing to sbatch --time=.
           walltime: "01:00:00"
 
+        # Filesystem paths that must also be accessible from SLURM compute nodes.
+        # Used for pre-flight reachability checks. Leave empty if not needed.
+        # shared_roots:
+        #   - /data/shared
+        #   - /scratch/project
+
+    # ── slurm-docker (example – disabled here) ───────────────────────────────
+    # Like slurm-native but wraps the workload in a Docker container.
+    # Requires execution.container.image in each station that uses this executor.
+    # slurm-docker:
+    #   slurm:
+    #     connection:
+    #       mode: ssh
+    #       host: slurm-login.example.org
+    #       user: slurmuser
+    #       key_file: /home/user/.ssh/id_ed25519
+    #     account: co2m
+    #     partition: gpu
+    #     qos: high
+    #     submit_command: sbatch
+    #     query_command: sacct
+    #     cancel_command: scancel
+    #     poll_interval: 1m
+    #     defaults:
+    #       cpus_per_task: 4
+    #       mem_gb: 16
+    #       walltime: "02:00:00"
+    #     shared_roots:
+    #       - /data/shared
+    #   docker:
+    #     # Volume mounts added to every docker run invocation on the compute node.
+    #     # Format: "source:destination" or "source:destination:options"
+    #     # (same syntax as docker run -v). Prepended to per-station container.mounts.
+    #     default_mounts:
+    #       - /data/shared:/data/shared:ro
+    #       - /scratch:/scratch
+    #     # Run the container as this user (e.g. "1000:1000" or a username).
+    #     # Empty = use the image's default user.
+    #     user: ""
+
+# ─── Generators ───────────────────────────────────────────────────────────────
+# Generator identity records embedded in job orders and audit trails.
 generators:
+  # Identity of the component that produces the joborder file for each run.
   job_order:
+    # Free-form type tag. Examples: "system-default", "custom-jog", "ipf-jog".
     type: system-default
+
+    # Version string embedded verbatim in each generated job order document.
     version: local-mvp-v1
-    # relative or absolute paths for input/output files in joborder
+
+    # How file paths are encoded inside the job order document.
+    # Options:
+    #   relative – paths relative to the working root (default; portable).
+    #   absolute – absolute filesystem paths (for scripts that cannot resolve
+    #              relative paths from an arbitrary working directory).
     paths: relative
+
+  # Identity of the working-root path generator.
   working_root:
     type: system-default
     version: local-mvp-v1

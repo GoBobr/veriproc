@@ -8,9 +8,11 @@ description: |
   station D reads the original SCE_2__BIG______ directly and processes only
   its assigned sub-window. Station-E (statE) aggregates the results once all
   group members are complete.
+
 execution:
   mode: slurm-native
   executable: ./scripts/run.sh
+
 inputs:
   - file_type: SCE_2__BIG______
     category: product
@@ -18,8 +20,23 @@ inputs:
     margins: [0, 0]
     mandatory: true
 
+# No outputs block: station C is a pure fan-out dispatcher. Its workload
+# writes a task-out.yaml file (artifact logical type "task_out") whose
+# entries describe the child tasks and split group for the daemon to create.
+# The daemon parses task-out.yaml at finalisation time.
+
 downstream:
+  # task_out: the daemon does NOT create statD tasks automatically on
+  # finalisation. Instead it parses the task-out.yaml produced by the
+  # workload, which specifies each child task's window, station, and the
+  # shared split group ID. One statD task is created per entry.
   - station_id: statD
     mode: task_out
+
+  # fan_in: statE is triggered automatically only once EVERY statD task
+  # in the split group has reached the canonical (success) state. This is
+  # the aggregation gate that prevents statE from starting until all
+  # parallel workers have completed. The backend fires the fan_in trigger
+  # via the group-complete notifier, not at individual run finalisation.
   - station_id: statE
     mode: fan_in

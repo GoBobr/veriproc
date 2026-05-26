@@ -8,12 +8,24 @@ description: |
   so the classical matcher selects available SCE_2__PROCBIG__ granules from
   the micro-ra rolling archive, one winner per 90-second interval group, and
   combines them into the final SCE_2__FINAL____ product.
+
 execution:
+  # local: runs as a child OS process on the daemon host. No SLURM cluster
+  # resources are needed; aggregation is I/O-bound and lightweight.
+  # This overrides the instance executor.default (slurm-native) intentionally.
   mode: local
   executable: ./scripts/run.sh
+
 inputs:
   - file_type: SCE_2__PROCBIG__
+    # Searches the micro-ra rolling archive, which is populated by statD tasks.
+    # The category name must match a key in instance product_categories.
     category: micro-ra
+
+    # overlaps: collect any PROCBIG__ granule whose time window overlaps the
+    # full parent task window. The classical matcher groups overlapping
+    # candidates by their time-interval slot and picks the newest file in each
+    # group, yielding one winner per 90-second slice across the 15-minute window.
     window_match: overlaps
     margins: [0, 0]
     mandatory: true
@@ -22,5 +34,7 @@ outputs:
   - file_type: SCE_2__FINAL____
     mandatory: true
     publish:
+      # Publish the final aggregated product into proc-ra so it is accessible
+      # to any subsequent processing stations or external consumers.
       rolling_archive: proc-ra
       mode: copy

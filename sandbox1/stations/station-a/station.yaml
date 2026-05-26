@@ -1,19 +1,110 @@
+# ─── VeriProc Station Definition ─────────────────────────────────────────────
+# Schema: veriproc.station/v1
+#
+# A station describes one processing step: the inputs to consume, how to
+# invoke the workload, which outputs to validate and publish, and which
+# downstream stations to trigger on success.
+#
+# Station files are loaded at daemon startup from the instance
+# storage.station_config_root directory. The loader scans one level deep:
+#   <station_config_root>/<any-directory>/station.yaml
+#
+# This file (station-a) is the most feature-complete example in the sandbox.
+# See the other station files for patterns specific to fan-out/fan-in and
+# parallel worker use cases.
+
+# Unique station identifier. Stable across restarts; used as the task ID
+# prefix and embedded in working-root path segments.
+# Slug format recommended (a–z, 0–9, hyphens/underscores, no spaces).
 station_id: statA
+
+# Human-readable display name. Must be unique across all active stations.
 station_name: Scenario 2 ingest
+
+# Schema identifier. Must always be "veriproc.station/v1".
 schema_version: veriproc.station/v1
 
+# Optional free-text description. Not interpreted by the daemon.
 description: |
   Sandbox station A selects two rolling-archive inputs, writes a JSON output,
   publishes it back to proc-ra, and triggers STATION-B.
 
+# Optional SHA-256 fingerprint of this file used as a load-time consistency
+# check. If present and non-empty the loader verifies it matches the computed
+# hash; mismatches abort startup.  Remove or leave blank to skip verification.
+# content_hash: "sha256:<64-hex-chars>"
+
+# ─── Execution ────────────────────────────────────────────────────────────────
 execution:
+  # Executor backend to use for every run of this station.
+  # Options:
+  #   local        – OS child process on the daemon host (no cluster required).
+  #   slurm-native – SLURM job; script runs directly on compute node.
+  #   slurm-docker – SLURM job wrapped in a Docker container; requires
+  #                  container.image below.
+  #   (empty)      – inherit the instance executor.default (recommended).
   mode: slurm-native
+
+  # Path to the workload executable. Relative paths are resolved to absolute
+  # at load time using the station directory as the base. Required unless the
+  # station is purely declarative (e.g. routing-only with no workload).
   executable: ./scripts/run.sh
 
+  # Optional CLI arguments appended after the executable. Rarely needed;
+  # prefer VERIPROC_* environment variables injected by the executor.
+  # args:
+  #   - --verbose
+  #   - --config=cfg.toml
+
+  # Per-station SLURM resource requests. These override the instance-level
+  # executor.slurm.defaults for every run of this station.
+  # Omit any field (or set to 0) to inherit the instance default.
+  # resources:
+  #   cpus_per_task: 4         # --cpus-per-task= passed to sbatch
+  #   mem_gb: 8                # --mem=<N>G passed to sbatch
+  #   walltime: "00:30:00"     # HH:MM:SS, Go duration, or ISO-8601 PT string
+
+  # Station-level SLURM scheduling overrides (applied on top of instance
+  # executor defaults). Ignored for local or stub executors.
+  # slurm:
+  #   partition: express        # override executor.slurm.partition
+  #   account: special-project  # override executor.slurm.account
+  #   qos: high                 # override executor.slurm.qos
+  #   extra_args:               # raw extra sbatch flags (non-empty strings only)
+  #     - "--constraint=avx512"
+  #     - "--nodelist=node042"
+
+  # Container runtime settings (slurm-docker executor only).
+  # Ignored for local and slurm-native executors.
+  # container:
+  #   image: registry.example.org/myimage:1.2.3  # required for slurm-docker
+  #   mounts:                                     # appended to docker.default_mounts
+  #     - /local/data:/data:ro
+  #   user: "1000:1000"                           # override image default user
+
+# ─── Job order ────────────────────────────────────────────────────────────────
+# The daemon writes a structured document (the "job order") into the run's
+# working root before launching the workload. The workload receives the file
+# path via the VERIPROC_JOBORDER_PATH environment variable.
 joborder:
-  # can be none/yaml/json/toml
+  # Serialisation format of the job order document.
+  # Options: yaml | toml | json | none
+  #   none – do not write a job order file; VERIPROC_JOBORDER_PATH is unset.
+  # Default: yaml.
   format: yaml
+
+  # Filename for the job order file, relative to the working root.
+  # Defaults per format: yaml → joborder.yaml, toml → joborder.toml,
+  # json → joborder.json.  Must be a plain filename (no directory separators).
   name: joborder.yaml
+
+  # Arbitrary YAML mapping merged into the top level of the generated job order.
+  # Scalar values and nested mappings may use context references <key> or
+  # <key.subkey>.  Available context names at run time:
+  #   – All top-level keys from instance definitions (e.g. <facility.processing_center>)
+  #   – Runtime values: <task_id>, <station_id>, <window_start>, <window_end>,
+  #                     <retry_index>, <run_ref>, <split_group_id>
+  #   – Resolved input paths (see spec §5.4 for the full input context shape)
   include:
     dyn_params:
       mode: NOMINAL
@@ -28,30 +119,126 @@ joborder:
       environment: <facility.environment>
       acquisition_station: <facility.acquisition_station>
 
+# ─── Inputs ───────────────────────────────────────────────────────────────────
+# Ordered list of input definitions. For each run the classical matcher
+# searches the declared category folders for a file whose name satisfies the
+# filename_pattern and whose time window satisfies the window_match constraint.
+# Runs are blocked (not submitted) until all mandatory inputs are resolved.
 inputs:
-  - file_type: CLI_1B_RAD______
+  - # Logical product type; drives <FILE_TYPE> substitution in filename_pattern.
+    file_type: CLI_1B_RAD______
+
+    # Product category to search. Must match a name in instance product_categories.
     category: product
+
+    # Object kind expected on disk.
+    # Options: regular_file (default) | directory
+    # object_kind: regular_file
+
+    # Override the instance filename_pattern for this input only. Uses the same
+    # <COMPONENT> placeholder syntax. Omit to use the instance-level pattern.
+    # filename_pattern: "<MISSION_ID>_<FILE_TYPE>_??_<START_TIME>_<END_TIME>_*"
+
+    # Temporal relationship between the candidate file's window and the task's
+    # processing window.
+    # Options:
+    #   overlaps      – half-open interval overlap: the candidate window and the
+    #                   task window share at least one instant (default when the
+    #                   filename_pattern contains time-stamp components).
+    #   within_window – the candidate window is fully contained in the task window.
+    # Aliases: "cross" → overlaps; "fully_within" → within_window.
     window_match: overlaps
+
+    # Extend the effective task window by [before_seconds, after_seconds] when
+    # searching for matching files. [0, 0] means no extension (default).
     margins: [0, 0]
+
+    # When true the run is blocked (not submitted) if no matching file is found.
+    # When false (default) the run proceeds without this input.
     mandatory: true
+
+    # optional: true  # mutually exclusive with mandatory; input is skipped if absent
+
   - file_type: CO2_1A_GEO______
     category: product
     window_match: overlaps
     margins: [0, 0]
     mandatory: true
+
   - file_type: SCE_2__CAMF___AX
     category: aux
+    # This auxiliary product is a directory artifact (e.g. a calibration file set).
+    # The matcher locates the directory by name using the filename_pattern, then
+    # verifies it is a directory before accepting it.
     object_kind: directory
     window_match: overlaps
     margins: [0, 0]
     mandatory: true
 
+# ─── Outputs ──────────────────────────────────────────────────────────────────
+# Ordered list of output definitions. After the workload exits successfully the
+# daemon resolves each output in the run's working-root output/ directory, then
+# validates and optionally publishes them.
 outputs:
-  - file_type: SCE_2__ICM______
+  - # Logical product type for this output. Drives <FILE_TYPE> substitution in
+    # the filename_pattern when locating the produced file in output/.
+    file_type: SCE_2__ICM______
+
+    # Explicit literal filename to capture from output/. Use when the output
+    # does not follow the instance filename_pattern (e.g. a fixed report name).
+    # name: my_result.json
+
+    # Object kind of the expected output artifact.
+    # Options: regular_file (default) | directory
+    # object_kind: regular_file
+
+    # Glob pattern used to locate the output file instead of filename_pattern.
+    # Matched against filenames inside output/. Takes precedence over
+    # filename_pattern when both are set.
+    # pattern: "result_*.nc"
+
+    # When true a missing output causes the run to transition to the failed
+    # state at finalisation time.
     mandatory: true
+
+    # When true capture ALL files matching the pattern as individual artifacts
+    # instead of only the newest single match. Useful for fan-out stations that
+    # write a variable number of output files per run.
+    # multiple: false
+
+    # Publication into a rolling archive after run finalisation.
+    # Omit the publish block entirely to skip publication for this output.
     publish:
+      # Archive ID key from instance rolling_archives. Required.
       rolling_archive: proc-ra
+
+      # How the artifact is placed in the archive.
+      # Options: copy – atomic copy preserving file content (default and only
+      #                 currently supported mode).
       mode: copy
 
+      # Optional relative sub-path within the archive root. When set the
+      # artifact is written to <archive.path>/<target_subpath>/<filename>.
+      # Must be relative and must not escape the archive root (no "..").
+      # target_subpath: "YYYY/MM"
+
+# ─── Downstream stations ──────────────────────────────────────────────────────
+# Stations triggered after this station's run reaches the canonical (success)
+# state. The daemon creates tasks at the listed downstream stations using the
+# same processing window as the completing run.
 downstream:
-  - station_id: statB
+  - # Target station identifier. Must match a station_id loaded at startup.
+    station_id: statB
+
+    # Triggering mode. Controls when the downstream task is created.
+    # Options:
+    #   (empty) / normal – create the downstream task immediately when this run
+    #                      is finalised (default).
+    #   task_out         – do NOT trigger automatically; the workload instead
+    #                      writes a task-out.yaml describing the child tasks to
+    #                      create.  Used for dynamic fan-out splitting patterns.
+    #   fan_in           – trigger only when the entire split group spawned by
+    #                      this station reaches the "complete" state (all members
+    #                      canonical). Used as the aggregation gate after a
+    #                      task_out fan-out.
+    # mode: normal
