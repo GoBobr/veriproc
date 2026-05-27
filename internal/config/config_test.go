@@ -237,8 +237,6 @@ func TestConfig_SlurmExecutorConfig(t *testing.T) {
       cpus_per_task: 8
       mem_gb: 32
       walltime: PT2H
-    shared_roots:
-      - /shared/veriproc
   docker:
     default_mounts:
       - /shared/veriproc:/work

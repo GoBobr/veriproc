@@ -103,7 +103,6 @@ type SlurmConfig struct {
 	CancelCommand string          `yaml:"cancel_command"`
 	PollInterval  string          `yaml:"poll_interval"`
 	Defaults      SlurmResources  `yaml:"defaults"`
-	SharedRoots   []string        `yaml:"shared_roots"`
 }
 
 // SlurmConnection describes where scheduler commands are executed.
@@ -455,11 +454,6 @@ func (c *Config) validateSlurmSpec(prefix string, s *SlurmConfig, d *DockerExecu
 	if s.Defaults.Walltime != "" {
 		if _, err := slurmWalltime(s.Defaults.Walltime); err != nil {
 			return fmt.Errorf("config: %s.slurm.defaults.walltime %q invalid: %w", prefix, s.Defaults.Walltime, err)
-		}
-	}
-	for _, root := range s.SharedRoots {
-		if strings.TrimSpace(root) == "" {
-			return fmt.Errorf("config: %s.slurm.shared_roots must not contain empty entries", prefix)
 		}
 	}
 	if d != nil {

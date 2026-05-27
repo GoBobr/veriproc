@@ -28,7 +28,6 @@ type SlurmConfig struct {
 	QueryCommand  string
 	CancelCommand string
 	Defaults      ResourceRequest
-	SharedRoots   []string
 	Docker        DockerDefaults
 }
 
@@ -318,7 +317,7 @@ func renderWrapper(desc JobDescription, effective effectiveSlurm) string {
 	b.WriteString(" )\n")
 	b.WriteString("set +e\n")
 	if effective.Mode == SlurmDocker {
-		containerName := "veriproc-" + sanitizeName(desc.RunID)
+		containerName := "veriproc-" + sanitizeName(desc.RunRef)
 		b.WriteString("DOCKER_CONTAINER_NAME=" + shellQuote(containerName) + "\n")
 		b.WriteString("docker run --rm \\\n")
 		b.WriteString("  --name \"$DOCKER_CONTAINER_NAME\" \\\n")

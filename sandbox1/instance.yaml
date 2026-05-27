@@ -344,45 +344,37 @@ executor:
           # Converted to HH:MM:SS before passing to sbatch --time=.
           walltime: "01:00:00"
 
-        # Filesystem paths that must also be accessible from SLURM compute nodes.
-        # Used for pre-flight reachability checks. Leave empty if not needed.
-        # shared_roots:
-        #   - /data/shared
-        #   - /scratch/project
-
     # ── slurm-docker (example – disabled here) ───────────────────────────────
     # Like slurm-native but wraps the workload in a Docker container.
     # Requires execution.container.image in each station that uses this executor.
-    # slurm-docker:
-    #   slurm:
-    #     connection:
-    #       mode: ssh
-    #       host: slurm-login.example.org
-    #       user: slurmuser
-    #       key_file: /home/user/.ssh/id_ed25519
-    #     account: co2m
-    #     partition: gpu
-    #     qos: high
-    #     submit_command: sbatch
-    #     query_command: sacct
-    #     cancel_command: scancel
-    #     poll_interval: 1m
-    #     defaults:
-    #       cpus_per_task: 4
-    #       mem_gb: 16
-    #       walltime: "02:00:00"
-    #     shared_roots:
-    #       - /data/shared
-    #   docker:
-    #     # Volume mounts added to every docker run invocation on the compute node.
-    #     # Format: "source:destination" or "source:destination:options"
-    #     # (same syntax as docker run -v). Prepended to per-station container.mounts.
-    #     default_mounts:
-    #       - /data/shared:/data/shared:ro
-    #       - /scratch:/scratch
-    #     # Run the container as this user (e.g. "1000:1000" or a username).
-    #     # Empty = use the image's default user.
-    #     user: ""
+    slurm-docker:
+      slurm:
+        connection:
+          mode: ssh
+          host: co2mbox1
+          user: leonid
+          key_file: $HOME/.ssh/id_ed25519
+        account: co2m
+        partition: unlim
+        qos: unlim
+        submit_command: sbatch
+        query_command: sacct
+        cancel_command: scancel
+        poll_interval: 1m
+        defaults:
+          cpus_per_task: 4
+          mem_gb: 16
+          walltime: "02:00:00"
+      docker:
+        # Volume mounts added to every docker run invocation on the compute node.
+        # Format: "source:destination" or "source:destination:options"
+        # (same syntax as docker run -v). Prepended to per-station container.mounts.
+        default_mounts:
+          - /tcenas:/tcenas:rw
+          - /tcenas2:/tcenas2:rw
+        # Run the container as this user (e.g. "1000:1000" or a username).
+        # Empty = use the image's default user.
+        user: "10055:1536"
 
 # ─── Generators ───────────────────────────────────────────────────────────────
 # Generator identity records embedded in job orders and audit trails.

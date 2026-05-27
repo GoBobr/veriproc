@@ -43,7 +43,7 @@ execution:
   #   slurm-docker – SLURM job wrapped in a Docker container; requires
   #                  container.image below.
   #   (empty)      – inherit the instance executor.default (recommended).
-  mode: slurm-native
+  mode: slurm-docker
 
   # Path to the workload executable. Relative paths are resolved to absolute
   # at load time using the station directory as the base. Required unless the
@@ -78,6 +78,11 @@ execution:
   # Ignored for local and slurm-native executors.
   # container:
   #   image: registry.example.org/myimage:1.2.3  # required for slurm-docker
+  #   mounts:                                     # appended to docker.default_mounts
+  #     - /local/data:/data:ro
+  #   user: "1000:1000"                           # override image default user
+  container:
+    image: ubuntu:latest  # required for slurm-docker
   #   mounts:                                     # appended to docker.default_mounts
   #     - /local/data:/data:ro
   #   user: "1000:1000"                           # override image default user

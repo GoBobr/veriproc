@@ -116,5 +116,6 @@ YAML
     echo "  declared ${SLICE_KEY}: start=${SLICE_START_RFC3339} end=${SLICE_END_RFC3339}"
 done
 
+sleep 30
 echo "station-C: done"
 echo "  descriptor: ${TASK_OUT}"

@@ -42,6 +42,10 @@ partial_processing: true
 slice_window: ${VERIPROC_WINDOW_START} to ${VERIPROC_WINDOW_END}
 OUTPUT
 
+DELAY=$((20 + RANDOM % 21))
+
+echo "sleeping for ${DELAY} seconds to simulate variable processing time..."
+sleep "${DELAY}"
 echo "wrote ${OUTFNAME}"
 
 # The fan-in trigger (submitting station-E when the group completes) is

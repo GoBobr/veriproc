@@ -308,7 +308,6 @@ func slurmSpecConfig(typeName string, spec config.ExecutorSpec) executor.SlurmCo
 			MemGB:       spec.Slurm.Defaults.MemGB,
 			Walltime:    spec.Slurm.Defaults.Walltime,
 		},
-		SharedRoots: append([]string(nil), spec.Slurm.SharedRoots...),
 		Docker: executor.DockerDefaults{
 			DefaultMounts: append([]string(nil), spec.Docker.DefaultMounts...),
 			User:          spec.Docker.User,
@@ -336,7 +335,6 @@ func slurmExecutorConfig(cfg config.ExecutorConfig) executor.SlurmConfig {
 			MemGB:       cfg.Slurm.Defaults.MemGB,
 			Walltime:    cfg.Slurm.Defaults.Walltime,
 		},
-		SharedRoots: append([]string(nil), cfg.Slurm.SharedRoots...),
 		Docker: executor.DockerDefaults{
 			DefaultMounts: append([]string(nil), cfg.Docker.DefaultMounts...),
 			User:          cfg.Docker.User,

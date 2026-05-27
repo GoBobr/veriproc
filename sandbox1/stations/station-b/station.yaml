@@ -8,9 +8,11 @@ description: |
 execution:
   # Uses the instance default executor (executor.default: slurm-native).
   # Set mode explicitly to override, e.g. mode: local for a lighter workload.
-  mode: slurm-native
+  mode: slurm-docker
   executable: ./scripts/run.sh
-
+  container:
+    image: ubuntu:latest  # required for slurm-docker
+    
 # joborder block is omitted: defaults to format: yaml, name: joborder.yaml.
 # The daemon still writes the standard job order document; the workload can
 # read it via VERIPROC_JOBORDER_PATH.

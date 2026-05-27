@@ -21,4 +21,5 @@ task_id: ${VERIPROC_TASK_ID}
 primary input: ${primary}
 OUTPUT
 echo "wrote ${VERIPROC_RUN_DIR}/${OUTFNAME} from ${primary}"
+sleep 20
 exit 0

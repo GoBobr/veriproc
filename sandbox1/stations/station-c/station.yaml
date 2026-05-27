@@ -10,9 +10,11 @@ description: |
   group members are complete.
 
 execution:
-  mode: slurm-native
+  mode: slurm-docker
   executable: ./scripts/run.sh
-
+  container:
+    image: ubuntu:latest  # required for slurm-docker
+    
 inputs:
   - file_type: SCE_2__BIG______
     category: product

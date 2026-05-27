@@ -51,4 +51,5 @@ OUTFNAME="CDMA_SCE_2__FINAL_____ON_${VERIPROC_WINDOW_START}_${VERIPROC_WINDOW_EN
 } > "${VERIPROC_RUN_DIR}/${OUTFNAME}"
 
 echo "wrote ${OUTFNAME} from ${granule_count} granule(s)"
+sleep 15
 exit 0

@@ -13,9 +13,11 @@ description: |
 execution:
   # Explicit mode: overrides the instance executor.default for this station.
   # Fan-out workers often benefit from overriding mode to tune their queue.
-  mode: slurm-native
+  mode: slurm-docker
   executable: ./scripts/run.sh
-
+  container:
+    image: ubuntu:latest  # required for slurm-docker
+    
   # Per-station resource overrides applied to every run of this station.
   # These replace (not merge with) the executor.slurm.defaults for fields
   # that are set. Omit a field to inherit the instance default.
