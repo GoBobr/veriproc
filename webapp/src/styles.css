@@ -128,7 +128,7 @@ input, button, select, textarea { font: inherit; }
   padding: 2px 4px;
   border-radius: 3px;
 }
-.preset-row { display: flex; gap: 4px; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.preset-row { display: flex; gap: 4px; font-size: 11px; color: var(--muted); margin-bottom: 6px; align-items: center; flex-wrap: wrap; }
 .preset-row button {
   background: transparent;
   border: 1px solid var(--border);
@@ -138,6 +138,18 @@ input, button, select, textarea { font: inherit; }
   font-size: 11px;
 }
 .preset-row button.active { background: var(--accent); color: white; border-color: var(--accent); }
+.since-picker {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  color-scheme: dark;
+}
+[data-theme="light"] .since-picker { color-scheme: light; }
+.last-refresh { margin-left: auto; white-space: nowrap; }
 .degraded-msg {
   color: var(--danger);
   font-size: 12px;
@@ -254,6 +266,30 @@ input, button, select, textarea { font: inherit; }
 .dialog button.primary { background: var(--accent); color: white; border: none; padding: 6px 14px; border-radius: 4px; }
 .dialog button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 6px 14px; border-radius: 4px; }
 .dialog .err { color: var(--danger); font-size: 12px; margin-top: 8px; }
+
+/* Info dialog */
+.info-dialog { min-width: 420px; max-width: 560px; }
+.info-dialog-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.info-dialog-header h3 { margin: 0; font-size: 14px; }
+.info-loading { color: var(--muted); font-size: 12px; padding: 8px 0; }
+.info-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.info-table td, .info-table th { padding: 4px 6px; text-align: left; vertical-align: top; }
+.info-table td:first-child { color: var(--muted); white-space: nowrap; }
+.info-table code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.info-table code.muted { color: var(--muted); }
+.info-section-head { padding-top: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; color: var(--muted); }
+.info-instance-name { padding-top: 8px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.indent { padding-left: 20px !important; }
+.err-cell { color: var(--danger); }
+
+/* Status dot (up/down indicator) */
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot-up   { background: var(--slot-completed); }
+.dot-down { background: var(--slot-failed); }
+
+/* Info button */
+.info-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+.info-btn:hover { color: var(--text); border-color: var(--muted); }
 
 /* Task page */
 .task-page { padding: 16px; }

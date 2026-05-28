@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/eum/veriproc/internal/version"
 )
 
 // writeJSON encodes body to w with the supplied status.
@@ -113,11 +116,10 @@ func (g *Gateway) stationControl(w http.ResponseWriter, r *http.Request, action 
 
 // submitRequest is the request body accepted by the station submit endpoint.
 type submitRequest struct {
-	Start   string         `json:"start"`
-	End     string         `json:"end"`
-	Force   bool           `json:"force"`
-	Inputs  map[string]any `json:"inputs,omitempty"`
-	Client  map[string]any `json:"client,omitempty"`
+	Start  string         `json:"start"`
+	End    string         `json:"end"`
+	Force  bool           `json:"force"`
+	Client map[string]any `json:"client,omitempty"`
 }
 
 func (g *Gateway) handleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -148,16 +150,17 @@ func (g *Gateway) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := map[string]any{
-		"station_id": stationID,
-		"start":      start.UTC().Format(time.RFC3339Nano),
-		"end":        end.UTC().Format(time.RFC3339Nano),
-		"force":      body.Force,
-	}
-	if body.Inputs != nil {
-		payload["inputs"] = body.Inputs
+		"destination": map[string]any{
+			"station_id": stationID,
+		},
+		"window": map[string]any{
+			"start": start.UTC().Format(time.RFC3339Nano),
+			"end":   end.UTC().Format(time.RFC3339Nano),
+		},
+		"force": body.Force,
 	}
 	if body.Client != nil {
-		payload["client"] = body.Client
+		payload["client_metadata"] = body.Client
 	}
 	p, _ := PrincipalFromContext(r.Context())
 	out, err := inst.client.SubmitTask(r.Context(), payload)
@@ -391,4 +394,59 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// handleSystemInfo returns the console gateway's own version metadata plus a
+// live health probe of every configured upstream instance. All probes run
+// concurrently; a per-call timeout of 5 s is applied via the request context.
+func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
+	type instanceHealth struct {
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		Status     string `json:"status"`              // "up" | "down"
+		Version    string `json:"version,omitempty"`
+		APIVersion string `json:"api_version,omitempty"`
+		InstanceID string `json:"instance_id,omitempty"`
+		Error      string `json:"error,omitempty"`
+	}
+
+	results := make([]instanceHealth, len(g.cfg.Instances))
+	var wg sync.WaitGroup
+	for i, instCfg := range g.cfg.Instances {
+		wg.Add(1)
+		go func(idx int, id, title string) {
+			defer wg.Done()
+			ih := instanceHealth{ID: id, Title: title}
+			inst, ok := g.instance(id)
+			if !ok {
+				ih.Status = "down"
+				ih.Error = "not configured"
+				results[idx] = ih
+				return
+			}
+			h, err := inst.client.GetHealth(r.Context())
+			if err != nil {
+				ih.Status = "down"
+				ih.Error = err.Error()
+			} else {
+				ih.Status = "up"
+				ih.Version, _ = h["version"].(string)
+				ih.APIVersion, _ = h["api_version"].(string)
+				ih.InstanceID, _ = h["instance_id"].(string)
+			}
+			results[idx] = ih
+		}(i, instCfg.ID, instCfg.Title)
+	}
+	wg.Wait()
+
+	vi := version.Get()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"console": map[string]any{
+			"version":     vi.Version,
+			"commit":      vi.Commit,
+			"build_date":  vi.BuildDate,
+			"api_version": vi.APIVersion,
+		},
+		"instances": results,
+	})
 }

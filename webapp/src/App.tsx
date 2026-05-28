@@ -4,6 +4,7 @@ import { useRoute } from "./state/router";
 import { Login } from "./pages/Login";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TaskPage } from "./pages/TaskPage";
+import { InfoDialog } from "./components/InfoDialog";
 
 type Theme = "dark" | "light";
 
@@ -23,6 +24,7 @@ export function App() {
   const { session, logout } = useAuth();
   const route = useRoute();
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const [showInfo, setShowInfo] = useState(false);
 
   useEffect(() => {
     applyTheme(theme);
@@ -43,6 +45,7 @@ export function App() {
           <button class="theme-toggle" onClick={toggleTheme} title="Toggle light/dark theme">
             {theme === "dark" ? "☀ Light" : "☾ Dark"}
           </button>
+          <button class="info-btn" onClick={() => setShowInfo(true)} title="System info">ℹ Info</button>
           {session && (
             <div class="user">
               <span>{session.subject}</span>
@@ -54,6 +57,7 @@ export function App() {
           )}
         </div>
       </header>
+      {showInfo && session && <InfoDialog onClose={() => setShowInfo(false)} />}
       <main>
         {!session && <Login />}
         {session && route.page === "dashboard" && <DashboardPage />}

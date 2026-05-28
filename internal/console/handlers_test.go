@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,6 +56,12 @@ type fakeUpstream struct {
 }
 
 func (f *fakeUpstream) Health(_ context.Context) error { return f.health }
+func (f *fakeUpstream) GetHealth(_ context.Context) (map[string]any, error) {
+	if f.health != nil {
+		return nil, f.health
+	}
+	return map[string]any{"status": "ok", "version": "test", "api_version": "v1"}, nil
+}
 
 func (f *fakeUpstream) Stations(_ context.Context) ([]StationListItem, error) {
 	return f.stations, nil
@@ -100,6 +107,9 @@ func (f *fakeUpstream) RetryTask(_ context.Context, taskID string, _ map[string]
 	defer f.mu.Unlock()
 	f.retryCalls++
 	return map[string]any{"task_id": taskID, "retry": true}, nil
+}
+func (f *fakeUpstream) ListTasks(_ context.Context, _ url.Values) ([]map[string]any, error) {
+	return nil, nil
 }
 func (f *fakeUpstream) ListTaskRuns(_ context.Context, taskID string) ([]map[string]any, error) {
 	return f.taskRuns[taskID], nil
@@ -385,6 +395,9 @@ func TestRouter_TreeAndPreview(t *testing.T) {
 type fakeFailingUpstream struct{ err error }
 
 func (f *fakeFailingUpstream) Health(_ context.Context) error                  { return f.err }
+func (f *fakeFailingUpstream) GetHealth(_ context.Context) (map[string]any, error) {
+	return nil, f.err
+}
 func (f *fakeFailingUpstream) Stations(_ context.Context) ([]StationListItem, error) { return nil, f.err }
 func (f *fakeFailingUpstream) StationsSummary(_ context.Context, _ time.Time) (StationsSummary, error) {
 	return StationsSummary{}, f.err
@@ -405,6 +418,9 @@ func (f *fakeFailingUpstream) GetTask(_ context.Context, _ string) (map[string]a
 	return nil, f.err
 }
 func (f *fakeFailingUpstream) RetryTask(_ context.Context, _ string, _ map[string]any) (map[string]any, error) {
+	return nil, f.err
+}
+func (f *fakeFailingUpstream) ListTasks(_ context.Context, _ url.Values) ([]map[string]any, error) {
 	return nil, f.err
 }
 func (f *fakeFailingUpstream) ListTaskRuns(_ context.Context, _ string) ([]map[string]any, error) {

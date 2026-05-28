@@ -2,6 +2,7 @@ import type {
   DashboardInstance,
   InstancesResponse,
   PreviewResponse,
+  SystemInfo,
   TreeResponse,
 } from "./types";
 
@@ -39,6 +40,9 @@ export class ConsoleClient {
 
   instances = (): Promise<InstancesResponse> =>
     this.send("GET", "/api/console/instances");
+
+  systemInfo = (): Promise<SystemInfo> =>
+    this.send("GET", "/api/console/info");
 
   dashboard = (instanceID: string, since?: Date): Promise<DashboardInstance> => {
     const q = since ? `?since=${encodeURIComponent(since.toISOString())}` : "";

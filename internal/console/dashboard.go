@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"net/url"
 	"sort"
 	"time"
 )
@@ -187,7 +188,10 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 	rows := make([]DashboardStationRow, 0, len(summary.Items))
 	for _, s := range summary.Items {
 		hidden, _ := g.db.HiddenForStation(ctx, instanceID, s.StationID)
-		row := ExpandStationRow(s, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility, now)
+		// Augment the summary with tasks that failed immediately (no run was
+		// ever created for them) so the operator has visibility.
+		augmented := g.injectRunlessFailed(ctx, inst, s, since)
+		row := ExpandStationRow(augmented, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility, now)
 		rows = append(rows, row)
 	}
 	view.Stations = rows
@@ -195,4 +199,60 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 		view.Since = summary.Since
 	}
 	return view
+}
+
+// injectRunlessFailed augments a StationSummary with synthetic failed slots
+// for tasks that failed before any run was created (latest_retry_index == nil
+// in the upstream task record). These tasks never appear in the station
+// summary slot list because the summary is run-derived.
+//
+// The call is best-effort: errors from ListTasks are silently ignored to
+// avoid degrading the whole dashboard.
+func (g *Gateway) injectRunlessFailed(ctx context.Context, inst *upstreamInstance, summary StationSummary, since time.Time) StationSummary {
+	// Build the set of task IDs already represented in the slot list so we
+	// don't double-count tasks that have runs.
+	knownTasks := make(map[string]struct{}, len(summary.Slots))
+	for _, sl := range summary.Slots {
+		if sl.TaskID != "" {
+			knownTasks[sl.TaskID] = struct{}{}
+		}
+	}
+
+	q := url.Values{}
+	q.Set("station_id", summary.StationID)
+	q.Set("state", "failed")
+	q.Set("limit", "50")
+	tasks, err := inst.client.ListTasks(ctx, q)
+	if err != nil {
+		return summary // best-effort; upstream list may not be available
+	}
+
+	for _, t := range tasks {
+		taskID, _ := t["task_id"].(string)
+		_, alreadyShown := knownTasks[taskID]
+		if taskID == "" || alreadyShown {
+			continue // already shown via a run slot
+		}
+		// Skip if the task has any runs (latest_retry_index != null).
+		// JSON null unmarshals as nil in map[string]any; a real value is float64.
+		if t["latest_retry_index"] != nil {
+			continue
+		}
+		// Respect the since window using the task's created_at.
+		if createdStr, ok := t["created_at"].(string); ok {
+			if created, err := time.Parse(time.RFC3339Nano, createdStr); err == nil {
+				if created.Before(since) {
+					continue
+				}
+			}
+		}
+		// Check if hidden.
+		summary.Slots = append(summary.Slots, SummarySlot{
+			Kind:       "failed",
+			TaskID:     taskID,
+			RetryIndex: 0,
+			State:      "failed",
+		})
+	}
+	return summary
 }

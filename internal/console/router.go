@@ -20,6 +20,7 @@ func (g *Gateway) Router(webapp fs.FS) http.Handler {
 	// ── api ──────────────────────────────────────────────────────────
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/console/instances", g.handleListInstances)
+	api.HandleFunc("GET /api/console/info", g.handleSystemInfo)
 	api.HandleFunc("GET /api/console/instances/{instance_id}/dashboard", g.handleDashboard)
 	api.HandleFunc("POST /api/console/instances/{instance_id}/stations/{station_id}/pause", g.handlePauseStation)
 	api.HandleFunc("POST /api/console/instances/{instance_id}/stations/{station_id}/unpause", g.handleUnpauseStation)
@@ -84,14 +85,32 @@ func (g *Gateway) loggingMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			next.ServeHTTP(w, r)
-			g.logger.Debug().
-				Str("method", r.Method).
+			rw := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+			next.ServeHTTP(rw, r)
+			ev := g.logger.Debug()
+			if rw.code >= 500 {
+				ev = g.logger.Error()
+			} else if rw.code >= 400 {
+				ev = g.logger.Warn()
+			}
+			ev.Str("method", r.Method).
 				Str("path", r.URL.Path).
+				Int("status", rw.code).
 				Dur("duration", time.Since(start)).
 				Msg("console_request")
 		})
 	}
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the written status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.code = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
 func chainMiddleware(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {

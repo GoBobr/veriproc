@@ -52,6 +52,26 @@ export interface DashboardInstance {
   last_refresh: string;
 }
 
+export interface InstanceHealthInfo {
+  id: string;
+  title: string;
+  status: "up" | "down";
+  version?: string;
+  api_version?: string;
+  instance_id?: string;
+  error?: string;
+}
+
+export interface SystemInfo {
+  console: {
+    version: string;
+    commit: string;
+    build_date: string;
+    api_version: string;
+  };
+  instances: InstanceHealthInfo[];
+}
+
 export interface TreeEntry {
   name: string;
   path: string;

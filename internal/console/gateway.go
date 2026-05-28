@@ -124,12 +124,35 @@ func (g *Gateway) resolveUpstreamRunID(ctx context.Context, instanceID, taskID s
 	return RunIDOf(run), nil
 }
 
-// audit records a mutating action without blocking the response. Errors are
-// only logged.
+// audit records a mutating action in the persistent audit log and emits a
+// structured log line so operators see every user action in the console log.
 func (g *Gateway) audit(ctx context.Context, e AuditEntry) {
 	if e.At.IsZero() {
 		e.At = g.now()
 	}
+
+	// Structured log — always at Info so user actions are visible at the
+	// default log level without needing to set debug.
+	ev := g.logger.Info().
+		Str("subject", e.Subject).
+		Str("action", e.Action).
+		Str("status", e.Status).
+		Str("instance", e.InstanceID)
+	if e.StationID != "" {
+		ev = ev.Str("station", e.StationID)
+	}
+	if e.TaskID != "" {
+		ev = ev.Str("task", e.TaskID)
+	}
+	if e.RetryIndex != nil {
+		ev = ev.Int("retry", *e.RetryIndex)
+	}
+	if e.Message != "" {
+		ev = ev.Str("detail", e.Message)
+	}
+	ev.Msg("console_action")
+
+	// Persistent audit record — errors only logged, never bubble up.
 	if err := g.db.RecordAudit(ctx, e); err != nil {
 		g.logger.Warn().Err(err).Str("subject", e.Subject).Str("action", e.Action).Msg("console: audit log failed")
 	}

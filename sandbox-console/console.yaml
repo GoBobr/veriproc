@@ -12,7 +12,7 @@ http:
 
 ui:
   refresh_interval: 5s
-  visible_slot_count: 12
+  visible_slot_count: 15
   completed_visibility_timeout: 30s
   default_stats_since: 24h
   upstream_summary_timeout: 30s

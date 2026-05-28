@@ -19,6 +19,8 @@ import (
 // REST surface (Spec §8.9.1).
 type UpstreamClient interface {
 	Health(ctx context.Context) error
+	// GetHealth fetches the upstream health report (status, version, api_version, instance_id).
+	GetHealth(ctx context.Context) (map[string]any, error)
 	Stations(ctx context.Context) ([]StationListItem, error)
 	StationsSummary(ctx context.Context, since time.Time) (StationsSummary, error)
 	StationSummary(ctx context.Context, stationID string, since time.Time) (StationSummary, error)
@@ -27,6 +29,9 @@ type UpstreamClient interface {
 	SubmitTask(ctx context.Context, body map[string]any) (map[string]any, error)
 	GetTask(ctx context.Context, taskID string) (map[string]any, error)
 	RetryTask(ctx context.Context, taskID string, body map[string]any) (map[string]any, error)
+	// ListTasks fetches tasks matching the supplied filter query params
+	// (station_id, state, limit). Returns the items array.
+	ListTasks(ctx context.Context, query url.Values) ([]map[string]any, error)
 	ListTaskRuns(ctx context.Context, taskID string) ([]map[string]any, error)
 	GetRun(ctx context.Context, runID string) (map[string]any, error)
 	ListRunJobs(ctx context.Context, runID string) (map[string]any, error)
@@ -129,6 +134,12 @@ func (c *HTTPUpstreamClient) do(ctx context.Context, method, path string, query 
 // Health performs a lightweight readiness check.
 func (c *HTTPUpstreamClient) Health(ctx context.Context) error {
 	return c.do(ctx, "GET", "/api/v1/health", nil, nil, nil)
+}
+
+func (c *HTTPUpstreamClient) GetHealth(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, "GET", "/api/v1/health", nil, nil, &out)
+	return out, err
 }
 
 // StationListItem mirrors the shape of /api/v1/stations items.
@@ -235,6 +246,18 @@ func (c *HTTPUpstreamClient) GetTask(ctx context.Context, taskID string) (map[st
 	var out map[string]any
 	err := c.do(ctx, "GET", "/api/v1/tasks/"+url.PathEscape(taskID), nil, nil, &out)
 	return out, err
+}
+
+type taskListResponse struct {
+	Items []map[string]any `json:"items"`
+}
+
+func (c *HTTPUpstreamClient) ListTasks(ctx context.Context, query url.Values) ([]map[string]any, error) {
+	var resp taskListResponse
+	if err := c.do(ctx, "GET", "/api/v1/tasks", query, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
 }
 
 func (c *HTTPUpstreamClient) RetryTask(ctx context.Context, taskID string, body map[string]any) (map[string]any, error) {
