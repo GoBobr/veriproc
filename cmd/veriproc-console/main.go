@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/eum/veriproc/internal/console"
+	"github.com/eum/veriproc/internal/version"
 )
 
 func main() {
@@ -103,6 +104,11 @@ func run(args []string) error {
 	}
 
 	logger.Info().Str("bind_addr", cfg.HTTP.BindAddr).Int("instances", len(cfg.Instances)).Msg("console gateway starting")
+	logger.Info().
+		Str("version", version.Version).
+		Str("commit", version.Commit).
+		Str("build_date", version.BuildDate).
+		Msg("veriproc-console starting")
 
 	errCh := make(chan error, 1)
 	go func() {

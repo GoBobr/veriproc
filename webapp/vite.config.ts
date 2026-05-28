@@ -5,9 +5,13 @@ export default defineConfig({
   plugins: [preact()],
   define: {
     // Expose the package.json version at build time so the UI can display it.
-    // Access via: import.meta.env.VITE_APP_VERSION
+    // Access via: import.meta.env.VITE_APP_VERSION / VITE_APP_COMMIT
+    // Priority: VITE_APP_VERSION env (set by Makefile) > package.json version > "dev"
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(
-      process.env.npm_package_version ?? "dev"
+      process.env.VITE_APP_VERSION ?? process.env.npm_package_version ?? "dev"
+    ),
+    "import.meta.env.VITE_APP_COMMIT": JSON.stringify(
+      process.env.VITE_APP_COMMIT ?? "unknown"
     ),
   },
   server: {

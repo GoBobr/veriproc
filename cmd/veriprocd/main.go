@@ -51,6 +51,8 @@ func run(args []string) error {
 	logger.Info().
 		Str("instance_id", cfg.InstanceID).
 		Str("version", version.Version).
+		Str("commit", version.Commit).
+		Str("build_date", version.BuildDate).
 		Str("api_version", version.APIVersion).
 		Str("bind_addr", cfg.HTTP.BindAddr).
 		Msg("veriprocd starting")

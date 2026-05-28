@@ -6,12 +6,17 @@ interface Props {
   onClose: () => void;
 }
 
-// Vite injects the package.json version at build time.
-// Falls back to "dev" in vitest / un-built environments.
+// Vite injects the version and git commit at build time (set by Makefile).
+// Falls back to "dev" / "unknown" in vitest / un-built environments.
 const WEBAPP_VERSION: string =
   typeof import.meta.env !== "undefined" && import.meta.env.VITE_APP_VERSION
     ? (import.meta.env.VITE_APP_VERSION as string)
     : "dev";
+
+const WEBAPP_COMMIT: string =
+  typeof import.meta.env !== "undefined" && import.meta.env.VITE_APP_COMMIT
+    ? (import.meta.env.VITE_APP_COMMIT as string)
+    : "unknown";
 
 export function InfoDialog({ onClose }: Props) {
   const { client } = useAuth();
@@ -45,26 +50,18 @@ export function InfoDialog({ onClose }: Props) {
                 </tr>
                 <tr>
                   <td>Version</td>
-                  <td><code>{info.console.version}</code></td>
+                  <td><code>{info.console.version} ({info.console.commit})</code></td>
                 </tr>
                 <tr>
                   <td>Protocol</td>
                   <td><code>{info.console.api_version}</code></td>
                 </tr>
                 <tr>
-                  <td>Commit</td>
-                  <td><code class="muted">{info.console.commit}</code></td>
-                </tr>
-                <tr>
-                  <td>Built</td>
-                  <td><code class="muted">{info.console.build_date}</code></td>
-                </tr>
-                <tr>
                   <th colSpan={2} class="info-section-head">Web App</th>
                 </tr>
                 <tr>
                   <td>Version</td>
-                  <td><code>{WEBAPP_VERSION}</code></td>
+                  <td><code>{WEBAPP_VERSION} ({WEBAPP_COMMIT})</code></td>
                 </tr>
                 <tr>
                   <th colSpan={2} class="info-section-head">Upstream Instances</th>
@@ -87,7 +84,7 @@ export function InfoDialog({ onClose }: Props) {
                       <>
                         <tr key={inst.id + "-ver"}>
                           <td class="indent">Version</td>
-                          <td><code>{inst.version || "—"}</code></td>
+                          <td><code>{inst.version || "—"}{inst.commit ? ` (${inst.commit})` : ""}</code></td>
                         </tr>
                         <tr key={inst.id + "-api"}>
                           <td class="indent">Protocol</td>

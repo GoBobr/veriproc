@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"github.com/eum/veriproc/internal/policy"
+	"github.com/eum/veriproc/internal/version"
 )
 
 // Spec §6.10 exit codes.
@@ -63,8 +64,6 @@ const (
 	ExitUnavailable   = 7
 	ExitIndeterminate = 8
 )
-
-const cliVersion = "0.8.0-m8"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -1002,7 +1001,7 @@ func (c *client) cmdVersion(args []string) int {
 			checkAPI = true
 		}
 	}
-	fmt.Fprintf(c.stdout, "veriproc-cli %s (api v1)\n", cliVersion)
+	fmt.Fprintf(c.stdout, "veriproc %s (%s)\n", version.Version, version.Commit)
 	if !checkAPI {
 		return ExitOK
 	}

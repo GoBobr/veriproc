@@ -79,6 +79,7 @@ type LivenessReport struct {
 	InstanceID string `json:"instance_id,omitempty"`
 	APIVersion string `json:"api_version,omitempty"`
 	Version    string `json:"version,omitempty"`
+	Commit     string `json:"commit,omitempty"`
 }
 
 // ReadinessReport is the response payload for /readiness.

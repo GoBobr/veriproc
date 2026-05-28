@@ -405,6 +405,7 @@ func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		Title      string `json:"title"`
 		Status     string `json:"status"`              // "up" | "down"
 		Version    string `json:"version,omitempty"`
+		Commit     string `json:"commit,omitempty"`
 		APIVersion string `json:"api_version,omitempty"`
 		InstanceID string `json:"instance_id,omitempty"`
 		Error      string `json:"error,omitempty"`
@@ -431,6 +432,7 @@ func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 			} else {
 				ih.Status = "up"
 				ih.Version, _ = h["version"].(string)
+				ih.Commit, _ = h["commit"].(string)
 				ih.APIVersion, _ = h["api_version"].(string)
 				ih.InstanceID, _ = h["instance_id"].(string)
 			}

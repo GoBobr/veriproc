@@ -20,6 +20,7 @@ func newHealthHandler(d Deps) http.Handler {
 		report.InstanceID = d.Config.InstanceID
 		report.APIVersion = version.APIVersion
 		report.Version = version.Version
+		report.Commit = version.Commit
 
 		status := http.StatusOK
 		if report.Status != health.StateOK {

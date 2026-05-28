@@ -57,6 +57,7 @@ export interface InstanceHealthInfo {
   title: string;
   status: "up" | "down";
   version?: string;
+  commit?: string;
   api_version?: string;
   instance_id?: string;
   error?: string;
