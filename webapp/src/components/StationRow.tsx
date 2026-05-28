@@ -103,7 +103,7 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
   };
 
   return (
-    <div class="station-row" data-station={row.station_id}>
+    <div class="station-row" data-station={row.station_id} data-paused={row.paused ? "true" : undefined}>
       <div
         class="station-label"
         onContextMenu={onLabelContext}

@@ -39,8 +39,23 @@ auth:
 webapp_dir: webapp/dist
 
 instances:
-  - id: sandbox-local
-    title: Sandbox (local)
+  - id: sandbox1
+    title: Sandbox1
+    # sandbox1 daemon listens on this address by default.
+    base_url: http://127.0.0.1:8080
+    # sandbox1 has authentication disabled; leave token empty.
+    token: ""
+    upstream_timeout_ms: 10000
+    # Filesystem containment: only paths under these roots may be browsed
+    # through the run tree / file preview endpoints. Resolved to absolute,
+    # symlink-checked paths at startup.
+    working_root_base: sandbox1/data/working-roots
+    allowed_roots:
+      - sandbox1/data/working-roots
+      - sandbox1/rolling-archives
+
+  - id: sandbox2
+    title: Sandbox2
     # sandbox1 daemon listens on this address by default.
     base_url: http://127.0.0.1:8080
     # sandbox1 has authentication disabled; leave token empty.

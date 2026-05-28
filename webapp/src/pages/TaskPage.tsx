@@ -9,6 +9,14 @@ interface Props {
   initialRetry?: number;
 }
 
+// Format an ISO-8601 timestamp to millisecond precision (drop sub-ms digits).
+function fmtTime(raw: unknown): string {
+  if (!raw || raw === "—") return "—";
+  const s = String(raw);
+  // Replace trailing nanoseconds (7-9 fractional digits) with ms (3 digits).
+  return s.replace(/(\.(\d{3}))\d+(Z|[+-]\d{2}:\d{2})?$/, "$1$3");
+}
+
 export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
   const { client } = useAuth();
   const taskQ = useFetch(() => client.getTask(instanceID, taskID), [instanceID, taskID]);
@@ -36,9 +44,9 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
           <div class="task-meta">
             <div>station<span>{String(taskQ.data.station_id ?? "—")}</span></div>
             <div>state<span>{String(taskQ.data.state ?? "—")}</span></div>
-            <div>created<span>{String(taskQ.data.created_at ?? "—")}</span></div>
-            <div>window start<span>{String(taskQ.data.start ?? "—")}</span></div>
-            <div>window end<span>{String(taskQ.data.end ?? "—")}</span></div>
+            <div>created<span>{fmtTime(taskQ.data.created_at)}</span></div>
+            <div>window start<span>{fmtTime(taskQ.data.start)}</span></div>
+            <div>window end<span>{fmtTime(taskQ.data.end)}</span></div>
             <div>instance<span>{instanceID}</span></div>
           </div>
         )}
@@ -91,6 +99,12 @@ function RunBrowser({
 
   return (
     <div class="split-panes">
+      {treeQ.data?.working_root && (
+        <div class="working-root" style={{ gridColumn: "1 / -1" }}>
+          <span class="working-root-label">working root</span>
+          <span class="working-root-path">{treeQ.data.working_root}</span>
+        </div>
+      )}
       <div class="tree-pane">
         <div class="path">/{path}</div>
         {path && (
