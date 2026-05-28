@@ -1,10 +1,14 @@
-.PHONY: all build test test-short run fmt vet tidy clean help
+.PHONY: all build test test-short run fmt vet tidy clean help console
 
 GO      ?= go
 PKG     := ./...
 BIN_DIR := bin
 DAEMON  := veriprocd
 CLI     := veriproc
+CONSOLE := veriproc-console
+WEBAPP_DIR := webapp
+NODE    ?= node
+NPM     ?= npm
 
 # Collect all Go source files for dependency tracking.
 GO_SRCS := $(shell find . -name '*.go' -not -path './vendor/*')
@@ -22,7 +26,24 @@ $(BIN_DIR)/$(CLI): $(GO_SRCS) go.mod go.sum
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -o $@ ./cmd/$(CLI)
 
-build: $(BIN_DIR)/$(DAEMON) $(BIN_DIR)/$(CLI)
+$(BIN_DIR)/$(CONSOLE): $(GO_SRCS) go.mod go.sum
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -o $@ ./cmd/$(CONSOLE)
+
+build: $(BIN_DIR)/$(DAEMON) $(BIN_DIR)/$(CLI) $(BIN_DIR)/$(CONSOLE)
+
+# ── webapp ─────────────────────────────────────────────────────────────────
+
+.PHONY: webapp-install webapp-build webapp-test
+
+webapp-install:
+	cd $(WEBAPP_DIR) && $(NPM) install --no-fund --no-audit
+
+webapp-build:
+	cd $(WEBAPP_DIR) && $(NPM) run build
+
+webapp-test:
+	cd $(WEBAPP_DIR) && $(NPM) test
 
 # ── development ─────────────────────────────────────────────────────────────
 

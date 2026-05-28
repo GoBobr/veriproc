@@ -3,6 +3,9 @@ bin/
 *.test
 *.out
 coverage.*
+webapp/node_modules/
+webapp/dist/
+.tools/
 
 # OS
 .DS_Store

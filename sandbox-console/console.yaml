@@ -1,0 +1,55 @@
+# ─── VeriProc Operator Console — Sandbox Configuration ──────────────────────
+#
+# Targets the local sandbox1 deployment (see ../sandbox1/instance.yaml).
+# Start veriprocd against sandbox1 first, then this console gateway. Open the
+# served webapp at http://127.0.0.1:8090/ and sign in with one of the tokens
+# below. Spec reference: §8.6.
+
+schema_version: veriproc.console/v1
+
+http:
+  bind_addr: co2m009:8090
+
+ui:
+  refresh_interval: 5s
+  visible_slot_count: 12
+  completed_visibility_timeout: 30s
+  default_stats_since: 24h
+  upstream_summary_timeout: 30s
+  preview_max_bytes: 1048576
+
+db:
+  # SQLite file scoped to this sandbox deployment. The schema is created on
+  # first run by the console's internal migration.
+  dsn: file:sandbox-console/console.db
+
+auth:
+  # Plaintext tokens for sandbox use only. Replace with file-backed tokens
+  # for any non-local deployment. The gateway stores SHA-256 hashes at
+  # registration time so plaintext is never persisted.
+  tokens:
+    - subject: viewer-demo
+      role: viewer
+      token: sandbox-viewer-token
+    - subject: operator-demo
+      role: operator
+      token: sandbox-operator-token
+
+# Serve the pre-built Preact bundle. Run `make webapp-build` before launching.
+webapp_dir: webapp/dist
+
+instances:
+  - id: sandbox-local
+    title: Sandbox (local)
+    # sandbox1 daemon listens on this address by default.
+    base_url: http://127.0.0.1:8080
+    # sandbox1 has authentication disabled; leave token empty.
+    token: ""
+    upstream_timeout_ms: 10000
+    # Filesystem containment: only paths under these roots may be browsed
+    # through the run tree / file preview endpoints. Resolved to absolute,
+    # symlink-checked paths at startup.
+    working_root_base: sandbox1/data/working-roots
+    allowed_roots:
+      - sandbox1/data/working-roots
+      - sandbox1/rolling-archives
