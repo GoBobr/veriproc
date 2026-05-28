@@ -177,7 +177,7 @@ inputs:
     # verifies it is a directory before accepting it.
     object_kind: directory
     window_match: overlaps
-    margins: [0, 0]
+    margins: [7200, 7200]
     mandatory: true
 
 # ─── Outputs ──────────────────────────────────────────────────────────────────

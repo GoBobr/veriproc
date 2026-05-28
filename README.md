@@ -121,3 +121,88 @@ These directories include ready-to-run instance configuration, station fixtures,
 ## More Detail
 
 See the documents under `docs/specs/` for the system architecture, API, CLI, and operator console specification.
+
+## Docker
+
+Two Docker images are provided, both built from the repository root with a single `make` command.
+
+| Image | Contents | Default port |
+|---|---|---|
+| `veriprocd` | `veriprocd` daemon + `veriproc` CLI | 8080 |
+| `veriproc-console` | `veriproc-console` gateway + pre-built webapp | 8090 |
+
+Every image is tagged with the version string (git tag or `MAKEFILE_VERSION`) and `latest`.
+
+### Building the images
+
+```bash
+# Build both images (uses current VERSION / GIT_COMMIT automatically)
+make docker-build
+
+# Build a single image
+make docker-build-daemon
+make docker-build-console
+
+# Override the registry (default: ghcr.io/eum)
+make docker-build DOCKER_REGISTRY=registry.example.com/veriproc
+
+# Tag and release — git tag drives the image tag
+git tag v0.2.0
+make docker-build   # produces veriprocd:v0.2.0, veriproc-console:v0.2.0
+
+# Push to the registry
+make docker-push
+```
+
+### Running with Docker Compose
+
+An example `docker/docker-compose.yaml` is provided. Copy and adapt the sandbox configs, then start:
+
+```bash
+# 1. Build the images
+make docker-build
+
+# 2. Create a deploy/ directory with your configuration
+mkdir -p deploy/stations
+cp sandbox/instance.yaml  deploy/instance.yaml
+cp sandbox-console/console.yaml deploy/console.yaml
+# Edit deploy/instance.yaml and deploy/console.yaml as needed:
+#   - Set db.dsn to a path inside the /data volume (e.g. sqlite:///data/veriproc.db)
+#   - Set storage.working_root_base to /data/working-roots
+#   - Set storage.station_config_root to /stations
+#   - In console.yaml set db.dsn to file:/data/console.db
+#   - Set the instances[].base_url to http://veriprocd:8080
+#   - Replace sandbox tokens with secure values
+
+# 3. Start the stack
+cd docker
+docker compose up -d
+
+# 4. Verify
+docker compose ps
+docker compose logs -f
+```
+
+The console UI will be available at `http://localhost:8090/`.
+
+### Volume mount points
+
+**`veriprocd`**
+
+| Mount | Purpose |
+|---|---|
+| `/config/instance.yaml` | Instance configuration (required) |
+| `/stations` | Station YAML spec directory (read-only) |
+| `/data` | SQLite database and working roots (read-write) |
+| `/archives` | Rolling archive roots (read-only, optional) |
+
+**`veriproc-console`**
+
+| Mount | Purpose |
+|---|---|
+| `/config/console.yaml` | Console configuration (required) |
+| `/data` | Console SQLite database for audit log and UI state (read-write) |
+
+### Customising the Go base image
+
+The Dockerfiles live in `docker/` and use standard multi-stage builds. The Go builder stage uses `golang:1.25-alpine`; the runtime stage uses `alpine:3.21`. Pin these to specific digests for reproducible production builds.

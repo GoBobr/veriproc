@@ -1002,7 +1002,10 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 			continue
 		}
 		path := filepath.Join(folder, name)
-		info, err := entry.Info()
+		// Use os.Stat (which follows symlinks) so that a symlink to a directory
+		// is classified as a directory, matching the behaviour of the
+		// unstructured-pattern branch above.
+		info, err := os.Stat(path)
 		if err != nil {
 			return nil, err
 		}

@@ -1,4 +1,6 @@
-.PHONY: all build test test-short run fmt vet tidy clean help console
+.PHONY: all build test test-short run fmt vet tidy clean help console \
+         docker-build docker-build-daemon docker-build-console \
+         docker-push  docker-push-daemon  docker-push-console
 
 GO      ?= go
 PKG     := ./...
@@ -13,7 +15,7 @@ NPM     ?= npm
 # ── versioning ──────────────────────────────────────────────────────────────
 # Change MAKEFILE_VERSION here to update the baseline version for all components.
 # If the current commit carries an exact git tag, that tag takes priority.
-MAKEFILE_VERSION := 0.1.2-dev
+MAKEFILE_VERSION := 0.5-dev
 GIT_TAG          := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE       := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -22,6 +24,21 @@ MODULE           := github.com/eum/veriproc
 LDFLAGS          := -X $(MODULE)/internal/version.Version=$(VERSION) \
                     -X $(MODULE)/internal/version.Commit=$(GIT_COMMIT) \
                     -X $(MODULE)/internal/version.BuildDate=$(BUILD_DATE)
+
+# ── docker ───────────────────────────────────────────────────────────────────
+# Override DOCKER_REGISTRY and IMAGE_PREFIX to push to your own registry.
+# Example: make docker-build DOCKER_REGISTRY=registry.example.com/veriproc
+DOCKER          ?= docker
+DOCKER_REGISTRY ?= ghcr.io/leonid-butenko
+IMAGE_DAEMON    := $(DOCKER_REGISTRY)/veriproc
+IMAGE_CONSOLE   := $(DOCKER_REGISTRY)/veriproc-console
+# DOCKER_TAG and DOCKER_BUILDARGS use = (recursive expansion) so they pick up
+# VERSION, GIT_COMMIT and BUILD_DATE after the versioning block below.
+DOCKER_TAG       = $(VERSION)
+DOCKER_BUILDARGS  = \
+  --build-arg VERSION=$(VERSION) \
+  --build-arg GIT_COMMIT=$(GIT_COMMIT) \
+  --build-arg BUILD_DATE=$(BUILD_DATE)
 
 # Collect all Go source files for dependency tracking.
 GO_SRCS := $(shell find . -name '*.go' -not -path './vendor/*')
@@ -57,6 +74,37 @@ webapp-build:
 
 webapp-test:
 	cd $(WEBAPP_DIR) && $(NPM) test
+
+# ── docker ──────────────────────────────────────────────────────────────────
+
+.PHONY: docker-build-daemon docker-build-console docker-build
+.PHONY: docker-push-daemon  docker-push-console  docker-push
+
+docker-build-daemon:
+	$(DOCKER) build $(DOCKER_BUILDARGS) \
+	  -f docker/Dockerfile.veriproc \
+	  -t $(IMAGE_DAEMON):$(DOCKER_TAG) \
+	  -t $(IMAGE_DAEMON):latest \
+	  .
+
+docker-build-console:
+	$(DOCKER) build $(DOCKER_BUILDARGS) \
+	  -f docker/Dockerfile.console \
+	  -t $(IMAGE_CONSOLE):$(DOCKER_TAG) \
+	  -t $(IMAGE_CONSOLE):latest \
+	  .
+
+docker-build: docker-build-daemon docker-build-console
+
+docker-push-daemon: docker-build-daemon
+	$(DOCKER) push $(IMAGE_DAEMON):$(DOCKER_TAG)
+	$(DOCKER) push $(IMAGE_DAEMON):latest
+
+docker-push-console: docker-build-console
+	$(DOCKER) push $(IMAGE_CONSOLE):$(DOCKER_TAG)
+	$(DOCKER) push $(IMAGE_CONSOLE):latest
+
+docker-push: docker-push-daemon docker-push-console
 
 # ── development ─────────────────────────────────────────────────────────────
 
@@ -113,6 +161,18 @@ help:
 	@echo "    python3 -m venv .venv && . .venv/bin/activate"
 	@echo "    pip install nodeenv && nodeenv -p --node=20.11.1"
 	@echo "    make webapp-install webapp-build"
+	@echo ""
+	@echo "Docker images (docker/ Dockerfiles):"
+	@echo "  docker-build           Build both Docker images"
+	@echo "  docker-build-daemon    Build $(IMAGE_DAEMON):$(DOCKER_TAG)"
+	@echo "  docker-build-console   Build $(IMAGE_CONSOLE):$(DOCKER_TAG)"
+	@echo "  docker-push            Build and push both images to the registry"
+	@echo "  docker-push-daemon     Build and push $(IMAGE_DAEMON)"
+	@echo "  docker-push-console    Build and push $(IMAGE_CONSOLE)"
+	@echo ""
+	@echo "  Images are tagged with VERSION and 'latest'."
+	@echo "  For a release: git tag vX.Y.Z && make docker-build"
+	@echo "  Override the registry: make docker-build DOCKER_REGISTRY=registry.example.com/veriproc"
 	@echo ""
 	@echo "Versioning:"
 	@echo "  MAKEFILE_VERSION    Baseline version string  (currently: $(MAKEFILE_VERSION))"
