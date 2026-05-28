@@ -91,6 +91,7 @@ func run(args []string) error {
 		return err
 	}
 	groupSvc := groups.NewService(st, nil)
+	stationSvc := stations.NewService(st, nil)
 	archivePaths := map[string]string{}
 	for id, archive := range cfg.RollingArchives {
 		archivePaths[id] = archive.Path
@@ -151,14 +152,15 @@ func run(args []string) error {
 	}
 
 	router := httpapi.NewRouter(httpapi.Deps{
-		Config: cfg,
-		Health: agg,
-		Logger: logger,
-		Tasks:  taskSvc,
-		Runs:   runsSvc,
-		Groups: groupSvc,
-		Authn:  authn,
-		Quota:  quota,
+		Config:   cfg,
+		Health:   agg,
+		Logger:   logger,
+		Tasks:    taskSvc,
+		Runs:     runsSvc,
+		Stations: stationSvc,
+		Groups:   groupSvc,
+		Authn:    authn,
+		Quota:    quota,
 	})
 
 	srv := &http.Server{

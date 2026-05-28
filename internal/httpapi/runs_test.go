@@ -196,6 +196,27 @@ func TestAPI_RunList_InvalidLimit_5_7(t *testing.T) {
 	}
 }
 
+func TestAPI_TaskRunsAlias(t *testing.T) {
+	a := newRunAPI(t)
+	taskID := a.submitOne(t)
+	a.tickN(t, 6)
+
+	resp, body := getJSONMap(t, a.srv, "/api/v1/tasks/"+taskID+"/runs")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%v", resp.StatusCode, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("expected run items")
+	}
+	for _, raw := range items {
+		it := raw.(map[string]any)
+		if it["task_id"] != taskID {
+			t.Fatalf("task_id = %v, want %s", it["task_id"], taskID)
+		}
+	}
+}
+
 // TestAPI_RunArtifacts_5_4_6_5_5_6 — GET /runs/{id}/artifacts returns the
 // artifact representation per §5.5.6 (must include availability + logical_type).
 func TestAPI_RunArtifacts_5_4_6_5_5_6(t *testing.T) {

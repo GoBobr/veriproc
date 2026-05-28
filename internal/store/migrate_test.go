@@ -13,6 +13,7 @@ func TestMigrate_FreshDB_7_3_2(t *testing.T) {
 	wantTables := []string{
 		"schema_migrations",
 		"station_revisions",
+		"station_controls",
 		"idempotency_records",
 		"tasks",
 		"task_history_entries",

@@ -17,6 +17,8 @@ import (
 	"github.com/eum/veriproc/internal/store"
 )
 
+var errInvalidRunListRequest = errors.New("httpapi: invalid run list request")
+
 // runHandler exposes the run/job/artifact/log read endpoints (Spec §5.4.3,
 // §5.4.4, §5.4.5, §5.4.6, §5.4.7).
 type runHandler struct {
@@ -30,7 +32,7 @@ type runWire struct {
 	RunRef                  string     `json:"run_ref"`
 	TaskID                  string     `json:"task_id"`
 	StationID               string     `json:"station_id,omitempty"`
-	Start                   time.Time  `json:"start"`
+	Start                   time.Time  `json:"start,omitempty"`
 	End                     time.Time  `json:"end"`
 	StationRevisionID       string     `json:"station_revision_id"`
 	State                   string     `json:"state"`          // simplified public state
@@ -52,9 +54,11 @@ type runWire struct {
 
 type runDetailWire struct {
 	runWire
-	ActiveJob *jobWire       `json:"active_job,omitempty"`
-	Jobs      []jobWire      `json:"jobs"`
-	Artifacts []artifactWire `json:"artifacts"`
+	ActiveJob     *jobWire       `json:"active_job,omitempty"`
+	ExecutorType  string         `json:"executor_type,omitempty"`
+	ExecutionNode string         `json:"execution_node,omitempty"`
+	Jobs          []jobWire      `json:"jobs"`
+	Artifacts     []artifactWire `json:"artifacts"`
 }
 
 type jobWire struct {
@@ -159,6 +163,31 @@ func (h *runHandler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *runHandler) list(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.listRunsResponse(r)
+	if err != nil {
+		writeRunErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *runHandler) listTaskRuns(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	if _, err := h.svc.GetTask(r.Context(), taskID); err != nil {
+		writeRunErr(w, r, err)
+		return
+	}
+	resp, err := h.listRunsResponse(r, func(f *store.RunListFilter) {
+		f.TaskID = taskID
+	})
+	if err != nil {
+		writeRunErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.RunListFilter)) (*runListResponse, error) {
 	q := r.URL.Query()
 	f := store.RunListFilter{
 		TaskID:            q.Get("task_id"),
@@ -172,39 +201,37 @@ func (h *runHandler) list(w http.ResponseWriter, r *http.Request) {
 		if n, err := strconv.Atoi(v); err == nil {
 			f.Limit = n
 		} else {
-			apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "invalid limit")
-			return
+			return nil, fmt.Errorf("%w: invalid limit", errInvalidRunListRequest)
 		}
 	}
 	if v := q.Get("created_after"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "invalid created_after")
-			return
+			return nil, fmt.Errorf("%w: invalid created_after", errInvalidRunListRequest)
 		}
 		f.CreatedAfter = t
 	}
 	if v := q.Get("created_before"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "invalid created_before")
-			return
+			return nil, fmt.Errorf("%w: invalid created_before", errInvalidRunListRequest)
 		}
 		f.CreatedBefore = t
 	}
 	if v := q.Get("cursor"); v != "" {
 		ts, id, err := decodeCursor(v)
 		if err != nil {
-			apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, "invalid cursor")
-			return
+			return nil, fmt.Errorf("%w: invalid cursor", errInvalidRunListRequest)
 		}
 		f.CursorCreatedAt = ts
 		f.CursorRunID = id
 	}
+	for _, fn := range mutate {
+		fn(&f)
+	}
 	page, err := h.svc.ListRuns(r.Context(), f)
 	if err != nil {
-		writeRunErr(w, r, err)
-		return
+		return nil, err
 	}
 	resp := runListResponse{
 		PageSize: f.Limit,
@@ -228,7 +255,7 @@ func (h *runHandler) list(w http.ResponseWriter, r *http.Request) {
 	if page.HasMore {
 		resp.NextCursor = encodeCursor(page.NextCreatedAt, page.NextRunID)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return &resp, nil
 }
 
 func (h *runHandler) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -519,6 +546,8 @@ func nullableTime(t sql.NullTime) *time.Time {
 
 func writeRunErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, errInvalidRunListRequest):
+		apierr.Write(w, r, http.StatusBadRequest, apierr.CodeInvalidRequest, err.Error())
 	case errors.Is(err, runs.ErrRunNotFound), errors.Is(err, runs.ErrJobNotFound):
 		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, err.Error())
 	case errors.Is(err, runs.ErrInvalidStateTransition):

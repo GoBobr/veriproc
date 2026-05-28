@@ -104,6 +104,14 @@ func (d *Dispatcher) dispatchReady(ctx context.Context) error {
 		return err
 	}
 	for _, r := range ready {
+		paused, err := d.svc.IsStationPausedForRun(ctx, r.StationRevisionID)
+		if err != nil {
+			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("could not resolve station pause state")
+			continue
+		}
+		if paused {
+			continue
+		}
 		if _, err := d.svc.Dispatch(ctx, r.RunID); err != nil {
 			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("dispatch failed")
 			if errors.Is(err, ErrFatalDispatch) {

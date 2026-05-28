@@ -16,8 +16,10 @@
 //	promote         POST   /api/v1/runs/{id}/promote
 //	group list      GET    /api/v1/groups
 //	group get       GET    /api/v1/groups/{id}
-//	group close     POST   /api/v1/groups/{id}/close
-//	health          GET    /health
+//	group close     POST   /api/v1/groups/{id}/close//		station list    GET    /api/v1/stations
+//		station summary GET    /api/v1/stations/summary
+//		station pause   POST   /api/v1/stations/{id}/pause
+//		station unpause POST   /api/v1/stations/{id}/unpause//	health          GET    /health
 //	readiness       GET    /readiness
 //	version         (local) optional --check-api hits /api/v1/health
 //
@@ -116,6 +118,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return c.cmdPromote(tail)
 	case "group", "groups":
 		return c.cmdGroup(sub, tail)
+	case "station", "stations":
+		return c.cmdStation(sub, tail)
 	case "health":
 		return c.cmdHealth()
 	case "readiness":
@@ -212,7 +216,7 @@ func envOr(k, def string) string {
 func dispatch(args []string) (cmd, sub string, rest []string) {
 	cmd = args[0]
 	switch cmd {
-	case "task", "run", "artifact", "group", "groups":
+	case "task", "run", "artifact", "group", "groups", "station", "stations":
 		if len(args) >= 2 {
 			return cmd, args[1], args[2:]
 		}
@@ -857,6 +861,120 @@ func (c *client) cmdGroup(sub string, args []string) int {
 	}
 }
 
+// --- subcommand: station ---------------------------------------------------
+
+func (c *client) cmdStation(sub string, args []string) int {
+	switch sub {
+	case "list":
+		m, raw, err := c.do(http.MethodGet, "/api/v1/stations", nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderList(raw, m, []string{"station_id", "station_name", "paused"})
+		return ExitOK
+
+	case "summary":
+		fs := flag.NewFlagSet("station summary", flag.ContinueOnError)
+		fs.SetOutput(c.stderr)
+		since := fs.String("since", "", "interval start (RFC3339, default 24h ago)")
+		if err := fs.Parse(args); err != nil {
+			return ExitUsage
+		}
+		rest := fs.Args()
+		var path string
+		singleStation := ""
+		if len(rest) > 0 {
+			singleStation = rest[0]
+			path = "/api/v1/stations/" + singleStation + "/summary"
+		} else {
+			path = "/api/v1/stations/summary"
+		}
+		if *since != "" {
+			path += "?since=" + *since
+		}
+		m, raw, err := c.do(http.MethodGet, path, nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		switch c.out {
+		case "json":
+			c.writeJSON(raw)
+		case "yaml":
+			c.writeYAML(m)
+		default:
+			if singleStation != "" {
+				if st, ok := m["station"].(map[string]any); ok {
+					c.renderStationSummaryTable([]map[string]any{st})
+				} else {
+					c.writeJSON(raw)
+				}
+			} else {
+				items, _ := m["items"].([]any)
+				rows := make([]map[string]any, 0, len(items))
+				for _, it := range items {
+					if mp, ok := it.(map[string]any); ok {
+						rows = append(rows, mp)
+					}
+				}
+				c.renderStationSummaryTable(rows)
+			}
+		}
+		return ExitOK
+
+	case "pause":
+		if len(args) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc station pause STATION_ID")
+			return ExitUsage
+		}
+		m, raw, err := c.do(http.MethodPost, "/api/v1/stations/"+args[0]+"/pause", nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderResource(raw, m, []string{"station_id", "station_name", "paused", "running_count", "queued_count"})
+		return ExitOK
+
+	case "unpause":
+		if len(args) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc station unpause STATION_ID")
+			return ExitUsage
+		}
+		m, raw, err := c.do(http.MethodPost, "/api/v1/stations/"+args[0]+"/unpause", nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderResource(raw, m, []string{"station_id", "station_name", "paused", "running_count", "queued_count"})
+		return ExitOK
+
+	default:
+		fmt.Fprintln(c.stderr, "veriproc station {list|summary|pause|unpause}")
+		return ExitUsage
+	}
+}
+
+// renderStationSummaryTable renders station summary items flattening the nested
+// counts object into SUCCESS and FAILURE columns.
+func (c *client) renderStationSummaryTable(items []map[string]any) {
+	tw := tabwriter.NewWriter(c.stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STATION ID\tPAUSED\tRUNNING\tQUEUED\tSUCCESS\tFAILURE\tLAST REFRESH")
+	for _, it := range items {
+		success, failure := "-", "-"
+		if counts, ok := it["counts"].(map[string]any); ok {
+			success = formatCell(counts["success"])
+			failure = formatCell(counts["failure"])
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			formatCell(it["station_id"]),
+			formatCell(it["paused"]),
+			formatCell(it["running_count"]),
+			formatCell(it["queued_count"]),
+			success,
+			failure,
+			formatCell(it["last_refresh"]),
+		)
+	}
+	tw.Flush()
+}
+
 // --- subcommand: health / readiness / version -------------------------------
 
 func (c *client) cmdHealth() int {
@@ -953,6 +1071,10 @@ Commands:
   group list    [--state open|aggregating|complete|failed]
   group get     GROUP_ID
   group close   GROUP_ID
+  station list
+  station summary [STATION_ID] [--since RFC3339]
+  station pause   STATION_ID
+  station unpause STATION_ID
   health
   readiness
   version       [--check-api]

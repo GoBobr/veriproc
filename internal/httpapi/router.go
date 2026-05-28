@@ -13,6 +13,7 @@ import (
 	"github.com/eum/veriproc/internal/health"
 	"github.com/eum/veriproc/internal/httpapi/apierr"
 	"github.com/eum/veriproc/internal/runs"
+	stationssvc "github.com/eum/veriproc/internal/stations"
 	"github.com/eum/veriproc/internal/tasks"
 	"github.com/rs/zerolog"
 )
@@ -28,6 +29,8 @@ type Deps struct {
 	Runs *runs.Service
 	// Groups is optional; required from M7 to expose split-group endpoints (§5.5.7).
 	Groups *groups.Service
+	// Stations is optional; used to expose station status/control endpoints.
+	Stations *stationssvc.Service
 	// Authn enforces bearer-token auth on /api/v1/* (M6). When nil, the API
 	// is open (preserves M0–M5 behavior for tests / local dev).
 	Authn auth.Authenticator
@@ -62,6 +65,7 @@ func NewRouter(d Deps) http.Handler {
 		rh := &runHandler{svc: d.Runs}
 		mux.HandleFunc("GET /api/v1/runs", rh.list)
 		mux.HandleFunc("GET /api/v1/runs/{run_id}", rh.get)
+		mux.HandleFunc("GET /api/v1/tasks/{task_id}/runs", rh.listTaskRuns)
 		mux.HandleFunc("POST /api/v1/tasks/{task_id}/retry", rh.retry)
 		mux.HandleFunc("POST /api/v1/runs/{run_id}/cancel", rh.cancel)
 		mux.HandleFunc("POST /api/v1/runs/{run_id}/promote", rh.promote)
@@ -70,6 +74,15 @@ func NewRouter(d Deps) http.Handler {
 		mux.HandleFunc("GET /api/v1/runs/{run_id}/logs", rh.listLogs)
 		mux.HandleFunc("GET /api/v1/jobs/{job_id}", rh.getJob)
 		mux.HandleFunc("GET /api/v1/artifacts/{artifact_id}/content", rh.artifactContent)
+	}
+
+	if d.Stations != nil {
+		sh := &stationHandler{svc: d.Stations}
+		mux.HandleFunc("GET /api/v1/stations", sh.list)
+		mux.HandleFunc("GET /api/v1/stations/summary", sh.summary)
+		mux.HandleFunc("GET /api/v1/stations/{station_id}/summary", sh.summaryOne)
+		mux.HandleFunc("POST /api/v1/stations/{station_id}/pause", sh.pause)
+		mux.HandleFunc("POST /api/v1/stations/{station_id}/unpause", sh.unpause)
 	}
 
 	if d.Groups != nil {
@@ -120,9 +133,9 @@ func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler 
 // 404/405 responses without double-writing real handler output.
 type errCapturingWriter struct {
 	http.ResponseWriter
-	status     int
-	wroteBody  bool
-	wroteHead  bool
+	status    int
+	wroteBody bool
+	wroteHead bool
 }
 
 func (w *errCapturingWriter) WriteHeader(code int) {

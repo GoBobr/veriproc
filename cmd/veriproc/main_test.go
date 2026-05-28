@@ -145,6 +145,58 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		writeJSON(w, 200, map[string]any{"split_group_id": path, "state": "open",
 			"member_count": 1, "canonical_count": 0, "failed_count": 0})
 	})
+	stationSummaryItem := func(paused bool) map[string]any {
+		return map[string]any{
+			"station_id":    "ST-A",
+			"station_name":  "station-alpha",
+			"paused":        paused,
+			"running_count": 1,
+			"queued_count":  2,
+			"counts":        map[string]any{"success": 10, "failure": 3},
+			"slots":         []any{},
+			"last_refresh":  "2025-07-03T12:00:00Z",
+		}
+	}
+	mux.HandleFunc("/api/v1/stations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"items": []any{
+				map[string]any{"station_id": "ST-A", "station_name": "station-alpha", "paused": false},
+			},
+		})
+	})
+	mux.HandleFunc("/api/v1/stations/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/stations/")
+		switch {
+		case path == "summary":
+			writeJSON(w, 200, map[string]any{
+				"since": "2025-07-03T00:00:00Z",
+				"items": []any{stationSummaryItem(false)},
+			})
+		case strings.HasSuffix(path, "/summary"):
+			stID := strings.TrimSuffix(path, "/summary")
+			if stID != "ST-A" {
+				writeJSON(w, 400, map[string]any{"error": map[string]any{"code": "unknown_station", "message": "unknown"}})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"since": "2025-07-03T00:00:00Z", "station": stationSummaryItem(false)})
+		case strings.HasSuffix(path, "/pause") && r.Method == http.MethodPost:
+			stID := strings.TrimSuffix(path, "/pause")
+			if stID != "ST-A" {
+				writeJSON(w, 400, map[string]any{"error": map[string]any{"code": "unknown_station", "message": "unknown"}})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"station_id": stID, "station_name": "station-alpha", "paused": true, "running_count": 1, "queued_count": 2})
+		case strings.HasSuffix(path, "/unpause") && r.Method == http.MethodPost:
+			stID := strings.TrimSuffix(path, "/unpause")
+			if stID != "ST-A" {
+				writeJSON(w, 400, map[string]any{"error": map[string]any{"code": "unknown_station", "message": "unknown"}})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"station_id": stID, "station_name": "station-alpha", "paused": false, "running_count": 1, "queued_count": 0})
+		default:
+			writeJSON(w, 404, map[string]any{"error": map[string]any{"code": "not_found", "message": "not found"}})
+		}
+	})
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
 	return f
@@ -245,6 +297,103 @@ func TestCLI_Version_NoNetwork(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "veriproc-cli") {
 		t.Errorf("missing version string: %s", stdout.String())
+	}
+}
+
+// TestCLI_Station_List — station list returns station_id.
+func TestCLI_Station_List(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "station", "list")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "ST-A") {
+		t.Errorf("missing station id in output: %s", out)
+	}
+}
+
+// TestCLI_Station_Summary_All — station summary (all stations) returns items.
+func TestCLI_Station_Summary_All(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "station", "summary")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "ST-A") {
+		t.Errorf("missing station id in output: %s", out)
+	}
+}
+
+// TestCLI_Station_Summary_Single — station summary for one station.
+func TestCLI_Station_Summary_Single(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "station", "summary", "ST-A")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "ST-A") {
+		t.Errorf("missing station id in output: %s", out)
+	}
+}
+
+// TestCLI_Station_Summary_Table — table output has expected headers.
+func TestCLI_Station_Summary_Table(t *testing.T) {
+	api := newFakeAPI(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "--output", "table", "station", "summary"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"STATION ID", "PAUSED", "RUNNING", "QUEUED", "SUCCESS", "FAILURE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table missing %q header: %s", want, out)
+		}
+	}
+	if !strings.Contains(out, "ST-A") {
+		t.Errorf("table missing station id: %s", out)
+	}
+}
+
+// TestCLI_Station_Pause — pause sets paused=true.
+func TestCLI_Station_Pause(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "station", "pause", "ST-A")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "true") {
+		t.Errorf("expected paused=true in output: %s", out)
+	}
+}
+
+// TestCLI_Station_Unpause — unpause sets paused=false.
+func TestCLI_Station_Unpause(t *testing.T) {
+	api := newFakeAPI(t)
+	code, out, errs := runCLI(t, api.server.URL, "station", "unpause", "ST-A")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if !strings.Contains(out, "false") {
+		t.Errorf("expected paused=false in output: %s", out)
+	}
+}
+
+// TestCLI_Station_Pause_UnknownStation — unknown station → exit 3 (validation / bad request).
+func TestCLI_Station_Pause_UnknownStation(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, _ := runCLI(t, api.server.URL, "station", "pause", "UNKNOWN")
+	if code != ExitValidation {
+		t.Errorf("exit = %d, want %d (ExitValidation)", code, ExitValidation)
+	}
+}
+
+// TestCLI_Station_MissingSubcommand — usage error when no subcommand given.
+func TestCLI_Station_MissingSubcommand(t *testing.T) {
+	api := newFakeAPI(t)
+	code, _, _ := runCLI(t, api.server.URL, "station")
+	if code != ExitUsage {
+		t.Errorf("exit = %d, want %d (ExitUsage)", code, ExitUsage)
 	}
 }
 

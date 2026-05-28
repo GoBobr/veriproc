@@ -117,6 +117,11 @@ func (s *Store) Stations() *StationRevisionRepo {
 	return &StationRevisionRepo{q: s.db, dialect: s.dialect}
 }
 
+// StationControls returns the station-control repository.
+func (s *Store) StationControls() *StationControlRepo {
+	return &StationControlRepo{q: s.db, dialect: s.dialect}
+}
+
 // Idempotency returns the idempotency-record repository.
 func (s *Store) Idempotency() *IdempotencyRepo {
 	return &IdempotencyRepo{q: s.db, dialect: s.dialect}
@@ -169,6 +174,11 @@ func (t *Tx) Runs() *RunRepo { return &RunRepo{q: t.tx, dialect: t.dialect} }
 // Stations returns the station-revision repository.
 func (t *Tx) Stations() *StationRevisionRepo {
 	return &StationRevisionRepo{q: t.tx, dialect: t.dialect}
+}
+
+// StationControls returns the station-control repository.
+func (t *Tx) StationControls() *StationControlRepo {
+	return &StationControlRepo{q: t.tx, dialect: t.dialect}
 }
 
 // Idempotency returns the idempotency-record repository.

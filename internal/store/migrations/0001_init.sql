@@ -24,6 +24,12 @@ CREATE TABLE station_revisions (
 
 CREATE INDEX idx_station_revisions_station ON station_revisions (station_id);
 
+CREATE TABLE station_controls (
+    station_id   TEXT PRIMARY KEY,
+    paused       INTEGER NOT NULL DEFAULT 0,
+    updated_at   TIMESTAMP NOT NULL
+);
+
 CREATE TABLE idempotency_records (
     idempotency_record_id TEXT PRIMARY KEY,
     scope                 TEXT NOT NULL,

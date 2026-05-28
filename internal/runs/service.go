@@ -535,6 +535,17 @@ func (s *Service) GetRun(ctx context.Context, runID string) (*store.RunRecord, e
 	return r, nil
 }
 
+func (s *Service) IsStationPausedForRun(ctx context.Context, stationRevisionID string) (bool, error) {
+	rev, err := s.store.Stations().Get(ctx, stationRevisionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, ErrUnknownStation
+		}
+		return false, err
+	}
+	return s.store.StationControls().IsPaused(ctx, rev.StationID)
+}
+
 func (s *Service) GetTask(ctx context.Context, taskID string) (*store.TaskRecord, error) {
 	t, err := s.store.Tasks().Get(ctx, taskID)
 	if errors.Is(err, store.ErrNotFound) {

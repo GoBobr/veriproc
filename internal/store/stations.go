@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// StationListRecord is the operator-facing current station view derived from
+// the latest known revision for each station_id.
+type StationListRecord struct {
+	StationID   string
+	StationName string
+}
+
 // StationRevisionRecord matches Spec §3.2 / §4.3 (station_revisions).
 type StationRevisionRecord struct {
 	RevisionID    string
@@ -124,4 +131,47 @@ func (r *StationRevisionRepo) Get(ctx context.Context, revisionID string) (*Stat
 	rec.EffectiveAt = rec.EffectiveAt.UTC()
 	rec.CreatedAt = rec.CreatedAt.UTC()
 	return &rec, nil
+}
+
+// ExistsStationID reports whether at least one revision exists for stationID.
+func (r *StationRevisionRepo) ExistsStationID(ctx context.Context, stationID string) (bool, error) {
+	var n int
+	if err := r.q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM station_revisions WHERE station_id = ?`, stationID).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ListCurrent returns one current operator-facing record per station_id.
+func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRecord, error) {
+	rows, err := r.q.QueryContext(ctx, `
+		SELECT sr.station_id, sr.station_name
+		FROM station_revisions sr
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM station_revisions newer
+			WHERE newer.station_id = sr.station_id
+			  AND (
+				newer.created_at > sr.created_at
+				OR (newer.created_at = sr.created_at AND newer.revision_id > sr.revision_id)
+			  )
+		)
+		ORDER BY sr.station_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*StationListRecord{}
+	for rows.Next() {
+		var rec StationListRecord
+		if err := rows.Scan(&rec.StationID, &rec.StationName); err != nil {
+			return nil, err
+		}
+		out = append(out, &rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
