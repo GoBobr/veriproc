@@ -420,6 +420,9 @@ func formatCell(v any) string {
 		if t == "" {
 			return "-"
 		}
+		if ts, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return ts.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
 		return t
 	case float64:
 		if t == float64(int64(t)) {
@@ -650,7 +653,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "station_id", "start", "end", "state", "canonicality", "executor_type", "execution_node", "created_at", "working_root"})
+		c.renderResource(raw, m, []string{"station_id", "run_ref", "task_id",  "start", "end", "state", "canonicality", "executor_type", "execution_node", "created_at", "working_root"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
@@ -658,7 +661,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_ref", "state", "executor_type", "working_root", "canonicality", "created_at"})
+		c.renderList(raw, m, []string{"run_ref", "executor_type", "execution_node", "working_root", "state", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
