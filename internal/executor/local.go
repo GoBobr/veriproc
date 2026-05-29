@@ -72,7 +72,7 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (Submissi
 		return Submission{}, fmt.Errorf("local executor cannot run station execution mode %q", desc.Mode)
 	}
 	if desc.Executable == "" {
-		return Submission{}, fmt.Errorf("local executor: Executable is empty for run %s (station has no executable?)", desc.RunID)
+		return Submission{}, fmt.Errorf("%w: local executor: Executable is empty for run %s (station has no executable?)", ErrFatalSubmit, desc.RunID)
 	}
 
 	id := "local-" + desc.RunID

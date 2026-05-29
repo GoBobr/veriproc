@@ -385,10 +385,9 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	}
 	submission, err := exec.Submit(ctx, desc)
 	if err != nil {
-		// A missing command (e.g. ssh or sbatch not in PATH) is a permanent
-		// infrastructure misconfiguration; mark as fatal so the dispatcher
-		// does not retry the run indefinitely.
-		if errors.Is(err, osExec.ErrNotFound) {
+		// Permanent infrastructure failures (command not in PATH, SSH transport
+		// error, missing executable, etc.) must not be retried indefinitely.
+		if errors.Is(err, osExec.ErrNotFound) || errors.Is(err, executor.ErrFatalSubmit) {
 			return nil, fmt.Errorf("%w: executor submit: %w", ErrFatalDispatch, err)
 		}
 		return nil, fmt.Errorf("executor submit: %w", err)

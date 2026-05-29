@@ -37,20 +37,20 @@ func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
 	items := make([]map[string]any, 0, len(g.cfg.Instances))
 	for _, inst := range g.cfg.Instances {
 		items = append(items, map[string]any{
-			"id":                  inst.ID,
-			"title":               inst.Title,
-			"base_url":            inst.BaseURL,
-			"working_root_base":   inst.WorkingRootBase,
+			"id":                inst.ID,
+			"title":             inst.Title,
+			"base_url":          inst.BaseURL,
+			"working_root_base": inst.WorkingRootBase,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items": items,
 		"ui": map[string]any{
-			"refresh_interval_ms":          g.cfg.UI.RefreshInterval.Milliseconds(),
-			"visible_slot_count":           g.cfg.UI.VisibleSlotCount,
-			"completed_visibility_ms":      g.cfg.UI.CompletedVisibility.Milliseconds(),
-			"default_stats_since_ms":       g.cfg.UI.DefaultStatsSince.Milliseconds(),
-			"preview_max_bytes":            g.cfg.UI.PreviewMaxBytes,
+			"refresh_interval_ms":     g.cfg.UI.RefreshInterval.Milliseconds(),
+			"visible_slot_count":      g.cfg.UI.VisibleSlotCount,
+			"completed_visibility_ms": g.cfg.UI.CompletedVisibility.Milliseconds(),
+			"default_stats_since_ms":  g.cfg.UI.DefaultStatsSince.Milliseconds(),
+			"preview_max_bytes":       g.cfg.UI.PreviewMaxBytes,
 		},
 	})
 }
@@ -246,6 +246,43 @@ func (g *Gateway) handleHideRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"hidden": true, "task_id": taskID, "retry_index": retryIndex})
 }
 
+func (g *Gateway) handleHideStationFailures(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("instance_id")
+	stationID := r.PathValue("station_id")
+	inst, ok := g.instance(instanceID)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown_instance", "instance not configured")
+		return
+	}
+	since := g.parseSince(r)
+	summary, err := inst.client.StationSummary(r.Context(), stationID, since)
+	if err != nil {
+		writeErr(w, httpStatusFromUpstream(err), "upstream_failed", err.Error())
+		return
+	}
+	summary = g.injectRunlessFailed(r.Context(), inst, summary, since)
+	keys := make([]HiddenRunKey, 0)
+	seen := make(map[HiddenRunKey]struct{})
+	for _, slot := range summary.Slots {
+		if slot.TaskID == "" || (slot.Kind != "failed" && slot.Kind != "cancelled") {
+			continue
+		}
+		key := HiddenRunKey{InstanceID: instanceID, StationID: stationID, TaskID: slot.TaskID, RetryIndex: slot.RetryIndex}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	p, _ := PrincipalFromContext(r.Context())
+	if err := g.db.HideRuns(r.Context(), keys, p.Subject, g.now()); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	g.audit(r.Context(), AuditEntry{Subject: p.Subject, InstanceID: instanceID, StationID: stationID, Action: "hide_failed", Status: "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"hidden": len(keys), "station_id": stationID})
+}
+
 func (g *Gateway) handleRetryTask(w http.ResponseWriter, r *http.Request) {
 	instanceID := r.PathValue("instance_id")
 	taskID := r.PathValue("task_id")
@@ -333,7 +370,21 @@ func (g *Gateway) handleRunFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid_request", "path query param required")
 		return
 	}
-	out, err := PreviewFile(wr, rel, g.cfg.UI.PreviewMaxBytes)
+	limit := g.cfg.UI.PreviewMaxBytes
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed <= 0 {
+			writeErr(w, http.StatusBadRequest, "invalid_request", "limit must be a positive integer")
+			return
+		}
+		if limit <= 0 || parsed < limit {
+			limit = parsed
+		}
+	}
+	out, err := PreviewFileWithOptions(wr, rel, PreviewOptions{
+		MaxBytes: limit,
+		Mode:     r.URL.Query().Get("mode"),
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrPathEscape) || errors.Is(err, ErrSymlinkEsc):
@@ -403,7 +454,7 @@ func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	type instanceHealth struct {
 		ID         string `json:"id"`
 		Title      string `json:"title"`
-		Status     string `json:"status"`              // "up" | "down"
+		Status     string `json:"status"` // "up" | "down"
 		Version    string `json:"version,omitempty"`
 		Commit     string `json:"commit,omitempty"`
 		APIVersion string `json:"api_version,omitempty"`

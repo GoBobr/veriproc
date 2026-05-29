@@ -48,6 +48,14 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
         label: "Submit task…",
         onClick: () => setShowSubmit(true),
       });
+      if (row.counts.failure > 0 || row.slots.some((slot) => slot.kind === "failed" || slot.kind === "cancelled")) {
+        items.push({
+          label: "Hide all failed",
+          onClick: () => {
+            void client.hideStationFailures(instanceID, row.station_id).then(onChanged);
+          },
+        });
+      }
     } else {
       items.push({ label: "Read-only (viewer)", onClick: () => {}, disabled: true });
     }

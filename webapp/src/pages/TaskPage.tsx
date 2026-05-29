@@ -1,6 +1,6 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useAuth } from "../state/auth";
-import { useFetch } from "../state/poll";
+import { useFetch, usePoll } from "../state/poll";
 import type { PreviewResponse, TreeResponse } from "../api/types";
 
 interface Props {
@@ -18,12 +18,21 @@ function fmtTime(raw: unknown): string {
 }
 
 export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
-  const { client } = useAuth();
+  const { client, session } = useAuth();
   const taskQ = useFetch(() => client.getTask(instanceID, taskID), [instanceID, taskID]);
   const runsQ = useFetch(() => client.listTaskRuns(instanceID, taskID), [instanceID, taskID]);
 
   const runs = (runsQ.data?.items ?? []) as Array<Record<string, unknown>>;
   const [retryIndex, setRetryIndex] = useState<number | null>(initialRetry ?? null);
+  const taskState = String(taskQ.data?.state ?? "");
+  const isOperator = session?.role === "operator";
+  const canRetry = isOperator && (taskState === "failed" || taskState === "cancelled");
+  // Derive the state of the currently selected run so we can show Cancel.
+  const selectedRun = retryIndex !== null
+    ? runs.find((r) => Number(r.retry_index ?? 0) === retryIndex)
+    : null;
+  const selectedRunState = String(selectedRun?.state ?? "");
+  const canCancel = isOperator && (selectedRunState === "running" || selectedRunState === "queued");
 
   useEffect(() => {
     if (retryIndex === null && runs.length > 0) {
@@ -38,7 +47,37 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
   return (
     <div class="task-page">
       <div class="task-header">
-        <h2>{taskID}</h2>
+        <div class="task-title-row">
+          <h2>{taskID}</h2>
+          {canRetry && (
+            <button
+              class="primary small"
+              onClick={() => {
+                void client.retryTask(instanceID, taskID).then((out) => {
+                  if (out.retry_index !== undefined) setRetryIndex(Number(out.retry_index));
+                  taskQ.refresh();
+                  runsQ.refresh();
+                });
+              }}
+            >
+              restart
+            </button>
+          )}
+          {canCancel && retryIndex !== null && (
+            <button
+              class="secondary small"
+              style={{ color: "var(--danger)", borderColor: "var(--slot-failed)" }}
+              onClick={() => {
+                void client.cancelRun(instanceID, taskID, retryIndex).then(() => {
+                  taskQ.refresh();
+                  runsQ.refresh();
+                });
+              }}
+            >
+              cancel
+            </button>
+          )}
+        </div>
         {taskQ.error && <div class="degraded-msg">task: {taskQ.error.message}</div>}
         {taskQ.data && (
           <div class="task-meta">
@@ -93,15 +132,30 @@ function RunBrowser({
   const { client } = useAuth();
   const [path, setPath] = useState("");
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<"head" | "tail">("head");
+  const [follow, setFollow] = useState(false);
   const [wrap, setWrap] = useState(false);
+  const previewPaneRef = useRef<HTMLDivElement | null>(null);
   const treeQ = useFetch<TreeResponse>(
     () => client.listTree(instanceID, taskID, retryIndex, path),
     [instanceID, taskID, retryIndex, path]
   );
-  const prevQ = useFetch<PreviewResponse | null>(
-    async () => (previewPath ? await client.previewFile(instanceID, taskID, retryIndex, previewPath) : null),
-    [previewPath, retryIndex]
+  const prevQ = usePoll<PreviewResponse | null>(
+    async () =>
+      previewPath
+        ? await client.previewFile(instanceID, taskID, retryIndex, previewPath, {
+            mode: previewMode,
+          })
+        : null,
+    follow ? 2000 : 0,
+    [previewPath, retryIndex, previewMode]
   );
+
+  useEffect(() => {
+    if (follow && previewPaneRef.current) {
+      previewPaneRef.current.scrollTop = previewPaneRef.current.scrollHeight;
+    }
+  }, [follow, prevQ.data?.content]);
 
   return (
     <div class="split-panes">
@@ -130,7 +184,11 @@ function RunBrowser({
               class={e.is_dir ? "dir" : ""}
               onClick={() => {
                 if (e.is_dir) setPath(e.path);
-                else setPreviewPath(e.path);
+                else {
+                  setPreviewPath(e.path);
+                  setPreviewMode(e.kind === "log" || e.size > 256 * 1024 ? "tail" : "head");
+                  setFollow(false);
+                }
               }}
             >
               <span>{e.name}</span>
@@ -143,7 +201,41 @@ function RunBrowser({
         <div class="toolbar">
           <span>{previewPath || "(select a file)"}</span>
           {prevQ.data?.truncated && <span class="truncated">truncated</span>}
-          <label style={{ marginLeft: "auto", fontSize: "11px" }}>
+          {prevQ.data && previewMode === "tail" && (
+            <span class="preview-offset">byte {prevQ.data.offset}+</span>
+          )}
+          <button
+            class="secondary small"
+            disabled={!previewPath}
+            onClick={() => prevQ.refresh()}
+          >
+            refresh
+          </button>
+          <button
+            class={`secondary small${previewMode === "tail" ? " active" : ""}`}
+            disabled={!previewPath}
+            onClick={() => {
+              if (previewMode === "tail") {
+                setFollow(false);
+                setPreviewMode("head");
+              } else {
+                setPreviewMode("tail");
+              }
+            }}
+          >
+            tail
+          </button>
+          <button
+            class={`secondary small${follow ? " active" : ""}`}
+            disabled={!previewPath}
+            onClick={() => {
+              setPreviewMode("tail");
+              setFollow((v) => !v);
+            }}
+          >
+            follow
+          </button>
+          <label style={{ fontSize: "11px" }}>
             <input
               type="checkbox"
               checked={wrap}
@@ -152,13 +244,15 @@ function RunBrowser({
             wrap
           </label>
         </div>
-        {prevQ.error && <div class="degraded-msg">preview: {prevQ.error.message}</div>}
-        {prevQ.data && prevQ.data.kind === "binary" && (
-          <div class="binary">{prevQ.data.reason || "binary file"}</div>
-        )}
-        {prevQ.data && (prevQ.data.kind === "text" || prevQ.data.kind === "log") && (
-          <pre>{prevQ.data.content || ""}</pre>
-        )}
+        <div class="preview-body" ref={previewPaneRef}>
+          {prevQ.error && <div class="degraded-msg">preview: {prevQ.error.message}</div>}
+          {prevQ.data && prevQ.data.kind === "binary" && (
+            <div class="binary">{prevQ.data.reason || "binary file"}</div>
+          )}
+          {prevQ.data && (prevQ.data.kind === "text" || prevQ.data.kind === "log") && (
+            <pre>{prevQ.data.content || ""}</pre>
+          )}
+        </div>
       </div>
     </div>
   );

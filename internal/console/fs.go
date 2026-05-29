@@ -48,10 +48,18 @@ type PreviewResponse struct {
 	Path        string   `json:"path"`
 	Kind        FileKind `json:"kind"`
 	Size        int64    `json:"size"`
+	Offset      int64    `json:"offset"`
+	Mode        string   `json:"mode,omitempty"`
 	Truncated   bool     `json:"truncated"`
 	Bytes       int      `json:"bytes_returned"`
 	Content     string   `json:"content,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
+}
+
+// PreviewOptions controls how PreviewFile reads a file window.
+type PreviewOptions struct {
+	MaxBytes int64
+	Mode     string // "head" (default) or "tail"
 }
 
 // Errors returned by the filesystem layer.
@@ -197,6 +205,13 @@ func classifyEntry(de os.DirEntry, fi os.FileInfo) FileKind {
 // PreviewFile returns an inline preview of target file, or an error when the
 // file cannot be safely rendered. maxBytes caps the inline size.
 func PreviewFile(workingRoot, rel string, maxBytes int64) (*PreviewResponse, error) {
+	return PreviewFileWithOptions(workingRoot, rel, PreviewOptions{MaxBytes: maxBytes})
+}
+
+// PreviewFileWithOptions returns an inline preview of target file, or an error
+// when the file cannot be safely rendered. It reads only the requested bounded
+// window, so large logs can be inspected without loading from the beginning.
+func PreviewFileWithOptions(workingRoot, rel string, opts PreviewOptions) (*PreviewResponse, error) {
 	target, err := resolveInsideRoot(workingRoot, rel)
 	if err != nil {
 		return nil, err
@@ -216,20 +231,44 @@ func PreviewFile(workingRoot, rel string, maxBytes int64) (*PreviewResponse, err
 		return nil, err
 	}
 	defer f.Close()
-	limit := maxBytes
+	limit := opts.MaxBytes
 	if limit <= 0 {
 		limit = 1 << 20
 	}
-	buf := make([]byte, limit+1)
+	mode := strings.TrimSpace(strings.ToLower(opts.Mode))
+	if mode == "" {
+		mode = "head"
+	}
+	if mode != "tail" {
+		mode = "head"
+	}
+	offset := int64(0)
+	readLimit := limit + 1
+	if mode == "tail" {
+		readLimit = limit
+		if info.Size() > limit {
+			offset = info.Size() - limit
+		}
+	}
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	buf := make([]byte, readLimit)
 	n, err := io.ReadFull(f, buf)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return nil, err
 	}
-	truncated := int64(n) > limit
+	truncated := offset > 0 || int64(n) > limit
 	if truncated {
 		n = int(limit)
 	}
 	data := buf[:n]
+	if offset > 0 {
+		data, offset = trimLeadingPartialUTF8(data, offset)
+	}
+	bytesReturned := len(data)
 	kind := KindUnknown
 	if isText(data) {
 		kind = KindText
@@ -241,8 +280,10 @@ func PreviewFile(workingRoot, rel string, maxBytes int64) (*PreviewResponse, err
 			Path:        rel,
 			Kind:        kind,
 			Size:        info.Size(),
+			Offset:      offset,
+			Mode:        mode,
 			Truncated:   truncated,
-			Bytes:       n,
+			Bytes:       bytesReturned,
 			Content:     string(data),
 		}, nil
 	}
@@ -251,10 +292,24 @@ func PreviewFile(workingRoot, rel string, maxBytes int64) (*PreviewResponse, err
 		Path:        rel,
 		Kind:        KindBinary,
 		Size:        info.Size(),
+		Offset:      offset,
+		Mode:        mode,
 		Truncated:   truncated,
-		Bytes:       n,
+		Bytes:       bytesReturned,
 		Reason:      "binary content; preview not rendered",
 	}, nil
+}
+
+func trimLeadingPartialUTF8(data []byte, offset int64) ([]byte, int64) {
+	if utf8.Valid(data) {
+		return data, offset
+	}
+	for i := 1; i < len(data) && i <= utf8.UTFMax; i++ {
+		if utf8.Valid(data[i:]) {
+			return data[i:], offset + int64(i)
+		}
+	}
+	return data, offset
 }
 
 // isText returns true when buf appears to be valid UTF-8 text without binary

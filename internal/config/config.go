@@ -408,7 +408,7 @@ func (c *Config) validateSlurmSpec(prefix string, s *SlurmConfig, d *DockerExecu
 	}
 	s.Connection.Host = strings.TrimSpace(s.Connection.Host)
 	s.Connection.User = strings.TrimSpace(s.Connection.User)
-	s.Connection.KeyFile = strings.TrimSpace(s.Connection.KeyFile)
+	s.Connection.KeyFile = strings.TrimSpace(os.ExpandEnv(s.Connection.KeyFile))
 	s.Account = strings.TrimSpace(s.Account)
 	s.Partition = strings.TrimSpace(s.Partition)
 	s.QOS = strings.TrimSpace(s.QOS)

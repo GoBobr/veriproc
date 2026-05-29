@@ -63,6 +63,13 @@ export class ConsoleClient {
       {}
     );
 
+  hideStationFailures = (instanceID: string, stationID: string) =>
+    this.send<Record<string, unknown>>(
+      "POST",
+      `/api/console/instances/${enc(instanceID)}/stations/${enc(stationID)}/hide-failed`,
+      {}
+    );
+
   submitTask = (
     instanceID: string,
     stationID: string,
@@ -113,11 +120,21 @@ export class ConsoleClient {
       `/api/console/instances/${enc(instanceID)}/tasks/${enc(taskID)}/runs/${retryIndex}/tree?path=${enc(path)}`
     );
 
-  previewFile = (instanceID: string, taskID: string, retryIndex: number, path: string) =>
-    this.send<PreviewResponse>(
+  previewFile = (
+    instanceID: string,
+    taskID: string,
+    retryIndex: number,
+    path: string,
+    opts?: { mode?: "head" | "tail"; limit?: number }
+  ) => {
+    const params = new URLSearchParams({ path });
+    if (opts?.mode) params.set("mode", opts.mode);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    return this.send<PreviewResponse>(
       "GET",
-      `/api/console/instances/${enc(instanceID)}/tasks/${enc(taskID)}/runs/${retryIndex}/file?path=${enc(path)}`
+      `/api/console/instances/${enc(instanceID)}/tasks/${enc(taskID)}/runs/${retryIndex}/file?${params}`
     );
+  };
 }
 
 function enc(s: string) {

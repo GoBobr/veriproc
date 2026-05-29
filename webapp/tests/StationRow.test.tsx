@@ -54,6 +54,7 @@ describe("StationRow", () => {
     fireEvent.contextMenu(screen.getByText("Station A"));
     expect(screen.getByText("Pause station")).toBeInTheDocument();
     expect(screen.getByText("Submit task…")).toBeInTheDocument();
+    expect(screen.getByText("Hide all failed")).toBeInTheDocument();
   });
 
   it("operator slot menu offers retry+hide on failed runs", () => {

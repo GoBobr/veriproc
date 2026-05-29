@@ -93,6 +93,8 @@ export interface PreviewResponse {
   path: string;
   kind: string;
   size: number;
+  offset: number;
+  mode?: string;
   truncated: boolean;
   bytes_returned: number;
   content?: string;

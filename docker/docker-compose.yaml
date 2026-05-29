@@ -1,0 +1,62 @@
+# docker-compose.yaml — example deployment of VeriProc
+#
+# This file demonstrates a minimal production-like setup with:
+#   - veriprocd:       the processing daemon (port 8080)
+#   - veriproc-console: the operator web console (port 8090)
+#
+# Before starting:
+#   1. Build the images:
+#        make docker-build
+#   2. Create the configuration files from the sandbox examples:
+#        cp sandbox/instance.yaml  deploy/instance.yaml
+#        cp sandbox-console/console.yaml  deploy/console.yaml
+#      Edit them as needed (db.dsn, storage paths, auth tokens, etc.)
+#   3. Start the stack:
+#        docker compose up -d
+#
+# Data directories are created on the host automatically by Docker.
+
+services:
+  veriprocd:
+    image: ghcr.io/leonid-butenko/veriproc:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Instance configuration file (required)
+      - ./deploy/instance.yaml:/config/instance.yaml:ro
+      # Station YAML specs directory
+      - ./deploy/stations:/stations:ro
+      # Persistent state: SQLite database and working roots
+      - veriprocd-data:/data
+      # Rolling archives (optional; mount your own archive root here)
+      # - /mnt/archives:/archives:ro
+    environment:
+      # Auth tokens: subject:role:token[;...] — overrides config file tokens
+      # Uncomment and populate for production deployments.
+      # VERIPROC_AUTH_TOKENS: "operator:operator:changeme"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  veriproc-console:
+    image: ghcr.io/leonid-butenko/veriproc-console:latest
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    depends_on:
+      veriprocd:
+        condition: service_healthy
+    volumes:
+      # Console configuration file (required)
+      - ./deploy/console.yaml:/config/console.yaml:ro
+      # Persistent state: console SQLite database (audit log, hidden runs, etc.)
+      - console-data:/data
+    # The entrypoint already sets --webapp-dir /srv/webapp/dist
+
+volumes:
+  veriprocd-data:
+  console-data:

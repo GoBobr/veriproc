@@ -140,6 +140,13 @@ type Executor interface {
 // ErrUnknownJob is returned by Poll/Cancel when the scheduler-id is not known.
 var ErrUnknownJob = errors.New("executor: unknown scheduler id")
 
+// ErrFatalSubmit is returned by Submit when the failure is permanent and
+// retrying the same run will never succeed without a configuration change.
+// Examples: SSH transport failure (exit 255), missing executable, unknown
+// executor mode. The dispatcher wraps this in ErrFatalDispatch and
+// transitions both the run and the task to "failed".
+var ErrFatalSubmit = errors.New("executor: fatal submit error")
+
 // ErrCancellationUnsupported is returned by Cancel on executors whose
 // SupportsCancellation reports false. Stub returns nil here (it supports
 // cancellation); a SLURM-without-scancel deployment would return this.

@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+# ── Stage 1: build the webapp (Node / Vite) ─────────────────────────────────
+FROM node:20-alpine AS webapp-builder
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+
+WORKDIR /webapp
+COPY webapp/package.json webapp/package-lock.json ./
+RUN npm ci --no-fund --no-audit
+
+COPY webapp/ ./
+RUN VITE_APP_VERSION=${VERSION} VITE_APP_COMMIT=${GIT_COMMIT} npm run build
+
+# ── Stage 2: build the Go binaries ──────────────────────────────────────────
+FROM golang:1.25-alpine AS go-builder
+
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build \
+      -ldflags "-s -w \
+        -X github.com/eum/veriproc/internal/version.Version=${VERSION} \
+        -X github.com/eum/veriproc/internal/version.Commit=${GIT_COMMIT} \
+        -X github.com/eum/veriproc/internal/version.BuildDate=${BUILD_DATE}" \
+      -o /out/veriproc-console ./cmd/veriproc-console
+
+# ── Stage 3: runtime ────────────────────────────────────────────────────────
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Non-root user for the console process
+RUN addgroup -S veriproc && adduser -S -G veriproc veriproc
+
+COPY --from=go-builder  /out/veriproc-console   /usr/local/bin/
+COPY --from=webapp-builder /webapp/dist          /srv/webapp/dist
+
+# Conventional mount points:
+#   /config      — console.yaml (bind-mount from host or secret)
+#   /data        — console SQLite db file
+VOLUME ["/data", "/config"]
+
+USER veriproc
+EXPOSE 8090
+
+ENTRYPOINT ["veriproc-console"]
+CMD ["--config", "/config/console.yaml", "--webapp-dir", "/srv/webapp/dist"]

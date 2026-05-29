@@ -39,20 +39,20 @@ func newTestDB(t *testing.T) *DB {
 // handler tests. It records the calls it receives so assertions can verify
 // upstream interactions.
 type fakeUpstream struct {
-	mu             sync.Mutex
-	stations       []StationListItem
-	summary        StationsSummary
-	pauseCalls     []string
-	unpauseCalls   []string
-	submitCalls    int
-	submitErr      error
-	retryCalls     int
-	cancelCalls    int
-	cancelErr      error
-	taskRuns       map[string][]map[string]any
-	tasks          map[string]map[string]any
-	runs           map[string]map[string]any
-	health         error
+	mu           sync.Mutex
+	stations     []StationListItem
+	summary      StationsSummary
+	pauseCalls   []string
+	unpauseCalls []string
+	submitCalls  int
+	submitErr    error
+	retryCalls   int
+	cancelCalls  int
+	cancelErr    error
+	taskRuns     map[string][]map[string]any
+	tasks        map[string]map[string]any
+	runs         map[string]map[string]any
+	health       error
 }
 
 func (f *fakeUpstream) Health(_ context.Context) error { return f.health }
@@ -157,8 +157,8 @@ func newTestGateway(t *testing.T, fake *fakeUpstream) (*Gateway, *DB) {
 		},
 		Instances: []InstanceConfig{{
 			ID: "vp1", Title: "VP1", BaseURL: "http://upstream",
-			WorkingRootBase: tmp,
-			AllowedRoots:    []string{tmp},
+			WorkingRootBase:   tmp,
+			AllowedRoots:      []string{tmp},
 			UpstreamTimeoutMS: 1000,
 		}},
 	}
@@ -307,6 +307,33 @@ func TestRouter_HideRunIdempotentAndAudited(t *testing.T) {
 	}
 }
 
+func TestRouter_HideStationFailures(t *testing.T) {
+	fake := &fakeUpstream{
+		summary: StationsSummary{Items: []StationSummary{{
+			StationID: "STA",
+			Slots: []SummarySlot{
+				{Kind: "failed", TaskID: "TASK-1", RetryIndex: 0, State: "failed"},
+				{Kind: "cancelled", TaskID: "TASK-2", RetryIndex: 1, State: "cancelled"},
+				{Kind: "running", TaskID: "TASK-3", RetryIndex: 0, State: "running"},
+			},
+		}}},
+	}
+	gw, db := newTestGateway(t, fake)
+	rt := gw.Router(nil)
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("POST", "/api/console/instances/vp1/stations/STA/hide-failed", "operatortok", strings.NewReader("{}")))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	hidden, err := db.HiddenForStation(context.Background(), "vp1", "STA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hidden) != 2 {
+		t.Fatalf("hidden = %d, want 2", len(hidden))
+	}
+}
+
 func TestRouter_CancelResolvesRunID(t *testing.T) {
 	fake := &fakeUpstream{
 		taskRuns: map[string][]map[string]any{
@@ -394,11 +421,13 @@ func TestRouter_TreeAndPreview(t *testing.T) {
 
 type fakeFailingUpstream struct{ err error }
 
-func (f *fakeFailingUpstream) Health(_ context.Context) error                  { return f.err }
+func (f *fakeFailingUpstream) Health(_ context.Context) error { return f.err }
 func (f *fakeFailingUpstream) GetHealth(_ context.Context) (map[string]any, error) {
 	return nil, f.err
 }
-func (f *fakeFailingUpstream) Stations(_ context.Context) ([]StationListItem, error) { return nil, f.err }
+func (f *fakeFailingUpstream) Stations(_ context.Context) ([]StationListItem, error) {
+	return nil, f.err
+}
 func (f *fakeFailingUpstream) StationsSummary(_ context.Context, _ time.Time) (StationsSummary, error) {
 	return StationsSummary{}, f.err
 }

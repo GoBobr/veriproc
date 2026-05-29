@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# ── Stage 1: build ──────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+# Build-time version metadata injected by `make docker-build-daemon`
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build \
+      -ldflags "-s -w \
+        -X github.com/eum/veriproc/internal/version.Version=${VERSION} \
+        -X github.com/eum/veriproc/internal/version.Commit=${GIT_COMMIT} \
+        -X github.com/eum/veriproc/internal/version.BuildDate=${BUILD_DATE}" \
+      -o /out/veriprocd ./cmd/veriprocd && \
+    CGO_ENABLED=0 go build \
+      -ldflags "-s -w \
+        -X github.com/eum/veriproc/internal/version.Version=${VERSION} \
+        -X github.com/eum/veriproc/internal/version.Commit=${GIT_COMMIT} \
+        -X github.com/eum/veriproc/internal/version.BuildDate=${BUILD_DATE}" \
+      -o /out/veriproc ./cmd/veriproc
+
+# ── Stage 2: runtime ────────────────────────────────────────────────────────
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata openssh-client
+
+# Non-root user for the daemon process
+RUN addgroup -S veriproc && adduser -S -G veriproc veriproc
+
+# Make /etc/passwd world-writable so the entrypoint can add a minimal entry
+# for whatever UID the container is run as (e.g. an LDAP user). /etc/passwd
+# is owned by root:root, so group-writable is insufficient for arbitrary UIDs.
+# This is the same approach used by Red Hat UBI and OpenShift base images.
+RUN chmod 0666 /etc/passwd
+
+COPY --from=builder /out/veriprocd /out/veriproc /usr/local/bin/
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Conventional mount points:
+#   /data        — working roots, SQLite db file
+#   /config      — instance.yaml (bind-mount from host or secret)
+#   /stations    — station YAML specs (bind-mount)
+#   /archives    — rolling archive roots (bind-mount)
+VOLUME ["/data", "/config", "/stations", "/archives"]
+
+USER veriproc
+EXPOSE 8080
+
+ENTRYPOINT ["entrypoint.sh"]
+CMD ["veriprocd", "--config", "/config/instance.yaml"]

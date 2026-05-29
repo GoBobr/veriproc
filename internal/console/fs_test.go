@@ -128,6 +128,28 @@ func TestPreviewFile_TruncationAtLimit(t *testing.T) {
 	}
 }
 
+func TestPreviewFile_TailModeReadsEndOnly(t *testing.T) {
+	run := t.TempDir()
+	path := filepath.Join(run, "big.log")
+	body := "first line\nsecond line\nlast line\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := PreviewFileWithOptions(run, "big.log", PreviewOptions{MaxBytes: 10, Mode: "tail"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Mode != "tail" {
+		t.Fatalf("mode = %q, want tail", out.Mode)
+	}
+	if !out.Truncated || out.Offset == 0 {
+		t.Fatalf("tail preview should report truncation and offset: %+v", out)
+	}
+	if !strings.Contains(out.Content, "last line") {
+		t.Fatalf("tail content = %q, want final line", out.Content)
+	}
+}
+
 func TestPreviewFile_NotFound(t *testing.T) {
 	run := t.TempDir()
 	_, err := PreviewFile(run, "missing", 1024)

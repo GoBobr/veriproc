@@ -113,7 +113,7 @@ func (e *SlurmExecutor) Submit(ctx context.Context, desc JobDescription) (Submis
 		return Submission{}, err
 	}
 	if desc.Executable == "" {
-		return Submission{}, fmt.Errorf("%s executor: executable is empty for run %s", effective.Mode, desc.RunID)
+		return Submission{}, fmt.Errorf("%w: %s executor: executable is empty for run %s", ErrFatalSubmit, effective.Mode, desc.RunID)
 	}
 	if err := os.MkdirAll(filepath.Join(desc.WorkingRoot, "logs"), 0o755); err != nil {
 		return Submission{}, fmt.Errorf("slurm executor: mkdir logs: %w", err)
@@ -128,7 +128,15 @@ func (e *SlurmExecutor) Submit(ctx context.Context, desc JobDescription) (Submis
 	args := e.sbatchArgs(desc, effective, wrapperPath)
 	stdout, stderr, err := e.runCommand(ctx, e.cfg.SubmitCommand, args...)
 	if err != nil {
-		return Submission{}, fmt.Errorf("slurm submit: %w: %s", err, strings.TrimSpace(stderr))
+		stderrMsg := strings.TrimSpace(stderr)
+		// SSH exit status 255 means the SSH transport or authentication itself
+		// failed (user not found, host unreachable, auth failure, etc.).
+		// This is a permanent infrastructure misconfiguration; wrap as fatal.
+		// Transient DNS failures ("Try again") are excluded and remain retryable.
+		if e.cfg.Connection.Mode == "ssh" && isSshTransportError(err, stderrMsg) {
+			return Submission{}, fmt.Errorf("%w: slurm submit: %w: %s", ErrFatalSubmit, err, stderrMsg)
+		}
+		return Submission{}, fmt.Errorf("slurm submit: %w: %s", err, stderrMsg)
 	}
 	schedulerID := parseSbatchID(stdout)
 	if schedulerID == "" {
@@ -376,6 +384,25 @@ func (e *SlurmExecutor) runCommand(ctx context.Context, name string, args ...str
 	sshArgs = append(sshArgs, e.cfg.Connection.User+"@"+e.cfg.Connection.Host, name)
 	sshArgs = append(sshArgs, args...)
 	return e.runner.Run(ctx, "ssh", sshArgs...)
+}
+
+// isSshTransportError reports whether err represents a permanent SSH
+// transport-level failure (exit code 255). SSH uses exit code 255 exclusively
+// for its own errors, distinct from exit codes of remote commands.
+//
+// Transient conditions such as DNS resolution failures ("Try again") are
+// excluded so the dispatcher can retry the run after the transient clears.
+func isSshTransportError(err error, stderr string) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 255 {
+		return false
+	}
+	// "Try again" is the EAI_AGAIN suffix appended by getaddrinfo when DNS
+	// lookup returns a temporary failure. Treat as transient, not fatal.
+	if strings.Contains(stderr, "Try again") {
+		return false
+	}
+	return true
 }
 
 func parseSbatchID(stdout string) string {

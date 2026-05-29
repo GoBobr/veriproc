@@ -130,10 +130,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 // HiddenRunKey identifies a console-local hidden failed run.
 type HiddenRunKey struct {
-	InstanceID  string
-	StationID   string
-	TaskID      string
-	RetryIndex  int
+	InstanceID string
+	StationID  string
+	TaskID     string
+	RetryIndex int
 }
 
 // HideRun records (idempotently) that a failed run has been acknowledged from
@@ -148,6 +148,35 @@ func (d *DB) HideRun(ctx context.Context, k HiddenRunKey, hiddenBy string, now t
 	`, k.InstanceID, k.StationID, k.TaskID, k.RetryIndex, hiddenBy, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("console: hide run: %w", err)
+	}
+	return nil
+}
+
+// HideRuns records several hidden failed runs in one transaction.
+func (d *DB) HideRuns(ctx context.Context, keys []HiddenRunKey, hiddenBy string, now time.Time) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("console: hide runs: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	hiddenAt := now.UTC().Format(time.RFC3339Nano)
+	for _, key := range keys {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO hidden_station_runs(instance_id, station_id, task_id, retry_index, hidden_by, hidden_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(instance_id, station_id, task_id, retry_index) DO UPDATE SET
+				hidden_by = excluded.hidden_by,
+				hidden_at = excluded.hidden_at
+		`, key.InstanceID, key.StationID, key.TaskID, key.RetryIndex, hiddenBy, hiddenAt)
+		if err != nil {
+			return fmt.Errorf("console: hide runs: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("console: hide runs commit: %w", err)
 	}
 	return nil
 }
@@ -177,16 +206,16 @@ func (d *DB) HiddenForStation(ctx context.Context, instanceID, stationID string)
 
 // AuditEntry captures one mutating action executed by the console gateway.
 type AuditEntry struct {
-	At          time.Time
-	Subject     string
-	InstanceID  string
-	Action      string
-	StationID   string
-	TaskID      string
-	RetryIndex  *int
-	Payload     string
-	Status      string
-	Message     string
+	At         time.Time
+	Subject    string
+	InstanceID string
+	Action     string
+	StationID  string
+	TaskID     string
+	RetryIndex *int
+	Payload    string
+	Status     string
+	Message    string
 }
 
 // RecordAudit appends an audit-log entry. Errors from this call must not block
