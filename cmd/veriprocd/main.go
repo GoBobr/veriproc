@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/auth"
+	"github.com/eum/veriproc/internal/cleaner"
 	"github.com/eum/veriproc/internal/config"
 	"github.com/eum/veriproc/internal/executor"
 	"github.com/eum/veriproc/internal/groups"
@@ -161,6 +162,7 @@ func run(args []string) error {
 		Runs:     runsSvc,
 		Stations: stationSvc,
 		Groups:   groupSvc,
+		Cleaner:  cleaner.New(st, logger),
 		Authn:    authn,
 		Quota:    quota,
 	})

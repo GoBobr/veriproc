@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/eum/veriproc/internal/auth"
+	"github.com/eum/veriproc/internal/cleaner"
 	"github.com/eum/veriproc/internal/config"
 	"github.com/eum/veriproc/internal/groups"
 	"github.com/eum/veriproc/internal/health"
@@ -31,6 +32,9 @@ type Deps struct {
 	Groups *groups.Service
 	// Stations is optional; used to expose station status/control endpoints.
 	Stations *stationssvc.Service
+	// Cleaner is optional; required to expose destructive maintenance endpoints
+	// (task/run deletion and the time-bounded clean sweep, Spec §6).
+	Cleaner *cleaner.Service
 	// Authn enforces bearer-token auth on /api/v1/* (M6). When nil, the API
 	// is open (preserves M0–M5 behavior for tests / local dev).
 	Authn auth.Authenticator
@@ -90,6 +94,13 @@ func NewRouter(d Deps) http.Handler {
 		mux.HandleFunc("GET /api/v1/groups", gh.list)
 		mux.HandleFunc("GET /api/v1/groups/{group_id}", gh.get)
 		mux.HandleFunc("POST /api/v1/groups/{group_id}/close", gh.close)
+	}
+
+	if d.Cleaner != nil {
+		ch := &cleanerHandler{svc: d.Cleaner}
+		mux.HandleFunc("DELETE /api/v1/tasks/{task_id}", ch.deleteTask)
+		mux.HandleFunc("DELETE /api/v1/runs/{run_id}", ch.deleteRun)
+		mux.HandleFunc("POST /api/v1/maintenance/clean", ch.clean)
 	}
 
 	// Catch-all that distinguishes 404 (no route at all) from 405 (route exists

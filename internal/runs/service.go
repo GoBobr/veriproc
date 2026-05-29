@@ -482,6 +482,7 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 			if err := s.store.Runs().MarkRunning(ctx, runID, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 				return nil, err
 			}
+			_ = s.store.Tasks().SetState(ctx, run.TaskID, "running", "")
 			ev := s.logger.Info().Str("run_ref", runRef).Str("executor", job.Executor)
 			if obs.Node != "" {
 				ev = ev.Str("node", obs.Node)

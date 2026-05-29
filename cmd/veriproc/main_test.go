@@ -67,14 +67,15 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	mux.HandleFunc("/api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.URL.Query().Get("task_id")
 		sampleRun := map[string]any{
-			"run_id":       "run-internal-001",
-			"run_ref":      "task-1/r0",
-			"task_id":      "task-1",
-			"retry_index":  0,
-			"state":        "complete",
-			"canonicality": "canonical",
-			"working_root": "/data/work/STATION-A/task-1/r0",
-			"created_at":   "2025-07-03T11:00:00Z",
+			"run_id":         "run-internal-001",
+			"run_ref":        "task-1/r0",
+			"task_id":        "task-1",
+			"retry_index":    0,
+			"state":          "failed",
+			"canonicality":   "canonical",
+			"failure_reason": "executor reported failure",
+			"working_root":   "/data/work/STATION-A/task-1/r0",
+			"created_at":     "2025-07-03T11:00:00Z",
 		}
 		items := []any{}
 		if taskID == "" || taskID == "task-1" {
@@ -446,6 +447,9 @@ func TestCLI_RunList_ShowsRunRef(t *testing.T) {
 	// Must contain the run_ref value.
 	if !strings.Contains(out, "task-1/r0") {
 		t.Errorf("run list should show run_ref value task-1/r0; got:\n%s", out)
+	}
+	if !strings.Contains(out, "FAILURE REASON") || !strings.Contains(out, "executor reported failure") {
+		t.Errorf("run list table should show run failure reason; got:\n%s", out)
 	}
 }
 

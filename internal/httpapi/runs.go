@@ -44,6 +44,7 @@ type runWire struct {
 	WorkingRoot             string     `json:"working_root,omitempty"`
 	ProcessingFingerprint   string     `json:"processing_fingerprint,omitempty"`
 	FailureReason           string     `json:"failure_reason,omitempty"`
+	FailureSummary          string     `json:"failure_summary,omitempty"`
 	CreatedAt               time.Time  `json:"created_at"`
 	PreparedAt              *time.Time `json:"prepared_at,omitempty"`
 	DispatchedAt            *time.Time `json:"dispatched_at,omitempty"`
@@ -486,6 +487,7 @@ func toRunWire(r *store.RunRecord, t *store.TaskRecord) runWire {
 		WorkingRoot:           r.WorkingRoot,
 		ProcessingFingerprint: r.ProcessingFingerprint,
 		FailureReason:         r.FailureReason,
+		FailureSummary:        r.FailureReason,
 		CreatedAt:             r.CreatedAt.UTC(),
 	}
 	if t != nil {

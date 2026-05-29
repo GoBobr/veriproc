@@ -413,6 +413,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-radius: 3px;
 }
 .run-selector button.active { background: var(--accent); color: white; border-color: var(--accent); }
+.run-selector button.run-failed { border-color: var(--slot-failed); color: var(--danger); }
+.run-selector button.run-failed.active { background: var(--slot-failed); color: white; border-color: var(--slot-failed); }
+.run-failure-reason { font-size: 11px; color: var(--danger); background: var(--panel-2); border: 1px solid var(--slot-failed); border-radius: 4px; padding: 4px 10px; margin: 2px 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.run-failure-reason span { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; word-break: break-all; }
 
 .legend {
   display: flex;

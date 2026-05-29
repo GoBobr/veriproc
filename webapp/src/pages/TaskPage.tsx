@@ -34,6 +34,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
     : null;
   const selectedRunState = String(selectedRun?.state ?? "");
   const executionNode = String(selectedRun?.execution_node ?? "");
+  const selectedRunFailure = String(selectedRun?.failure_summary ?? selectedRun?.failure_reason ?? "");
   const canCancel = isOperator && (selectedRunState === "running" || selectedRunState === "queued");
 
   useEffect(() => {
@@ -45,6 +46,10 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
       if (latest >= 0) setRetryIndex(latest);
     }
   }, [runs, retryIndex]);
+
+  // Clear working root whenever the selected run changes so we don't briefly
+  // display the previous run's path while the new tree query is in flight.
+  useEffect(() => { setWorkingRoot(null); }, [retryIndex]);
 
   return (
     <div class="task-page">
@@ -85,15 +90,9 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
           <div class="task-meta">
             <div>station<span>{String(taskQ.data.station_id ?? "—")}</span></div>
             <div>node<span>{executionNode || "—"}</span></div>
-            <div>state<span>{String(taskQ.data.state ?? "—")}</span></div>
+            <div>state<span>{selectedRunState || String(taskQ.data.state ?? "—")}</span></div>
             <div>window<span>{fmtTime(taskQ.data.start)} – {fmtTime(taskQ.data.end)}</span></div>
             <div>created<span>{fmtTime(taskQ.data.created_at)}</span></div>
-            {taskQ.data.failure_summary && (
-              <div class="task-failure-summary">
-                failure
-                <span>{String(taskQ.data.failure_summary)}</span>
-              </div>
-            )}
           </div>
         )}
         {runs.length > 0 && (
@@ -101,16 +100,25 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             run:
             {runs.map((r) => {
               const idx = Number(r.retry_index ?? 0);
+              const st = String(r.state ?? "");
+              const isBad = st === "failed" || st === "cancelled";
+              const cls = [retryIndex === idx ? "active" : "", isBad ? "run-failed" : ""].filter(Boolean).join(" ");
               return (
                 <button
                   key={idx}
-                  class={retryIndex === idx ? "active" : ""}
+                  class={cls}
                   onClick={() => setRetryIndex(idx)}
                 >
                   r{idx}
                 </button>
               );
             })}
+          </div>
+        )}
+        {selectedRun && (selectedRunState === "failed" || selectedRunState === "cancelled") && selectedRunFailure && (
+          <div class="run-failure-reason">
+            r{retryIndex} {selectedRunState}
+            <span>{selectedRunFailure}</span>
           </div>
         )}
         {workingRoot && (

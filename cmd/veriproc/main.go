@@ -34,6 +34,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -95,6 +96,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		out:     cfg.Output,
 		stdout:  stdout,
 		stderr:  stderr,
+		stdin:   os.Stdin,
 	}
 
 	switch cmd {
@@ -119,6 +121,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return c.cmdGroup(sub, tail)
 	case "station", "stations":
 		return c.cmdStation(sub, tail)
+	case "clean":
+		return c.cmdClean(tail)
 	case "health":
 		return c.cmdHealth()
 	case "readiness":
@@ -233,6 +237,7 @@ type client struct {
 	out     string // table|json|yaml
 	stdout  io.Writer
 	stderr  io.Writer
+	stdin   io.Reader
 }
 
 type apiError struct {
@@ -589,8 +594,22 @@ func (c *client) cmdTask(sub string, args []string) int {
 		}
 		c.renderResource(raw, m, []string{"run_ref", "task_id", "retry_index", "state", "created_at"})
 		return ExitOK
+	case "delete":
+		fs := flag.NewFlagSet("task delete", flag.ContinueOnError)
+		fs.SetOutput(c.stderr)
+		force := fs.Bool("force", false, "skip the confirmation prompt")
+		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+		if err := fs.Parse(args); err != nil {
+			return ExitUsage
+		}
+		rest := fs.Args()
+		if len(rest) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc task delete TASK_ID [--dry-run] [--force]")
+			return ExitUsage
+		}
+		return c.cmdDelete("task", "/api/v1/tasks/"+rest[0], rest[0], *dryRun, *force)
 	default:
-		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry}")
+		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry|delete}")
 		return ExitUsage
 	}
 }
@@ -656,7 +675,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderResource(raw, m, []string{"station_id", "run_ref", "task_id",  "start", "end", "state", "canonicality", "executor_type", "execution_node", "created_at", "working_root"})
+		c.renderResource(raw, m, []string{"station_id", "run_ref", "task_id", "start", "end", "state", "canonicality", "executor_type", "execution_node", "failure_reason", "created_at", "working_root"})
 		return ExitOK
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
@@ -664,7 +683,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_ref", "executor_type", "execution_node", "working_root", "state", "created_at"})
+		c.renderList(raw, m, []string{"run_ref", "executor_type", "execution_node", "working_root", "state", "failure_reason", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {
@@ -681,10 +700,275 @@ func (c *client) cmdRun(sub string, args []string) int {
 		}
 		c.renderList(raw, m, []string{"job_id", "executor_type", "scheduler_native_state", "execution_node", "submitted_at"})
 		return ExitOK
+	case "delete":
+		fs := flag.NewFlagSet("run delete", flag.ContinueOnError)
+		fs.SetOutput(c.stderr)
+		force := fs.Bool("force", false, "skip the confirmation prompt")
+		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+		if err := fs.Parse(args); err != nil {
+			return ExitUsage
+		}
+		rest := fs.Args()
+		if len(rest) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc run delete TASK_ID/rN [--dry-run] [--force]")
+			return ExitUsage
+		}
+		runID, err := c.resolveRunID(rest[0])
+		if err != nil {
+			return c.reportErr(err)
+		}
+		return c.cmdDelete("run", "/api/v1/runs/"+runID, rest[0], *dryRun, *force)
 	default:
-		fmt.Fprintln(c.stderr, "veriproc run {get|list|jobs}")
+		fmt.Fprintln(c.stderr, "veriproc run {get|list|jobs|delete}")
 		return ExitUsage
 	}
+}
+
+// --- subcommand: clean / delete --------------------------------------------
+
+// cleanReport mirrors the JSON envelope returned by the cleaner endpoints
+// (internal/cleaner.Report). Only the fields the CLI renders are decoded.
+type cleanReport struct {
+	DryRun              bool           `json:"dry_run"`
+	Counts              map[string]int `json:"counts"`
+	TaskIDs             []string       `json:"task_ids"`
+	RunIDs              []string       `json:"run_ids"`
+	WorkingRoots        []string       `json:"working_roots"`
+	WorkingRootsRemoved int            `json:"working_roots_removed"`
+	FilesystemErrors    []string       `json:"filesystem_errors"`
+}
+
+// countOrder fixes the display order of the per-table deletion counts.
+var countOrder = []string{
+	"tasks", "runs", "jobs", "artifacts", "publications",
+	"manifests", "manifest_entries", "deduplication_records",
+	"canonicality_audits", "split_group_members", "task_history_entries",
+	"provenance_links", "idempotency_records",
+}
+
+// renderCleanReport prints a human-readable summary of a cleanup report. In
+// json/yaml output mode it defers to the raw renderers instead.
+func (c *client) renderCleanReport(rep *cleanReport, raw []byte) {
+	if c.out == "json" {
+		c.writeJSON(raw)
+		return
+	}
+	if c.out == "yaml" {
+		var m map[string]any
+		if json.Unmarshal(raw, &m) == nil {
+			c.writeYAML(m)
+			return
+		}
+	}
+	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	for _, k := range countOrder {
+		if v, ok := rep.Counts[k]; ok && v > 0 {
+			fmt.Fprintf(tw, "%s\t%d\n", k, v)
+		}
+	}
+	tw.Flush()
+	fmt.Fprintf(c.stdout, "tasks selected: %d, runs selected: %d\n", len(rep.TaskIDs), len(rep.RunIDs))
+	if len(rep.WorkingRoots) > 0 {
+		if rep.DryRun {
+			fmt.Fprintf(c.stdout, "working roots to remove: %d\n", len(rep.WorkingRoots))
+		} else {
+			fmt.Fprintf(c.stdout, "working roots removed: %d/%d\n", rep.WorkingRootsRemoved, len(rep.WorkingRoots))
+		}
+	}
+	for _, fe := range rep.FilesystemErrors {
+		fmt.Fprintln(c.stderr, "veriproc: filesystem error: "+fe)
+	}
+}
+
+// confirm reads a single line from stdin and returns true only for an
+// affirmative answer (y / yes, case-insensitive).
+func (c *client) confirm(prompt string) bool {
+	fmt.Fprint(c.stdout, prompt)
+	if c.stdin == nil {
+		return false
+	}
+	reader := bufio.NewReader(c.stdin)
+	line, _ := reader.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+// cmdDelete performs a DELETE against path, with an optional dry-run preview
+// and confirmation prompt. label is "task" or "run"; ref is the operator-facing
+// identifier used in messages.
+func (c *client) cmdDelete(label, path, ref string, dryRun, force bool) int {
+	if dryRun {
+		rep, raw, err := c.deleteCall(path, true)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderCleanReport(rep, raw)
+		return ExitOK
+	}
+	if !force {
+		// Preview first so the operator sees the blast radius before confirming.
+		rep, raw, err := c.deleteCall(path, true)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderCleanReport(rep, raw)
+		if !c.confirm(fmt.Sprintf("Delete %s %s and all listed artifacts? [y/N] ", label, ref)) {
+			fmt.Fprintln(c.stderr, "veriproc: aborted")
+			return ExitOK
+		}
+	}
+	rep, raw, err := c.deleteCall(path, false)
+	if err != nil {
+		var ae *apiError
+		if !errors.As(err, &ae) {
+			fmt.Fprintln(c.stderr, "veriproc "+label+" delete: "+err.Error()+" (outcome indeterminate)")
+			return ExitIndeterminate
+		}
+		return c.reportErr(err)
+	}
+	c.renderCleanReport(rep, raw)
+	return ExitOK
+}
+
+// deleteCall issues the DELETE request, appending ?dry_run=true when requested,
+// and decodes the cleanup report.
+func (c *client) deleteCall(path string, dryRun bool) (*cleanReport, []byte, error) {
+	if dryRun {
+		path += "?dry_run=true"
+	}
+	_, raw, err := c.do(http.MethodDelete, path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	var rep cleanReport
+	_ = json.Unmarshal(raw, &rep)
+	return &rep, raw, nil
+}
+
+// cmdClean implements `veriproc clean --before TS | --after TS [--dry-run]
+// [--force]`. With neither cutoff it prints the command help (Spec §6).
+func (c *client) cmdClean(args []string) int {
+	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	before := fs.String("before", "", "delete tasks at or before this timestamp")
+	after := fs.String("after", "", "delete tasks at or after this timestamp")
+	by := fs.String("by", "processing-time", "cutoff basis: processing-time (created_at) or processing-window (sensing window)")
+	force := fs.Bool("force", false, "skip the confirmation prompt")
+	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+	if err := fs.Parse(args); err != nil {
+		return ExitUsage
+	}
+	if *before == "" && *after == "" {
+		printCleanHelp(c.stdout)
+		return ExitOK
+	}
+	switch *by {
+	case "processing-time", "processing-window":
+	default:
+		fmt.Fprintln(c.stderr, "veriproc clean: invalid --by: must be processing-time or processing-window")
+		return ExitValidation
+	}
+
+	// Validate timestamps client-side for a friendly error before the round-trip.
+	body := map[string]any{"basis": *by}
+	if *before != "" {
+		if _, err := policy.ParseWindowTimestamp(*before); err != nil {
+			fmt.Fprintln(c.stderr, "veriproc clean: invalid --before: "+err.Error())
+			return ExitValidation
+		}
+		body["before"] = *before
+	}
+	if *after != "" {
+		if _, err := policy.ParseWindowTimestamp(*after); err != nil {
+			fmt.Fprintln(c.stderr, "veriproc clean: invalid --after: "+err.Error())
+			return ExitValidation
+		}
+		body["after"] = *after
+	}
+
+	if *dryRun {
+		rep, raw, err := c.cleanCall(body, true)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderCleanReport(rep, raw)
+		return ExitOK
+	}
+	if !*force {
+		rep, raw, err := c.cleanCall(body, true)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderCleanReport(rep, raw)
+		if len(rep.TaskIDs) == 0 {
+			fmt.Fprintln(c.stdout, "nothing to delete")
+			return ExitOK
+		}
+		if !c.confirm("Delete the listed tasks, runs, and artifacts? [y/N] ") {
+			fmt.Fprintln(c.stderr, "veriproc: aborted")
+			return ExitOK
+		}
+	}
+	rep, raw, err := c.cleanCall(body, false)
+	if err != nil {
+		var ae *apiError
+		if !errors.As(err, &ae) {
+			fmt.Fprintln(c.stderr, "veriproc clean: "+err.Error()+" (outcome indeterminate)")
+			return ExitIndeterminate
+		}
+		return c.reportErr(err)
+	}
+	c.renderCleanReport(rep, raw)
+	return ExitOK
+}
+
+// cleanCall posts the clean request and decodes the cleanup report.
+func (c *client) cleanCall(body map[string]any, dryRun bool) (*cleanReport, []byte, error) {
+	payload := map[string]any{"dry_run": dryRun}
+	for k, v := range body {
+		payload[k] = v
+	}
+	_, raw, err := c.do(http.MethodPost, "/api/v1/maintenance/clean", payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	var rep cleanReport
+	_ = json.Unmarshal(raw, &rep)
+	return &rep, raw, nil
+}
+
+// printCleanHelp documents the clean command when invoked without a cutoff.
+func printCleanHelp(w io.Writer) {
+	fmt.Fprint(w, `veriproc clean — delete tasks, runs, and on-disk artifacts within a time range.
+
+Usage:
+  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force]
+  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force]
+  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force]
+
+Selection basis (--by, default processing-time):
+  processing-time     compare against the task processing time (created_at)
+    --before T   delete tasks created at or before T
+    --after  T   delete tasks created at or after T
+  processing-window   compare against the data sensing window
+    --before T   delete tasks whose sensing window ends at or before T
+    --after  T   delete tasks whose sensing window starts at or after T
+  combining both selects tasks within [after, before]
+
+Timestamps accept RFC 3339 (2025-05-29T10:00:00Z) or compact UTC
+(20250529T100000) forms.
+
+Options:
+  --by BASIS   processing-time (default) or processing-window
+  --dry-run    print what would be deleted, then exit without deleting
+  --force      skip the interactive confirmation prompt
+
+Without --force, clean previews the affected tasks/runs/artifacts and prompts
+for confirmation before deleting database rows and run working roots.
+`)
 }
 
 // --- subcommand: artifact ---------------------------------------------------
@@ -1060,9 +1344,11 @@ Commands:
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
   task retry    TASK_ID
+  task delete   TASK_ID [--dry-run] [--force]
   run  get      TASK_ID/rN
   run  list     [--task TASK_ID] [--state S]
   run  jobs     TASK_ID/rN
+  run  delete   TASK_ID/rN [--dry-run] [--force]
   artifact list --run TASK_ID/rN [--type LOGICAL]
   logs          TASK_ID/rN
   cancel        --yes [--reason TEXT] TASK_ID/rN
@@ -1074,6 +1360,7 @@ Commands:
   station summary [STATION_ID] [--since RFC3339]
   station pause   STATION_ID
   station unpause STATION_ID
+  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force]
   health
   readiness
   version       [--check-api]

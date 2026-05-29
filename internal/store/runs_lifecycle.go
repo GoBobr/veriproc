@@ -138,11 +138,12 @@ func (r *RunRepo) MarkCancellationRequested(ctx context.Context, runID string, a
 	return mustAffect(res, runID, "MarkCancellationRequested")
 }
 
-// MarkCancelled transitions any non-terminal state → cancelled and stamps
-// terminal_at. Spec §5.8: cancellation does not delete records.
+// MarkCancelled transitions any non-terminal state → cancelled, stamps
+// terminal_at, and records the run-level failure reason. Spec §5.8:
+// cancellation does not delete records.
 func (r *RunRepo) MarkCancelled(ctx context.Context, runID string, at time.Time) error {
 	res, err := r.q.ExecContext(ctx, `
-		UPDATE runs SET state = 'cancelled', terminal_at = ?
+		UPDATE runs SET state = 'cancelled', failure_reason = 'cancelled', terminal_at = ?
 		WHERE run_id = ? AND state NOT IN ('complete','failed','cancelled')`,
 		at.UTC(), runID)
 	if err != nil {
