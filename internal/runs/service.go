@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	osExec "os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -384,6 +385,12 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 	}
 	submission, err := exec.Submit(ctx, desc)
 	if err != nil {
+		// A missing command (e.g. ssh or sbatch not in PATH) is a permanent
+		// infrastructure misconfiguration; mark as fatal so the dispatcher
+		// does not retry the run indefinitely.
+		if errors.Is(err, osExec.ErrNotFound) {
+			return nil, fmt.Errorf("%w: executor submit: %w", ErrFatalDispatch, err)
+		}
 		return nil, fmt.Errorf("executor submit: %w", err)
 	}
 	if submission.ExecutorType == "" {

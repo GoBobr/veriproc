@@ -48,6 +48,12 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             <div>window start<span>{fmtTime(taskQ.data.start)}</span></div>
             <div>window end<span>{fmtTime(taskQ.data.end)}</span></div>
             <div>instance<span>{instanceID}</span></div>
+            {taskQ.data.failure_summary && (
+              <div class="task-failure-summary">
+                failure summary
+                <span>{String(taskQ.data.failure_summary)}</span>
+              </div>
+            )}
           </div>
         )}
         {runs.length > 0 && (

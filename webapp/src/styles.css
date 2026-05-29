@@ -304,6 +304,8 @@ input, button, select, textarea { font: inherit; }
 .task-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; font-size: 12px; }
 .task-meta div { color: var(--muted); }
 .task-meta span { color: var(--text); display: block; }
+.task-meta .task-failure-summary { grid-column: 1 / -1; color: var(--danger); background: var(--panel-2); border: 1px solid var(--slot-failed); border-radius: 4px; padding: 6px 10px; margin-top: 4px; }
+.task-meta .task-failure-summary span { color: var(--danger); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; word-break: break-all; }
 
 .split-panes { display: grid; grid-template-columns: 320px 1fr; gap: 12px; align-items: start; }
 .working-root {
