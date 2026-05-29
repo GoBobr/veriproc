@@ -528,6 +528,16 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		}
 		ev.Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
+	case executor.StatusUnknown:
+		// Safety net: if sacct returns an unrecognised state but cancellation was
+		// requested, treat the job as cancelled so the run doesn't stay stuck.
+		if run.CancellationRequestedAt.Valid {
+			if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
+				return nil, err
+			}
+			s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Str("executor", job.Executor).Msg("job finished (unknown state, cancellation requested)")
+			_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
+		}
 	}
 	return s.store.Runs().Get(ctx, runID)
 }

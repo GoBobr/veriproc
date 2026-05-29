@@ -100,8 +100,13 @@ func (s *Service) Run(ctx context.Context) {
 
 // findStale returns run ids in dispatched/running whose latest job
 // observation is older than cutoff (or never observed at all). The query
-// joins runs to the most recent job per run.
+// joins runs to the most recent job per run. It also picks up runs whose
+// reconciliation_started_at is stuck (older than lockTimeout), which can
+// happen if the process was killed while reconciliation was in progress.
 func (s *Service) findStale(ctx context.Context, cutoff time.Time) ([]string, error) {
+	// A reconciliation lock older than 5× the stale threshold is considered
+	// orphaned and the run is eligible for re-reconciliation.
+	lockTimeout := cutoff.Add(-4 * s.staleThreshold)
 	const q = `
 		SELECT r.run_id
 		FROM runs r
@@ -110,11 +115,11 @@ func (s *Service) findStale(ctx context.Context, cutoff time.Time) ([]string, er
 			FROM jobs GROUP BY run_id
 		) j ON j.run_id = r.run_id
 		WHERE r.state IN ('dispatched','running')
-		  AND r.reconciliation_started_at IS NULL
+		  AND (r.reconciliation_started_at IS NULL OR r.reconciliation_started_at < ?)
 		  AND (j.observed_at IS NULL OR j.observed_at < ?)
 		ORDER BY r.created_at ASC
 		LIMIT 50`
-	rows, err := s.store.DB().QueryContext(ctx, q, cutoff)
+	rows, err := s.store.DB().QueryContext(ctx, q, lockTimeout, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +143,12 @@ func (s *Service) reconcileOne(ctx context.Context, runID string) error {
 	if err := s.store.Runs().MarkReconciliationStarted(ctx, runID, now); err != nil {
 		return err
 	}
+	// Use a detached context for cleanup so that a shutdown signal does not
+	// prevent the lock from being cleared. A stuck lock would permanently
+	// exclude the run from future reconciliation cycles.
+	cleanupCtx := context.Background()
 	defer func() {
-		if err := s.store.Runs().ClearReconciliation(ctx, runID); err != nil {
+		if err := s.store.Runs().ClearReconciliation(cleanupCtx, runID); err != nil {
 			s.log.Warn().Err(err).Str("run_id", runID).Msg("reconciler: clear marker failed")
 		}
 	}()

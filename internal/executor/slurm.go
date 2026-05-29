@@ -458,6 +458,10 @@ func mapSlurmState(state, exitField string) (Status, int, string) {
 	case "FAILED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY", "BOOT_FAIL", "DEADLINE", "PREEMPTED":
 		return StatusFailed, exitCode, "slurm job " + strings.ToLower(upper)
 	default:
+		// Handle "CANCELLED by <uid>" emitted by sacct in parseable (-P) mode.
+		if strings.HasPrefix(upper, "CANCELLED") {
+			return StatusCancelled, exitCode, "slurm job cancelled"
+		}
 		return StatusUnknown, exitCode, ""
 	}
 }

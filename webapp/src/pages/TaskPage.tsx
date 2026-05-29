@@ -24,6 +24,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
 
   const runs = (runsQ.data?.items ?? []) as Array<Record<string, unknown>>;
   const [retryIndex, setRetryIndex] = useState<number | null>(initialRetry ?? null);
+  const [workingRoot, setWorkingRoot] = useState<string | null>(null);
   const taskState = String(taskQ.data?.state ?? "");
   const isOperator = session?.role === "operator";
   const canRetry = isOperator && (taskState === "failed" || taskState === "cancelled");
@@ -32,6 +33,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
     ? runs.find((r) => Number(r.retry_index ?? 0) === retryIndex)
     : null;
   const selectedRunState = String(selectedRun?.state ?? "");
+  const executionNode = String(selectedRun?.execution_node ?? "");
   const canCancel = isOperator && (selectedRunState === "running" || selectedRunState === "queued");
 
   useEffect(() => {
@@ -48,7 +50,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
     <div class="task-page">
       <div class="task-header">
         <div class="task-title-row">
-          <h2>{taskID}</h2>
+          <h2><span class="task-instance-prefix">{instanceID} / </span>{taskID}</h2>
           {canRetry && (
             <button
               class="primary small"
@@ -82,14 +84,13 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
         {taskQ.data && (
           <div class="task-meta">
             <div>station<span>{String(taskQ.data.station_id ?? "—")}</span></div>
+            <div>node<span>{executionNode || "—"}</span></div>
             <div>state<span>{String(taskQ.data.state ?? "—")}</span></div>
+            <div>window<span>{fmtTime(taskQ.data.start)} – {fmtTime(taskQ.data.end)}</span></div>
             <div>created<span>{fmtTime(taskQ.data.created_at)}</span></div>
-            <div>window start<span>{fmtTime(taskQ.data.start)}</span></div>
-            <div>window end<span>{fmtTime(taskQ.data.end)}</span></div>
-            <div>instance<span>{instanceID}</span></div>
             {taskQ.data.failure_summary && (
               <div class="task-failure-summary">
-                failure summary
+                failure
                 <span>{String(taskQ.data.failure_summary)}</span>
               </div>
             )}
@@ -112,9 +113,20 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             })}
           </div>
         )}
+        {workingRoot && (
+          <div class="working-root">
+            <span class="working-root-label">working root</span>
+            <span class="working-root-path">{workingRoot}</span>
+          </div>
+        )}
       </div>
       {retryIndex !== null && (
-        <RunBrowser instanceID={instanceID} taskID={taskID} retryIndex={retryIndex} />
+        <RunBrowser
+          instanceID={instanceID}
+          taskID={taskID}
+          retryIndex={retryIndex}
+          onWorkingRoot={setWorkingRoot}
+        />
       )}
     </div>
   );
@@ -124,10 +136,12 @@ function RunBrowser({
   instanceID,
   taskID,
   retryIndex,
+  onWorkingRoot,
 }: {
   instanceID: string;
   taskID: string;
   retryIndex: number;
+  onWorkingRoot: (root: string) => void;
 }) {
   const { client } = useAuth();
   const [path, setPath] = useState("");
@@ -140,6 +154,10 @@ function RunBrowser({
     () => client.listTree(instanceID, taskID, retryIndex, path),
     [instanceID, taskID, retryIndex, path]
   );
+
+  useEffect(() => {
+    if (treeQ.data?.working_root) onWorkingRoot(treeQ.data.working_root);
+  }, [treeQ.data?.working_root]);
   const prevQ = usePoll<PreviewResponse | null>(
     async () =>
       previewPath
@@ -159,12 +177,6 @@ function RunBrowser({
 
   return (
     <div class="split-panes">
-      {treeQ.data?.working_root && (
-        <div class="working-root" style={{ gridColumn: "1 / -1" }}>
-          <span class="working-root-label">working root</span>
-          <span class="working-root-path">{treeQ.data.working_root}</span>
-        </div>
-      )}
       <div class="tree-pane">
         <div class="path">/{path}</div>
         {path && (
