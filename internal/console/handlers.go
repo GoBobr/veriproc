@@ -48,7 +48,7 @@ func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
 		"ui": map[string]any{
 			"refresh_interval_ms":     g.cfg.UI.RefreshInterval.Milliseconds(),
 			"visible_slot_count":      g.cfg.UI.VisibleSlotCount,
-			"completed_visibility_ms": g.cfg.UI.CompletedVisibility.Milliseconds(),
+			"completed_visibility_ms": g.cfg.UI.CompletedVisibility.D.Milliseconds(),
 			"default_stats_since_ms":  g.cfg.UI.DefaultStatsSince.Milliseconds(),
 			"preview_max_bytes":       g.cfg.UI.PreviewMaxBytes,
 		},
@@ -281,6 +281,22 @@ func (g *Gateway) handleHideStationFailures(w http.ResponseWriter, r *http.Reque
 	}
 	g.audit(r.Context(), AuditEntry{Subject: p.Subject, InstanceID: instanceID, StationID: stationID, Action: "hide_failed", Status: "ok"})
 	writeJSON(w, http.StatusOK, map[string]any{"hidden": len(keys), "station_id": stationID})
+}
+
+func (g *Gateway) handleUnhideStation(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("instance_id")
+	stationID := r.PathValue("station_id")
+	if _, ok := g.instance(instanceID); !ok {
+		writeErr(w, http.StatusNotFound, "unknown_instance", "instance not configured")
+		return
+	}
+	p, _ := PrincipalFromContext(r.Context())
+	if err := g.db.UnhideStation(r.Context(), instanceID, stationID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	g.audit(r.Context(), AuditEntry{Subject: p.Subject, InstanceID: instanceID, StationID: stationID, Action: "unhide_all", Status: "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"unhidden": true, "station_id": stationID})
 }
 
 func (g *Gateway) handleRetryTask(w http.ResponseWriter, r *http.Request) {

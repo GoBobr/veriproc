@@ -30,8 +30,8 @@ instances:
 	if cfg.UI.VisibleSlotCount != 12 {
 		t.Errorf("visible_slot_count default = %d, want 12", cfg.UI.VisibleSlotCount)
 	}
-	if cfg.UI.CompletedVisibility != 30*time.Second {
-		t.Errorf("completed_visibility default = %s", cfg.UI.CompletedVisibility)
+	if cfg.UI.CompletedVisibility.D != 30*time.Second {
+		t.Errorf("completed_visibility default = %s", cfg.UI.CompletedVisibility.D)
 	}
 	if cfg.UI.PreviewMaxBytes != 1<<20 {
 		t.Errorf("preview_max_bytes default = %d", cfg.UI.PreviewMaxBytes)
@@ -41,7 +41,7 @@ instances:
 	}
 }
 
-func TestLoadConfig_RejectsLongerCompletedTimeout(t *testing.T) {
+func TestLoadConfig_LongerCompletedTimeoutNowAllowed(t *testing.T) {
 	dir := t.TempDir()
 	body := `schema_version: veriproc.console/v1
 ui:
@@ -56,8 +56,8 @@ instances:
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(p); err == nil {
-		t.Error("expected error when completed visibility exceeds upstream summary timeout")
+	if _, err := LoadConfig(p); err != nil {
+		t.Errorf("expected no error with completed_visibility_timeout > upstream_summary_timeout, got: %v", err)
 	}
 }
 

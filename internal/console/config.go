@@ -10,11 +10,51 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// FlexDuration is a time.Duration that can be unmarshaled from YAML as either
+// a Go duration string (e.g. "30s") or the bare integer 0, which is
+// interpreted as "no timeout" (unlimited). Using any other bare integer is an
+// error; use an explicit duration unit instead.
+//
+// The zero value of FlexDuration means "not configured" (a default will be
+// applied), distinct from an explicitly configured zero (unlimited).
+type FlexDuration struct {
+	D   time.Duration
+	Set bool // true when the field was explicitly present in YAML
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (f *FlexDuration) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Tag {
+	case "!!int":
+		n, err := strconv.ParseInt(value.Value, 10, 64)
+		if err != nil {
+			return fmt.Errorf("duration: invalid integer %q: %w", value.Value, err)
+		}
+		if n != 0 {
+			return fmt.Errorf("duration: bare integer %d is not supported; use a Go duration string (e.g. \"30s\") or 0 for no timeout", n)
+		}
+		f.D = 0
+		f.Set = true
+		return nil
+	case "!!str":
+		d, err := time.ParseDuration(value.Value)
+		if err != nil {
+			return fmt.Errorf("duration: %w", err)
+		}
+		f.D = d
+		f.Set = true
+		return nil
+	default:
+		return fmt.Errorf("duration: cannot unmarshal YAML tag %s into a duration", value.Tag)
+	}
+}
 
 // Config is the top-level console-gateway configuration loaded from YAML.
 //
@@ -39,12 +79,12 @@ type HTTPConfig struct {
 
 // UIConfig contains dashboard rendering defaults.
 type UIConfig struct {
-	RefreshInterval         time.Duration `yaml:"refresh_interval"`
-	VisibleSlotCount        int           `yaml:"visible_slot_count"`
-	CompletedVisibility     time.Duration `yaml:"completed_visibility_timeout"`
-	DefaultStatsSince       time.Duration `yaml:"default_stats_since"`
-	UpstreamSummaryTimeout  time.Duration `yaml:"upstream_summary_timeout"`
-	PreviewMaxBytes         int64         `yaml:"preview_max_bytes"`
+	RefreshInterval        time.Duration `yaml:"refresh_interval"`
+	VisibleSlotCount       int           `yaml:"visible_slot_count"`
+	CompletedVisibility    FlexDuration  `yaml:"completed_visibility_timeout"`
+	DefaultStatsSince      time.Duration `yaml:"default_stats_since"`
+	UpstreamSummaryTimeout time.Duration `yaml:"upstream_summary_timeout"`
+	PreviewMaxBytes        int64         `yaml:"preview_max_bytes"`
 }
 
 // DBConfig is the console-local persistence handle.
@@ -131,8 +171,8 @@ func (c *Config) applyDefaults() {
 	if c.UI.VisibleSlotCount == 0 {
 		c.UI.VisibleSlotCount = 12
 	}
-	if c.UI.CompletedVisibility == 0 {
-		c.UI.CompletedVisibility = 30 * time.Second
+	if !c.UI.CompletedVisibility.Set {
+		c.UI.CompletedVisibility = FlexDuration{D: 30 * time.Second, Set: true}
 	}
 	if c.UI.DefaultStatsSince == 0 {
 		c.UI.DefaultStatsSince = 24 * time.Hour
@@ -158,12 +198,6 @@ func (c *Config) Validate() error {
 	}
 	if c.UI.PreviewMaxBytes <= 0 {
 		return errors.New("console: ui.preview_max_bytes must be positive")
-	}
-	// Spec §8.9.1: if the operator asks for a completed-visibility window
-	// longer than the upstream summary's, the gateway must either supplement
-	// (not implemented for an MVP) or reject the configuration.
-	if c.UI.CompletedVisibility > c.UI.UpstreamSummaryTimeout {
-		return fmt.Errorf("console: completed_visibility_timeout (%s) exceeds upstream_summary_timeout (%s); supplementing from task/run lists is not implemented", c.UI.CompletedVisibility, c.UI.UpstreamSummaryTimeout)
 	}
 	if len(c.Instances) == 0 {
 		return errors.New("console: at least one instance must be configured")

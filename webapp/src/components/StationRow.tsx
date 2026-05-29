@@ -56,6 +56,12 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
           },
         });
       }
+      items.push({
+        label: "Show all hidden",
+        onClick: () => {
+          void client.unhideStation(instanceID, row.station_id).then(onChanged);
+        },
+      });
     } else {
       items.push({ label: "Read-only (viewer)", onClick: () => {}, disabled: true });
     }
@@ -86,6 +92,8 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
             void client.retryTask(instanceID, slot.task_id!).then(onChanged);
           },
         });
+      }
+      if (slot.kind === "failed" || slot.kind === "cancelled" || slot.kind === "completed") {
         items.push({
           label: "Hide from view",
           onClick: () => {

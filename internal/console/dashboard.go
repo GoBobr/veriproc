@@ -87,9 +87,9 @@ func ExpandStationRow(
 
 	var running, completed, queued, failed []DashboardSlot
 	for _, s := range summary.Slots {
-		// Filter out hidden failed runs (console-local acknowledgment).
+		// Filter out hidden runs (console-local acknowledgment): failed, cancelled, or completed.
 		key := HiddenRunKey{InstanceID: instanceID, StationID: summary.StationID, TaskID: s.TaskID, RetryIndex: s.RetryIndex}
-		if _, isHidden := hidden[key]; isHidden && (s.Kind == "failed" || s.Kind == "cancelled") {
+		if _, isHidden := hidden[key]; isHidden && (s.Kind == "failed" || s.Kind == "cancelled" || s.Kind == "completed") {
 			continue
 		}
 		slot := DashboardSlot{
@@ -191,7 +191,7 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 		// Augment the summary with tasks that failed immediately (no run was
 		// ever created for them) so the operator has visibility.
 		augmented := g.injectRunlessFailed(ctx, inst, s, since)
-		row := ExpandStationRow(augmented, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility, now)
+		row := ExpandStationRow(augmented, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility.D, now)
 		rows = append(rows, row)
 	}
 	view.Stations = rows

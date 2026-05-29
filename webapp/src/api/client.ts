@@ -70,6 +70,13 @@ export class ConsoleClient {
       {}
     );
 
+  unhideStation = (instanceID: string, stationID: string) =>
+    this.send<Record<string, unknown>>(
+      "POST",
+      `/api/console/instances/${enc(instanceID)}/stations/${enc(stationID)}/unhide-all`,
+      {}
+    );
+
   submitTask = (
     instanceID: string,
     stationID: string,

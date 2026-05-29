@@ -150,7 +150,7 @@ func newTestGateway(t *testing.T, fake *fakeUpstream) (*Gateway, *DB) {
 		UI: UIConfig{
 			RefreshInterval:        5 * time.Second,
 			VisibleSlotCount:       12,
-			CompletedVisibility:    30 * time.Second,
+			CompletedVisibility:    FlexDuration{D: 30 * time.Second, Set: true},
 			DefaultStatsSince:      time.Hour,
 			UpstreamSummaryTimeout: 30 * time.Second,
 			PreviewMaxBytes:        1024,

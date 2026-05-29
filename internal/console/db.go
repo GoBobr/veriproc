@@ -204,6 +204,18 @@ func (d *DB) HiddenForStation(ctx context.Context, instanceID, stationID string)
 	return out, rows.Err()
 }
 
+// UnhideStation removes all hidden-run records for a given station, restoring
+// all suppressed slots to the dashboard.
+func (d *DB) UnhideStation(ctx context.Context, instanceID, stationID string) error {
+	_, err := d.db.ExecContext(ctx, `
+		DELETE FROM hidden_station_runs WHERE instance_id = ? AND station_id = ?
+	`, instanceID, stationID)
+	if err != nil {
+		return fmt.Errorf("console: unhide station: %w", err)
+	}
+	return nil
+}
+
 // AuditEntry captures one mutating action executed by the console gateway.
 type AuditEntry struct {
 	At         time.Time
