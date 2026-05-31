@@ -209,6 +209,23 @@ definitions:
     acquisition_station: Testbed
   generic_mode: TEST
 
+# ─── Runtime execution environment ───────────────────────────────────────────
+# Arbitrary key=value variables exported to every station runner script.
+# These are injected alongside the standard VERIPROC_* variables and available
+# as plain shell environment variables (e.g. $OUTPUT_VERSION).
+#
+# Naming rules:
+#   - Must be valid shell variable names: letters, digits, underscores.
+#   - Must not start with a digit.
+#   - Must not use the reserved VERIPROC_ prefix.
+#   - Values are always strings (quote numeric-looking values explicitly).
+execution_env:
+  # Software library / output product version tag embedded by runner scripts
+  # in generated output filenames and metadata.
+  OUTPUT_VERSION: "20251101T000003"
+  # Processing mode reported in audit trails and log banners.
+  PROCESSING_MODE: LOCAL
+
 # ─── Rolling archives ─────────────────────────────────────────────────────────
 # Named filesystem directories that store published artifacts. Each key becomes
 # the archive ID referenced in station output publish.rolling_archive fields and

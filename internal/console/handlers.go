@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -415,6 +418,64 @@ func (g *Gateway) handleRunFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleRunImage serves raw image bytes from a run working root. The client
+// fetches this with its auth token and converts it to a blob URL for display.
+func (g *Gateway) handleRunImage(w http.ResponseWriter, r *http.Request) {
+	wr, _, ok := g.openRunWorkingRoot(w, r)
+	if !ok {
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	if rel == "" {
+		writeErr(w, http.StatusBadRequest, "invalid_request", "path query param required")
+		return
+	}
+	full, err := resolveInsideRoot(wr, rel)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrPathEscape) || errors.Is(err, ErrSymlinkEsc):
+			writeErr(w, http.StatusBadRequest, "path_escape", err.Error())
+		default:
+			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		}
+		return
+	}
+	fi, err := os.Stat(full)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeErr(w, http.StatusNotFound, "not_found", "file not found")
+		} else {
+			writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		}
+		return
+	}
+	if fi.IsDir() {
+		writeErr(w, http.StatusBadRequest, "is_directory", "target is a directory")
+		return
+	}
+	const maxImageBytes = 50 << 20 // 50 MB
+	if fi.Size() > maxImageBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds 50 MB limit")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(full))
+	ct := mime.TypeByExtension(ext)
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, f)
 }
 
 // openRunWorkingRoot resolves the upstream run's working_root and validates

@@ -64,6 +64,7 @@ func (e *LocalExecutor) SupportsCancellation() bool { return false }
 //	VERIPROC_JOBORDER_PATH  = desc.JobOrderPath  (only when non-empty)
 //	VERIPROC_WINDOW_START   = desc.WindowStart  (YYYYMMDDTHHmmSS, UTC)
 //	VERIPROC_WINDOW_END     = desc.WindowEnd    (YYYYMMDDTHHmmSS, UTC)
+//	plus operator-defined variables from instance execution_env.
 //
 // VERIPROC_RUN_ID is intentionally NOT exposed: the surrogate run_id is
 // internal-only per Spec §3.6.1.
@@ -99,21 +100,9 @@ func (e *LocalExecutor) Submit(_ context.Context, desc JobDescription) (Submissi
 		var stderr bytes.Buffer
 		cmd := exec.Command(desc.Executable, desc.Args...) // #nosec G204 – operator-supplied station executable
 		cmd.Dir = desc.WorkingRoot
-		baseEnv := append(os.Environ(),
-			"VERIPROC_RUN_DIR="+outDir,
-			"VERIPROC_TASK_ID="+desc.TaskID,
-			"VERIPROC_RETRY_INDEX="+fmt.Sprintf("%d", desc.RetryIndex),
-			"VERIPROC_RUN_REF="+desc.RunRef,
-			"VERIPROC_STATION_ID="+desc.StationID,
-			"VERIPROC_WORKING_ROOT="+desc.WorkingRoot,
-			"VERIPROC_WINDOW_START="+desc.WindowStart.UTC().Format("20060102T150405"),
-			"VERIPROC_WINDOW_END="+desc.WindowEnd.UTC().Format("20060102T150405"),
-		)
-		if desc.SplitGroupID != "" {
-			baseEnv = append(baseEnv, "VERIPROC_SPLIT_GROUP_ID="+desc.SplitGroupID)
-		}
-		if desc.JobOrderPath != "" {
-			baseEnv = append(baseEnv, "VERIPROC_JOBORDER_PATH="+desc.JobOrderPath)
+		baseEnv := os.Environ()
+		for _, env := range runtimeEnv(desc) {
+			baseEnv = append(baseEnv, env[0]+"="+env[1])
 		}
 		cmd.Env = baseEnv
 		cmd.Stdout = &stdout

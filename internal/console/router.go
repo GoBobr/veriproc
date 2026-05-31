@@ -34,6 +34,7 @@ func (g *Gateway) Router(webapp fs.FS) http.Handler {
 	api.HandleFunc("GET /api/console/instances/{instance_id}/tasks/{task_id}/runs", g.handleTaskRuns)
 	api.HandleFunc("GET /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/tree", g.handleRunTree)
 	api.HandleFunc("GET /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/file", g.handleRunFile)
+	api.HandleFunc("GET /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/image", g.handleRunImage)
 
 	mux.Handle("/api/console/", g.authMiddleware(api))
 

@@ -72,6 +72,7 @@ type Service struct {
 	notifyGroupComplete GroupCompleteNotifier
 	instanceID          string
 	definitions         map[string]any
+	executionEnv        map[string]string
 	facility            map[string]string
 	rollingArchives     map[string]string
 	productCategories   map[string][]string
@@ -106,6 +107,7 @@ type Config struct {
 	NotifyGroupComplete GroupCompleteNotifier
 	InstanceID          string
 	Definitions         map[string]any
+	ExecutionEnv        map[string]string
 	Facility            map[string]string
 	RollingArchives     map[string]string
 	ProductCategories   map[string][]string
@@ -150,6 +152,7 @@ func NewService(cfg Config) *Service {
 		notifyGroupComplete: cfg.NotifyGroupComplete,
 		instanceID:          cfg.InstanceID,
 		definitions:         cloneAnyMap(cfg.Definitions),
+		executionEnv:        cloneStringMap(cfg.ExecutionEnv),
 		facility:            cloneStringMap(cfg.Facility),
 		rollingArchives:     cloneStringMap(cfg.RollingArchives),
 		productCategories:   cloneStringSliceMap(cfg.ProductCategories),
@@ -377,7 +380,9 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 			Mounts: append([]string(nil), execCfg.Container.Mounts...),
 			User:   execCfg.Container.User,
 		},
-		SplitGroupID: task.SplitGroupID,
+		Environment:      cloneStringMap(s.executionEnv),
+		SplitGroupID:     task.SplitGroupID,
+		StationConfigDir: filepath.Dir(executable),
 	}
 	exec, err := s.execRegistry.Resolve(desc.Mode)
 	if err != nil {

@@ -13,10 +13,17 @@ set -euo pipefail
 primary=$(find "${VERIPROC_WORKING_ROOT}/input" -type l -name '*CLI_1B_RAD______*' | sort | tail -n 1)
 aux=$(find "${VERIPROC_WORKING_ROOT}/input" -type l -name '*CO2_1A_GEO______*' | sort | tail -n 1)
 
+# Demonstrate instance-level execution_env variables available at runtime.
+# OUTPUT_VERSION and PROCESSING_MODE are injected from instance.yaml.
+echo "output_version : ${OUTPUT_VERSION:-<not set>}"
+echo "processing_mode: ${PROCESSING_MODE:-<not set>}"
+
 GEN_TIME=$(date -u +"%Y%m%dT%H%M%S")
 OUTFNAME="CDMA_SCE_2__ICM_______ON_${VERIPROC_WINDOW_START}_${VERIPROC_WINDOW_END}_${GEN_TIME}_018_093_EUM__VAL_T_NR_C00.nc"
 cat > "${VERIPROC_RUN_DIR}/${OUTFNAME}" <<OUTPUT
 Here is the output product: ${OUTFNAME}
+output_version: ${OUTPUT_VERSION:-<not set>}
+processing_mode: ${PROCESSING_MODE:-<not set>}
 run_id: ${VERIPROC_RETRY_INDEX}
 task_id: ${VERIPROC_TASK_ID}
 primary input: ${primary}

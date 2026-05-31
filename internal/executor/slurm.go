@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -357,7 +358,16 @@ func renderWrapper(desc JobDescription, effective effectiveSlurm) string {
 }
 
 func runtimeEnv(desc JobDescription) [][2]string {
-	env := [][2]string{
+	env := make([][2]string, 0, len(desc.Environment)+10)
+	keys := make([]string, 0, len(desc.Environment))
+	for key := range desc.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		env = append(env, [2]string{key, desc.Environment[key]})
+	}
+	env = append(env, [][2]string{
 		{"VERIPROC_RUN_DIR", filepath.Join(desc.WorkingRoot, "output")},
 		{"VERIPROC_TASK_ID", desc.TaskID},
 		{"VERIPROC_RETRY_INDEX", strconv.Itoa(desc.RetryIndex)},
@@ -366,6 +376,9 @@ func runtimeEnv(desc JobDescription) [][2]string {
 		{"VERIPROC_WORKING_ROOT", desc.WorkingRoot},
 		{"VERIPROC_WINDOW_START", desc.WindowStart.UTC().Format("20060102T150405")},
 		{"VERIPROC_WINDOW_END", desc.WindowEnd.UTC().Format("20060102T150405")},
+	}...)
+	if desc.StationConfigDir != "" {
+		env = append(env, [2]string{"VERIPROC_STATION_DIR", desc.StationConfigDir})
 	}
 	if desc.SplitGroupID != "" {
 		env = append(env, [2]string{"VERIPROC_SPLIT_GROUP_ID", desc.SplitGroupID})

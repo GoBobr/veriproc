@@ -38,6 +38,7 @@ type Config struct {
 	// the station context-reference namespace. Top-level keys must not collide
 	// with reserved runtime context names (Spec §2.3.1).
 	Definitions       map[string]any            `yaml:"definitions"`
+	ExecutionEnv      map[string]string         `yaml:"execution_env"`
 	Facility          map[string]string         `yaml:"facility"`
 	RollingArchives   map[string]RollingArchive `yaml:"rolling_archives"`
 	ProductCategories []ProductCategory         `yaml:"product_categories"`
@@ -156,12 +157,12 @@ type DBConfig struct {
 
 // PathsConfig configures filesystem roots referenced by later milestones.
 type PathsConfig struct {
-	WorkingRootBase   string   `yaml:"working_root_base"`
-	StationConfigRoot string   `yaml:"station_config_root"`
+	WorkingRootBase   string `yaml:"working_root_base"`
+	StationConfigRoot string `yaml:"station_config_root"`
 	// StationOrder lists station IDs in the desired display order. When set it
 	// overrides the default directory-alphabetical order. Station IDs not
 	// listed here are appended after the listed ones, sorted alphabetically.
-	StationOrder      []string `yaml:"station_order"`
+	StationOrder []string `yaml:"station_order"`
 }
 
 // Defaults returns a Config populated with built-in defaults.
@@ -326,6 +327,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: definitions key %q collides with reserved context name", k)
 		}
 	}
+	for k := range c.ExecutionEnv {
+		if err := validateExecutionEnvName(k); err != nil {
+			return err
+		}
+	}
 	c.Naming = c.Naming.WithDefaults()
 	c.Integrity = c.Integrity.WithDefaults()
 	switch c.Naming.TaskIDTimestamp {
@@ -361,6 +367,25 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateExecutor(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateExecutionEnvName(name string) error {
+	if name == "" {
+		return errors.New("config: execution_env contains an empty variable name")
+	}
+	if strings.HasPrefix(name, "VERIPROC_") {
+		return fmt.Errorf("config: execution_env variable %q uses reserved VERIPROC_ prefix", name)
+	}
+	for i, r := range name {
+		if r == '_' || ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z') || (i > 0 && '0' <= r && r <= '9') {
+			continue
+		}
+		return fmt.Errorf("config: execution_env variable %q is invalid; use shell variable names like GEN_VERSION", name)
+	}
+	if '0' <= name[0] && name[0] <= '9' {
+		return fmt.Errorf("config: execution_env variable %q is invalid; variable names must not start with a digit", name)
 	}
 	return nil
 }

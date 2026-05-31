@@ -142,6 +142,22 @@ export class ConsoleClient {
       `/api/console/instances/${enc(instanceID)}/tasks/${enc(taskID)}/runs/${retryIndex}/file?${params}`
     );
   };
+
+  fetchImageBlob = async (
+    instanceID: string,
+    taskID: string,
+    retryIndex: number,
+    path: string
+  ): Promise<string> => {
+    const params = new URLSearchParams({ path });
+    const url = `${this.base}/api/console/instances/${enc(instanceID)}/tasks/${enc(taskID)}/runs/${retryIndex}/image?${params}`;
+    const res = await fetch(url, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  };
 }
 
 function enc(s: string) {

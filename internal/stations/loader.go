@@ -79,6 +79,9 @@ func (e Execution) IsZero() bool {
 
 // JobOrderConfig holds the station's joborder rendering configuration.
 type JobOrderConfig struct {
+	// Renderer selects the joborder rendering backend. Empty/default uses the
+	// built-in VeriProc document; "template" renders Template as a Go template.
+	Renderer string `yaml:"renderer,omitempty" json:"renderer,omitempty"`
 	// Format is one of "yaml", "toml", "json", or "none". Defaults to "yaml".
 	Format string `yaml:"format,omitempty" json:"format,omitempty"`
 	// Name is the filename for the joborder file, relative to the working root.
@@ -88,9 +91,21 @@ type JobOrderConfig struct {
 	// this station only. Accepted values: "relative" (default), "absolute".
 	// When omitted the instance-level setting is used.
 	Paths string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// TemplateFile is a path relative to the station directory. When renderer is
+	// "template", ReadDefinition loads it into Template so the station revision
+	// hash changes when the template content changes.
+	TemplateFile string `yaml:"template_file,omitempty" json:"template_file,omitempty"`
+	// Template is an inline template body, or the loaded contents of TemplateFile.
+	Template string `yaml:"template,omitempty" json:"template,omitempty"`
+	// Params is an arbitrary mapping made available to template joborders.
+	Params map[string]any `yaml:"params,omitempty" json:"params,omitempty"`
 	// Include is an arbitrary mapping merged into the generated joborder document.
 	// Context references within Include are resolved before rendering.
 	Include map[string]any `yaml:"include,omitempty" json:"include,omitempty"`
+	// Meta controls whether the veriproc_meta block is emitted by the default
+	// renderer. Set to false to omit it for processors that reject unknown keys.
+	// Has no effect when renderer is "template" (template controls everything).
+	Meta *bool `yaml:"meta,omitempty" json:"meta,omitempty"`
 }
 
 type InputDefinition struct {
@@ -243,7 +258,31 @@ func ReadDefinition(path string) (Definition, error) {
 	if err := yaml.Unmarshal(data, &def); err != nil {
 		return Definition{}, fmt.Errorf("stations: parse %q: %w", path, err)
 	}
+	if err := loadJobOrderTemplate(path, &def); err != nil {
+		return Definition{}, err
+	}
 	return def, nil
+}
+
+func loadJobOrderTemplate(stationPath string, def *Definition) error {
+	templateFile := strings.TrimSpace(def.JobOrder.TemplateFile)
+	if templateFile == "" {
+		return nil
+	}
+	if filepath.IsAbs(templateFile) {
+		return fmt.Errorf("%s: joborder.template_file %q must be relative", stationPath, templateFile)
+	}
+	clean := filepath.Clean(templateFile)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s: joborder.template_file %q must not escape the station directory", stationPath, templateFile)
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(stationPath), clean))
+	if err != nil {
+		return fmt.Errorf("%s: read joborder.template_file %q: %w", stationPath, templateFile, err)
+	}
+	def.JobOrder.TemplateFile = templateFile
+	def.JobOrder.Template = string(body)
+	return nil
 }
 
 func SpecFromDefinition(def Definition) (Spec, error) {
@@ -311,11 +350,16 @@ func normalizeDefinition(def Definition) Definition {
 		def.Execution.Container.Mounts[i] = strings.TrimSpace(def.Execution.Container.Mounts[i])
 	}
 	// Normalize joborder format default.
+	def.JobOrder.Renderer = strings.TrimSpace(strings.ToLower(def.JobOrder.Renderer))
+	if def.JobOrder.Renderer == "" {
+		def.JobOrder.Renderer = "default"
+	}
 	def.JobOrder.Format = strings.TrimSpace(strings.ToLower(def.JobOrder.Format))
 	if def.JobOrder.Format == "" {
 		def.JobOrder.Format = "yaml"
 	}
 	def.JobOrder.Name = strings.TrimSpace(def.JobOrder.Name)
+	def.JobOrder.TemplateFile = strings.TrimSpace(def.JobOrder.TemplateFile)
 	if def.JobOrder.Name == "" {
 		switch def.JobOrder.Format {
 		case "toml":
@@ -416,6 +460,12 @@ func validateDefinition(def Definition) error {
 		}
 	}
 	// Validate joborder section.
+	switch def.JobOrder.Renderer {
+	case "default", "template":
+		// valid
+	default:
+		return fmt.Errorf("joborder.renderer %q invalid; must be default or template", def.JobOrder.Renderer)
+	}
 	switch def.JobOrder.Format {
 	case "yaml", "toml", "json", "none":
 		// valid
@@ -429,15 +479,36 @@ func validateDefinition(def Definition) error {
 		if len(def.JobOrder.Include) > 0 {
 			return errors.New("joborder.include must be absent when format is none")
 		}
+		if def.JobOrder.TemplateFile != "" || def.JobOrder.Template != "" || len(def.JobOrder.Params) > 0 {
+			return errors.New("joborder template fields must be absent when format is none")
+		}
 	}
 	if def.JobOrder.Name != "" {
 		if filepath.IsAbs(def.JobOrder.Name) {
 			return fmt.Errorf("joborder.name %q must be relative", def.JobOrder.Name)
 		}
 		clean := filepath.Clean(def.JobOrder.Name)
-		if strings.HasPrefix(clean, "..") {
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("joborder.name %q must not escape the working root", def.JobOrder.Name)
 		}
+	}
+	if def.JobOrder.TemplateFile != "" {
+		if filepath.IsAbs(def.JobOrder.TemplateFile) {
+			return fmt.Errorf("joborder.template_file %q must be relative", def.JobOrder.TemplateFile)
+		}
+		clean := filepath.Clean(def.JobOrder.TemplateFile)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("joborder.template_file %q must not escape the station directory", def.JobOrder.TemplateFile)
+		}
+	}
+	if def.JobOrder.Renderer == "template" && def.JobOrder.Format != "none" && strings.TrimSpace(def.JobOrder.Template) == "" {
+		return errors.New("joborder.template or joborder.template_file is required when renderer is template")
+	}
+	if def.JobOrder.Renderer == "template" && len(def.JobOrder.Include) > 0 {
+		return errors.New("joborder.include is only supported by the default renderer; use joborder.params with renderer template")
+	}
+	if def.JobOrder.Renderer == "default" && (def.JobOrder.TemplateFile != "" || def.JobOrder.Template != "" || len(def.JobOrder.Params) > 0) {
+		return errors.New("joborder template fields require renderer: template")
 	}
 	switch def.JobOrder.Paths {
 	case "", "relative", "absolute":

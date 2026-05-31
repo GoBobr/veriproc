@@ -252,6 +252,9 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 		}
 	}
 	// Apply defaults (normalizeDefinition already does this but guard again).
+	if joCfg.Renderer == "" {
+		joCfg.Renderer = "default"
+	}
 	if joCfg.Format == "" {
 		joCfg.Format = "yaml"
 	}
@@ -295,25 +298,44 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 		effectivePathMode = joCfg.Paths
 	}
 
-	// Build the base joborder document.
-	doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, effectivePathMode)
-
-	// Resolve and merge joborder.include into doc.
-	if len(joCfg.Include) > 0 {
+	var body []byte
+	if joCfg.Renderer == "template" {
 		runCtx := s.buildRunContext(run, task, rev, path)
-		resolvedInclude, rerr := stations.ResolveMap(joCfg.Include, runCtx)
+		resolvedParams, rerr := stations.ResolveMap(joCfg.Params, runCtx)
 		if rerr != nil {
-			return "", nil, fmt.Errorf("resolve joborder.include: %w", rerr)
+			return "", nil, fmt.Errorf("resolve joborder.params: %w", rerr)
 		}
-		if merr := mergeJobOrderInclude(doc, resolvedInclude); merr != nil {
-			return "", nil, fmt.Errorf("merge joborder.include: %w", merr)
+		joCfg.Params = resolvedParams
+		body, err = renderTemplateJobOrder(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), joCfg, effectivePathMode)
+		if err != nil {
+			return "", nil, fmt.Errorf("render template joborder: %w", err)
 		}
-	}
+	} else {
+		// Build the base joborder document.
+		doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, effectivePathMode)
 
-	// Render to the configured format.
-	body, err := renderJobOrder(doc, joCfg.Format)
-	if err != nil {
-		return "", nil, fmt.Errorf("render joborder (%s): %w", joCfg.Format, err)
+		// Drop veriproc_meta when the station explicitly sets meta: false.
+		if joCfg.Meta != nil && !*joCfg.Meta {
+			delete(doc, "veriproc_meta")
+		}
+
+		// Resolve and merge joborder.include into doc.
+		if len(joCfg.Include) > 0 {
+			runCtx := s.buildRunContext(run, task, rev, path)
+			resolvedInclude, rerr := stations.ResolveMap(joCfg.Include, runCtx)
+			if rerr != nil {
+				return "", nil, fmt.Errorf("resolve joborder.include: %w", rerr)
+			}
+			if merr := mergeJobOrderInclude(doc, resolvedInclude); merr != nil {
+				return "", nil, fmt.Errorf("merge joborder.include: %w", merr)
+			}
+		}
+
+		// Render to the configured format.
+		body, err = renderJobOrder(doc, joCfg.Format)
+		if err != nil {
+			return "", nil, fmt.Errorf("render joborder (%s): %w", joCfg.Format, err)
+		}
 	}
 
 	if err := os.WriteFile(path, body, 0o644); err != nil {

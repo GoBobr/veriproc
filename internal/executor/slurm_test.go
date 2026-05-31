@@ -52,6 +52,7 @@ func TestSlurmExecutorSubmitBuildsSbatchArgsAndWrapper(t *testing.T) {
 		WorkingRoot: dir,
 		Executable:  "/opt/proc/run.sh",
 		Args:        []string{"--task", "task-1"},
+		Environment: map[string]string{"GEN_VERSION": "20251101T000003"},
 		WindowStart: time.Unix(0, 0).UTC(),
 		WindowEnd:   time.Unix(3600, 0).UTC(),
 	})
@@ -84,7 +85,7 @@ func TestSlurmExecutorSubmitBuildsSbatchArgsAndWrapper(t *testing.T) {
 		t.Fatalf("read wrapper: %v", err)
 	}
 	content := string(wrapper)
-	for _, want := range []string{"VERIPROC_RUN_DIR", ">> \"$WORKDIR/logs/run_out.log\"", ">> \"$WORKDIR/logs/run_err.log\"", ".exit_code", "trap handle_sigterm SIGTERM", "'/opt/proc/run.sh' \"${ARGS[@]}\"", "=== VeriProc run:", "SLURM_JOB_ID"} {
+	for _, want := range []string{"export GEN_VERSION='20251101T000003'", "VERIPROC_RUN_DIR", ">> \"$WORKDIR/logs/run_out.log\"", ">> \"$WORKDIR/logs/run_err.log\"", ".exit_code", "trap handle_sigterm SIGTERM", "'/opt/proc/run.sh' \"${ARGS[@]}\"", "=== VeriProc run:", "SLURM_JOB_ID"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("wrapper missing %q:\n%s", want, content)
 		}

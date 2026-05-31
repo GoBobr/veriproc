@@ -71,6 +71,13 @@ type JobDescription struct {
 	Resources ResourceRequest
 	Slurm     SlurmOverrides
 	Container ContainerConfig
+	// StationConfigDir is the directory that contains the station definition
+	// and its auxiliary scripts/templates. Exposed to the workload as
+	// VERIPROC_STATION_DIR so scripts can reference co-located files.
+	StationConfigDir string
+	// Environment contains operator-defined environment variables from instance
+	// configuration. Names must not use the reserved VERIPROC_ prefix.
+	Environment map[string]string
 	// SplitGroupID is the split-group this run belongs to, if any. Exposed
 	// to the workload as VERIPROC_SPLIT_GROUP_ID (empty string → not set).
 	SplitGroupID string

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	toml "github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
 	"github.com/eum/veriproc/internal/executor"
@@ -671,6 +672,90 @@ func TestRuns_JobOrderFormatJSON(t *testing.T) {
 	}
 	if meta["schema_version"] != "veriproc.joborder/v1" {
 		t.Errorf("schema_version = %v", meta["schema_version"])
+	}
+}
+
+func TestRuns_JobOrderTemplateTOML(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "jo-template.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	inputName := "20250703_PRIMARY_A_v1.txt"
+	if err := os.WriteFile(filepath.Join(archive, inputName), []byte("primary\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	script := writeExecutable(t, dir, "jo-template.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.dat\"\n")
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "JO-TEMPLATE",
+		StationName:   "JobOrder Template",
+		ContentHash:   "sha256:jo-template",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: script},
+		Inputs:        []stations.InputDefinition{{FileType: "PRIMARY_A", Category: "product"}},
+		Outputs:       []stations.OutputDefinition{{Name: "out.dat", FileType: "TEMPLATE_OUT", Required: true}},
+		JobOrder: stations.JobOrderConfig{
+			Renderer: "template",
+			Format:   "toml",
+			Name:     "joborder.e2e.TEST.toml",
+			Paths:    "absolute",
+			Template: "primary_file = {{ tomlq (input \"PRIMARY_A\") }}\ntmp_dir = {{ tomlq (param \"tmp_dir\") }}\nconfig_file = {{ tomlq (joinPath (param \"swlib_root\") \"cfg/example.yml\") }}\ncpu_number = {{ param \"cpu_number\" }}\n",
+			Params: map[string]any{
+				"tmp_dir":    "<working_root>/tmp",
+				"swlib_root": "/opt/example-swlib",
+				"cpu_number": 8,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "0abc12" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:             st,
+		Executors:         executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:          reg,
+		WorkingRootBase:   filepath.Join(dir, "work"),
+		RollingArchives:   map[string]string{"hot": archive},
+		ProductCategories: map[string][]string{"product": {"rolling:hot"}},
+		IDFactory:         func() string { runN++; return "run-jotemplate-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "JO-TEMPLATE"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+	raw, err := os.ReadFile(filepath.Join(run.WorkingRoot, "joborder.e2e.TEST.toml"))
+	if err != nil {
+		t.Fatalf("read rendered template joborder: %v", err)
+	}
+	var doc map[string]any
+	if err := toml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid rendered TOML: %v", err)
+	}
+	wantInput := filepath.ToSlash(filepath.Join(run.WorkingRoot, "input", inputName))
+	if doc["primary_file"] != wantInput {
+		t.Fatalf("primary_file = %v, want %s\n%s", doc["primary_file"], wantInput, raw)
+	}
+	wantTmp := filepath.ToSlash(filepath.Join(run.WorkingRoot, "tmp"))
+	if doc["tmp_dir"] != wantTmp || doc["config_file"] != "/opt/example-swlib/cfg/example.yml" || doc["cpu_number"] != int64(8) {
+		t.Fatalf("rendered template doc = %#v", doc)
 	}
 }
 

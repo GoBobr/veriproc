@@ -177,6 +177,9 @@ function RunBrowser({
   const { client } = useAuth();
   const [path, setPath] = useState("");
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewIsImage, setPreviewIsImage] = useState(false);
+  const [imageBlobURL, setImageBlobURL] = useState<string | null>(null);
+  const prevBlobRef = useRef<string | null>(null);
   const [previewMode, setPreviewMode] = useState<"head" | "tail">("head");
   const [follow, setFollow] = useState(false);
   const [wrap, setWrap] = useState(false);
@@ -189,15 +192,33 @@ function RunBrowser({
   useEffect(() => {
     if (treeQ.data?.working_root) onWorkingRoot(treeQ.data.working_root);
   }, [treeQ.data?.working_root]);
+
+  // Fetch image as blob URL (with auth header) whenever an image file is selected.
+  useEffect(() => {
+    if (prevBlobRef.current) {
+      URL.revokeObjectURL(prevBlobRef.current);
+      prevBlobRef.current = null;
+      setImageBlobURL(null);
+    }
+    if (!previewPath || !previewIsImage) return;
+    let cancelled = false;
+    client.fetchImageBlob(instanceID, taskID, retryIndex, previewPath).then((url) => {
+      if (cancelled) { URL.revokeObjectURL(url); return; }
+      prevBlobRef.current = url;
+      setImageBlobURL(url);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [previewPath, previewIsImage, retryIndex]);
+
   const prevQ = usePoll<PreviewResponse | null>(
     async () =>
-      previewPath
+      previewPath && !previewIsImage
         ? await client.previewFile(instanceID, taskID, retryIndex, previewPath, {
             mode: previewMode,
           })
         : null,
     follow ? 2000 : 0,
-    [previewPath, retryIndex, previewMode]
+    [previewPath, previewIsImage, retryIndex, previewMode]
   );
 
   useEffect(() => {
@@ -228,9 +249,13 @@ function RunBrowser({
               onClick={() => {
                 if (e.is_dir) setPath(e.path);
                 else {
+                  const isImg = IMAGE_EXTS.has(extOf(e.name));
                   setPreviewPath(e.path);
-                  setPreviewMode(e.kind === "log" || e.size > 256 * 1024 ? "tail" : "head");
-                  setFollow(false);
+                  setPreviewIsImage(isImg);
+                  if (!isImg) {
+                    setPreviewMode(e.kind === "log" || e.size > 256 * 1024 ? "tail" : "head");
+                    setFollow(false);
+                  }
                 }
               }}
             >
@@ -240,65 +265,103 @@ function RunBrowser({
           ))}
         </ul>
       </div>
-      <div class={`preview-pane${wrap ? " wrap" : ""}`}>
+      <div class={`preview-pane${!previewIsImage && wrap ? " wrap" : ""}`}>
         <div class="toolbar">
           <span>{previewPath || "(select a file)"}</span>
-          {prevQ.data?.truncated && <span class="truncated">truncated</span>}
-          {prevQ.data && previewMode === "tail" && (
+          {!previewIsImage && prevQ.data?.truncated && <span class="truncated">truncated</span>}
+          {!previewIsImage && prevQ.data && previewMode === "tail" && (
             <span class="preview-offset">byte {prevQ.data.offset}+</span>
           )}
-          <button
-            class="secondary small"
-            disabled={!previewPath}
-            onClick={() => prevQ.refresh()}
-          >
-            refresh
-          </button>
-          <button
-            class={`secondary small${previewMode === "tail" ? " active" : ""}`}
-            disabled={!previewPath}
-            onClick={() => {
-              if (previewMode === "tail") {
-                setFollow(false);
-                setPreviewMode("head");
-              } else {
-                setPreviewMode("tail");
-              }
-            }}
-          >
-            tail
-          </button>
-          <button
-            class={`secondary small${follow ? " active" : ""}`}
-            disabled={!previewPath}
-            onClick={() => {
-              setPreviewMode("tail");
-              setFollow((v) => !v);
-            }}
-          >
-            follow
-          </button>
-          <label style={{ fontSize: "11px" }}>
-            <input
-              type="checkbox"
-              checked={wrap}
-              onChange={(e) => setWrap((e.target as HTMLInputElement).checked)}
-            />{" "}
-            wrap
-          </label>
+          {previewIsImage ? (
+            <button
+              class="secondary small"
+              disabled={!previewPath}
+              onClick={() => {
+                // Re-trigger the image fetch by toggling.
+                setImageBlobURL(null);
+                if (previewPath)
+                  client.fetchImageBlob(instanceID, taskID, retryIndex, previewPath).then((url) => {
+                    if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current);
+                    prevBlobRef.current = url;
+                    setImageBlobURL(url);
+                  }).catch(() => {});
+              }}
+            >
+              refresh
+            </button>
+          ) : (
+            <>
+              <button
+                class="secondary small"
+                disabled={!previewPath}
+                onClick={() => prevQ.refresh()}
+              >
+                refresh
+              </button>
+              <button
+                class={`secondary small${previewMode === "tail" ? " active" : ""}`}
+                disabled={!previewPath}
+                onClick={() => {
+                  if (previewMode === "tail") {
+                    setFollow(false);
+                    setPreviewMode("head");
+                  } else {
+                    setPreviewMode("tail");
+                  }
+                }}
+              >
+                tail
+              </button>
+              <button
+                class={`secondary small${follow ? " active" : ""}`}
+                disabled={!previewPath}
+                onClick={() => {
+                  setPreviewMode("tail");
+                  setFollow((v) => !v);
+                }}
+              >
+                follow
+              </button>
+              <label style={{ fontSize: "11px" }}>
+                <input
+                  type="checkbox"
+                  checked={wrap}
+                  onChange={(e) => setWrap((e.target as HTMLInputElement).checked)}
+                />{" "}
+                wrap
+              </label>
+            </>
+          )}
         </div>
         <div class="preview-body" ref={previewPaneRef}>
-          {prevQ.error && <div class="degraded-msg">preview: {prevQ.error.message}</div>}
-          {prevQ.data && prevQ.data.kind === "binary" && (
+          {previewIsImage && imageBlobURL && (
+            <img
+              src={imageBlobURL}
+              alt={previewPath ?? ""}
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block", margin: "auto" }}
+            />
+          )}
+          {previewIsImage && !imageBlobURL && previewPath && (
+            <div class="binary">loading image…</div>
+          )}
+          {!previewIsImage && prevQ.error && <div class="degraded-msg">preview: {prevQ.error.message}</div>}
+          {!previewIsImage && prevQ.data && prevQ.data.kind === "binary" && (
             <div class="binary">{prevQ.data.reason || "binary file"}</div>
           )}
-          {prevQ.data && (prevQ.data.kind === "text" || prevQ.data.kind === "log") && (
+          {!previewIsImage && prevQ.data && (prevQ.data.kind === "text" || prevQ.data.kind === "log") && (
             <pre>{prevQ.data.content || ""}</pre>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg"]);
+
+function extOf(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
 function parentPath(p: string): string {

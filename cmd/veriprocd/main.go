@@ -133,6 +133,7 @@ func run(args []string) error {
 		InstanceID:        cfg.InstanceID,
 		Facility:          cfg.Facility,
 		Definitions:       cfg.Definitions,
+		ExecutionEnv:      cfg.ExecutionEnv,
 		RollingArchives:   archivePaths,
 		ProductCategories: productCategories,
 		Generators:        generators,

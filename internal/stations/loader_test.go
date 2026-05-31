@@ -227,6 +227,32 @@ func TestLoader_JobOrder_NoneWithName(t *testing.T) {
 	}
 }
 
+func TestLoader_JobOrderTemplateFileLoaded(t *testing.T) {
+	root := t.TempDir()
+	writeStation(t, root, "s", `station_id: JO-TPL
+station_name: JO Template
+joborder:
+  renderer: template
+  format: toml
+  name: joborder.toml
+  template_file: joborder.toml.tpl
+`)
+	templatePath := filepath.Join(root, "s", "joborder.toml.tpl")
+	if err := os.WriteFile(templatePath, []byte("input = {{ tomlq (input \"PRIMARY\") }}\n"), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("loaded %d stations, want 1", len(specs))
+	}
+	if specs[0].JobOrder.Renderer != "template" || specs[0].JobOrder.Template == "" {
+		t.Fatalf("template joborder not loaded: %#v", specs[0].JobOrder)
+	}
+}
+
 // TestLoader_Execution_RelativePathResolvedToAbsolute — relative executable
 // paths are resolved to absolute when LoadDir is called.
 func TestLoader_Execution_RelativePathResolvedToAbsolute(t *testing.T) {

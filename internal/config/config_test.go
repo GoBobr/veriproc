@@ -218,6 +218,39 @@ func TestConfig_Definitions_AcceptsUserKeys(t *testing.T) {
 	}
 }
 
+func TestConfig_ExecutionEnv(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "cfg.yaml")
+	content := "execution_env:\n  GEN_VERSION: 20251101T000003\n  PROCESSING_MODE: NRT\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load([]string{"--config", p}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ExecutionEnv["GEN_VERSION"] != "20251101T000003" {
+		t.Errorf("GEN_VERSION = %q", cfg.ExecutionEnv["GEN_VERSION"])
+	}
+	if cfg.ExecutionEnv["PROCESSING_MODE"] != "NRT" {
+		t.Errorf("PROCESSING_MODE = %q", cfg.ExecutionEnv["PROCESSING_MODE"])
+	}
+}
+
+func TestConfig_ExecutionEnvRejectsInvalidNames(t *testing.T) {
+	for _, name := range []string{"1BAD", "BAD-NAME", "VERIPROC_RUN_DIR"} {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "cfg.yaml")
+		content := "execution_env:\n  " + name + ": value\n"
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if _, err := Load([]string{"--config", p}, nil); err == nil {
+			t.Errorf("expected validation error for execution_env key %q", name)
+		}
+	}
+}
+
 func TestConfig_SlurmExecutorConfig(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "cfg.yaml")
