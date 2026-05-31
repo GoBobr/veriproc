@@ -36,6 +36,31 @@ outputs:
       mode: copy
 
 downstream:
-  # statC is triggered immediately (mode: normal, the default) when this
-  # run is finalised successfully.
+  # join: the daemon creates a statC task whose window matches this run's
+  # window (or finds one that already exists) and places it in the
+  # "waiting_inputs" state.  The task is only moved to "accepted" — making
+  # it eligible for the dispatcher — once EVERY upstream station that shares
+  # the same join_id for statC has finalised its run successfully.
+  #
+  # In this sandbox the two contributing stations are statA and statB.
+  # statA publishes SCE_2__ICM______ and statB publishes SCE_2__BIG______;
+  # statC declares both as mandatory inputs.  The join guarantees statC never
+  # starts until both files are available in the rolling archive.
+  #
+  # The join_id (here: "a-b-to-c") must be identical in every upstream
+  # station that participates in the same join.  The daemon derives the
+  # downstream task ID deterministically from:
+  #
+  #   sha256("join" | join_id | station_id | window_start | window_end)
+  #
+  # so concurrent finalisations from statA and statB map to the same task
+  # row.  The second contributor to finalise finds the task already in
+  # "waiting_inputs" and advances it to "accepted" via a conditional
+  # compare-and-swap update; if it is already "accepted" (rare race), the
+  # CAS is a no-op and the task proceeds normally.
+  #
+  # Provenance: each contributing run writes its own provenance link to the
+  # shared downstream task, so the lineage graph correctly shows two parents.
   - station_id: statC
+    mode: join
+    join_id: a-b-to-c

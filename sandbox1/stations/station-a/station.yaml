@@ -260,3 +260,12 @@ downstream:
     #                      canonical). Used as the aggregation gate after a
     #                      task_out fan-out.
     # mode: normal
+
+  # statA also participates in a join toward statC.  Together with statB,
+  # which declares the same join_id, the two stations form a two-parent
+  # barrier: statC is held in "waiting_inputs" until both statA and statB
+  # have finalised successfully for the same processing window.
+  # See station-b/station.yaml for the full join pattern description.
+  - station_id: statC
+    mode: join
+    join_id: a-b-to-c

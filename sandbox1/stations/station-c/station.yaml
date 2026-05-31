@@ -16,6 +16,15 @@ execution:
     image: ubuntu:latest  # required for slurm-docker
     
 inputs:
+  # SCE_2__ICM______ is produced by statA and published to the rolling archive.
+  # It is required here as part of the join barrier: statC cannot start until
+  # statA has finalised (and this file is present in proc-ra).
+  - file_type: SCE_2__ICM______
+    category: product
+    window_match: overlaps
+    margins: [0, 0]
+    mandatory: true
+
   - file_type: SCE_2__BIG______
     category: product
     window_match: overlaps
