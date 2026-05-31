@@ -213,6 +213,7 @@ type RunListFilter struct {
 	StationID         string
 	StationRevisionID string
 	State             string
+	States            []string
 	Canonicality      string
 	Fingerprint       string
 	CreatedAfter      time.Time
@@ -255,6 +256,14 @@ func (r *RunRepo) List(ctx context.Context, f RunListFilter) (*RunListPage, erro
 	if f.State != "" {
 		conds = append(conds, "state = ?")
 		args = append(args, f.State)
+	}
+	if len(f.States) > 0 {
+		placeholders := strings.Repeat("?,", len(f.States))
+		placeholders = placeholders[:len(placeholders)-1]
+		conds = append(conds, "state IN ("+placeholders+")")
+		for _, state := range f.States {
+			args = append(args, state)
+		}
 	}
 	if f.Canonicality != "" {
 		conds = append(conds, "canonicality = ?")

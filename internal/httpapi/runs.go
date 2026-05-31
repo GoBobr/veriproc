@@ -194,9 +194,16 @@ func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.Run
 		TaskID:            q.Get("task_id"),
 		StationID:         q.Get("station_id"),
 		StationRevisionID: q.Get("station_revision_id"),
-		State:             q.Get("state"),
 		Canonicality:      q.Get("canonicality"),
 		Fingerprint:       q.Get("fingerprint"),
+	}
+	if state := q.Get("state"); state != "" {
+		states := internalRunStatesForPublicFilter(state)
+		if len(states) == 1 {
+			f.State = states[0]
+		} else {
+			f.States = states
+		}
 	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -453,13 +460,14 @@ func (h *runHandler) artifactContent(w http.ResponseWriter, r *http.Request) {
 
 // --- Translators ------------------------------------------------------------
 
-// publicState collapses internal lifecycle states into the simplified set
-// required by Spec §5.5.4 / §5.5.10.
+// publicState collapses internal lifecycle states into the operator-facing set.
 func publicState(internal string) string {
 	switch internal {
-	case "pending", "preparing", "ready":
+	case "pending", "preparing":
 		return "pending"
-	case "dispatched", "running":
+	case "ready", "dispatched":
+		return "queued"
+	case "running":
 		return "running"
 	case "finalizing":
 		return "finalizing"
@@ -471,6 +479,17 @@ func publicState(internal string) string {
 		return "cancelled"
 	default:
 		return internal
+	}
+}
+
+func internalRunStatesForPublicFilter(state string) []string {
+	switch state {
+	case "pending":
+		return []string{"pending", "preparing"}
+	case "queued":
+		return []string{"ready", "dispatched"}
+	default:
+		return []string{state}
 	}
 }
 

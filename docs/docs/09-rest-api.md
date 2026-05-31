@@ -119,6 +119,10 @@ List endpoints accept query parameters for filtering and `limit`/`cursor` for pa
 - **Runs:** `task_id`, `state`, `canonicality`, `station_id`, `limit`, `cursor`.
 - **Groups:** `state`, `limit`.
 
+Run responses expose operator-facing states. `queued` covers runs that are ready
+for dispatch or already submitted to the scheduler but not yet observed running;
+the raw lifecycle value is still available as `internal_state`.
+
 ```bash
 curl 'http://localhost:8080/api/v1/runs?station_id=scen-clim&canonicality=canonical&limit=50'
 ```

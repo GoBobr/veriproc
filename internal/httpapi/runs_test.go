@@ -183,6 +183,49 @@ func TestAPI_RunList_Pagination_5_4_4_5_5_9(t *testing.T) {
 	}
 }
 
+func TestAPI_RunDispatchedReportsQueued(t *testing.T) {
+	a := newRunAPI(t)
+	taskID := a.submitOne(t)
+	ctx := context.Background()
+	r, _ := a.runs.PrepareRun(ctx, taskID)
+	if _, err := a.runs.Dispatch(ctx, r.RunID); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	resp, body := getJSONMap(t, a.srv, "/api/v1/runs/"+r.RunID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%v", resp.StatusCode, body)
+	}
+	if body["state"] != "queued" {
+		t.Fatalf("public state = %v, want queued", body["state"])
+	}
+	if body["internal_state"] != "dispatched" {
+		t.Fatalf("internal_state = %v, want dispatched", body["internal_state"])
+	}
+
+	resp, body = getJSONMap(t, a.srv, "/api/v1/tasks/"+taskID+"/runs")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("task runs status = %d, body=%v", resp.StatusCode, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("task run items = %d, want 1: %v", len(items), body)
+	}
+	item := items[0].(map[string]any)
+	if item["state"] != "queued" {
+		t.Fatalf("task run public state = %v, want queued", item["state"])
+	}
+
+	resp, body = getJSONMap(t, a.srv, "/api/v1/runs?state=queued")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("queued list status = %d, body=%v", resp.StatusCode, body)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("queued list items = %d, want 1: %v", len(items), body)
+	}
+}
+
 // TestAPI_RunList_InvalidLimit_5_7 — invalid query param → 400 invalid_request.
 func TestAPI_RunList_InvalidLimit_5_7(t *testing.T) {
 	a := newRunAPI(t)
