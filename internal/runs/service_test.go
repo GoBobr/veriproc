@@ -161,6 +161,95 @@ printf '{"station":"%s","parent_input":"ok"}\n' "$VERIPROC_STATION_ID" > "$VERIP
 	waitForTaskState(t, ctx, st, disp, page.Items[0].TaskID, "completed")
 }
 
+func TestRuns_JoinDownstreamWaitsForAllMandatoryInputs(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "join.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+
+	scriptA := writeExecutable(t, dir, "join-a.sh", `#!/bin/sh
+set -eu
+printf 'from A\n' > "$VERIPROC_RUN_DIR/A_OUT.dat"
+`)
+	scriptB := writeExecutable(t, dir, "join-b.sh", `#!/bin/sh
+set -eu
+printf 'from B\n' > "$VERIPROC_RUN_DIR/B_OUT.dat"
+`)
+	scriptC := writeExecutable(t, dir, "join-c.sh", `#!/bin/sh
+set -eu
+test -f input/A_OUT.dat
+test -f input/B_OUT.dat
+printf 'joined\n' > "$VERIPROC_RUN_DIR/C_OUT.dat"
+`)
+
+	reg := stations.NewRegistry()
+	joinRoute := stations.DownstreamTarget{StationID: "JOIN-C", Mode: "join", JoinID: "a-b-to-c"}
+	if err := reg.Seed(ctx, st,
+		stations.Spec{StationID: "JOIN-A", StationName: "Join A", ContentHash: "sha256:join-a", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "A_OUT.dat", FileType: "A_OUT", Required: true, Publish: &stations.OutputPublish{RollingArchive: "hot", Mode: "copy"}}}, Downstream: []stations.DownstreamTarget{joinRoute}, Execution: stations.Execution{Executable: scriptA}},
+		stations.Spec{StationID: "JOIN-B", StationName: "Join B", ContentHash: "sha256:join-b", SchemaVersion: "veriproc.station/v1", Outputs: []stations.OutputDefinition{{Name: "B_OUT.dat", FileType: "B_OUT", Required: true, Publish: &stations.OutputPublish{RollingArchive: "hot", Mode: "copy"}}}, Downstream: []stations.DownstreamTarget{joinRoute}, Execution: stations.Execution{Executable: scriptB}},
+		stations.Spec{StationID: "JOIN-C", StationName: "Join C", ContentHash: "sha256:join-c", SchemaVersion: "veriproc.station/v1", Inputs: []stations.InputDefinition{{FileType: "A_OUT", Category: "product"}, {FileType: "B_OUT", Category: "product"}}, Outputs: []stations.OutputDefinition{{Name: "C_OUT.dat", FileType: "C_OUT", Required: true}}, Execution: stations.Execution{Executable: scriptC}},
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	taskN := 0
+	tsvc := tasks.NewService(st, reg, nil, func() string { taskN++; return fmt.Sprintf("%06x", taskN) })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{Store: st, Executors: executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)), Resolver: reg, WorkingRootBase: filepath.Join(dir, "work"), RollingArchives: map[string]string{"hot": archive}, ProductCategories: map[string][]string{"product": {"rolling:hot"}}, IDFactory: func() string { runN++; return "run-join-" + strconv.Itoa(runN) }})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	window := tasks.Window{Start: time.Date(2025, 7, 3, 11, 15, 0, 0, time.UTC), End: time.Date(2025, 7, 3, 11, 30, 0, 0, time.UTC)}
+
+	resA, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "JOIN-A"}, Window: window})
+	if err != nil {
+		t.Fatalf("submit A: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, resA.Task.TaskID, "completed")
+	waitForTaskCount(t, ctx, st, disp, 2)
+	cTaskID := findTaskByStation(t, ctx, st, "JOIN-C")
+	waitForTaskState(t, ctx, st, disp, cTaskID, "waiting_inputs")
+	cTask, _ := st.Tasks().Get(ctx, cTaskID)
+	if cTask.LatestRetryIndex.Valid {
+		t.Fatalf("join task created a run while inputs were missing: retry_index=%d", cTask.LatestRetryIndex.Int64)
+	}
+
+	resB, err := tsvc.Submit(ctx, tasks.SubmitInput{Destination: tasks.Destination{StationID: "JOIN-B"}, Window: window})
+	if err != nil {
+		t.Fatalf("submit B: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, resB.Task.TaskID, "completed")
+	waitForTaskState(t, ctx, st, disp, cTaskID, "completed")
+
+	page, err := st.Tasks().List(ctx, store.ListFilter{DestinationStationID: "JOIN-C", Limit: 10})
+	if err != nil {
+		t.Fatalf("list JOIN-C tasks: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("JOIN-C task count = %d, want 1: %#v", len(page.Items), page.Items)
+	}
+	links, err := st.Provenance().ListByTarget(ctx, "task", cTaskID)
+	if err != nil {
+		t.Fatalf("list provenance: %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("provenance link count = %d, want 2: %#v", len(links), links)
+	}
+	for _, link := range links {
+		if link.SourceType != "run" || link.RelationshipType != "produced_downstream" {
+			t.Fatalf("unexpected provenance link: %#v", link)
+		}
+	}
+}
+
 func TestRuns_DirectoryInputsOutputsAndPublication(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -385,6 +474,18 @@ func waitForTaskCount(t *testing.T, ctx context.Context, st *store.Store, disp *
 
 // TestRuns_PrepareAndFreeze_3_8_3_10 — PrepareRun creates a run, persists a
 // frozen manifest, computes a fingerprint, and leaves the run in state=ready.
+
+func findTaskByStation(t *testing.T, ctx context.Context, st *store.Store, stationID string) string {
+	t.Helper()
+	page, err := st.Tasks().List(ctx, store.ListFilter{DestinationStationID: stationID, Limit: 10})
+	if err != nil {
+		t.Fatalf("list tasks for %s: %v", stationID, err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("tasks for %s = %d, want 1: %#v", stationID, len(page.Items), page.Items)
+	}
+	return page.Items[0].TaskID
+}
 func TestRuns_PrepareAndFreeze_3_8_3_10(t *testing.T) {
 	f := newFixture(t)
 	taskID := submitTask(t, f)

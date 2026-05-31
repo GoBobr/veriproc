@@ -165,6 +165,10 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 				}
 			}
 		}
+		joinTasks := map[string]bool{}
+		for _, taskID := range downstreamPlan.JoinTaskIDs {
+			joinTasks[taskID] = true
+		}
 		for _, child := range downstreamTasks {
 			if err := tx.Tasks().Insert(ctx, child); err != nil && !errors.Is(err, store.ErrConflict) {
 				return err
@@ -172,6 +176,11 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 			link := &store.ProvenanceLink{LinkID: "prov-" + sha12(run.RunID+":"+child.TaskID), SourceType: "run", SourceID: run.RunID, TargetType: "task", TargetID: child.TaskID, RelationshipType: "produced_downstream", Role: "parent", Reason: downstreamPlan.ProvenanceReason, CreatedAt: now}
 			if err := tx.Provenance().Insert(ctx, link); err != nil && !errors.Is(err, store.ErrConflict) {
 				return err
+			}
+			if joinTasks[child.TaskID] {
+				if _, err := tx.Tasks().SetStateIfCurrent(ctx, child.TaskID, "waiting_inputs", "accepted", ""); err != nil {
+					return err
+				}
 			}
 		}
 		if err := tx.Runs().MarkComplete(ctx, runID, canonicality, now); err != nil {
@@ -925,6 +934,7 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 
 type downstreamPlan struct {
 	Tasks            []*store.TaskRecord
+	JoinTaskIDs      []string
 	SplitGroups      []taskOutSplitGroupInit
 	TaskOutArtifact  *store.ArtifactRecord
 	ProvenanceReason string
@@ -1015,6 +1025,7 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 	}
 
 	children := make([]*store.TaskRecord, 0, len(routes))
+	joinTaskIDs := []string{}
 	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
 		// "fan_in" targets are triggered by the group-complete notifier, and
@@ -1027,10 +1038,17 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 			return nil, fmt.Errorf("resolve downstream: %w", err)
 		}
 		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
-		hashSeed := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d", run.RunID, resolved.StationID, idx)))
+		hashMaterial := fmt.Sprintf("%s|%s|%d", run.RunID, resolved.StationID, idx)
+		if route.Mode == "join" {
+			hashMaterial = fmt.Sprintf("join|%s|%s|%s|%s", route.JoinID, resolved.StationID, parent.WindowStart.UTC().Format(time.RFC3339Nano), parent.WindowEnd.UTC().Format(time.RFC3339Nano))
+		}
+		hashSeed := sha256.Sum256([]byte(hashMaterial))
 		hex6 := hex.EncodeToString(hashSeed[:3])
 		taskIDTimestamp := created
 		if s.naming.TaskIDTimestamp == policy.TaskIDTimestampStart {
+			taskIDTimestamp = parent.WindowStart.UTC()
+		}
+		if route.Mode == "join" {
 			taskIDTimestamp = parent.WindowStart.UTC()
 		}
 		taskID := policy.GenerateTaskID(resolved.StationID, taskIDTimestamp, hex6)
@@ -1041,6 +1059,11 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 			"force":          false,
 			"parent":         map[string]any{"run_ref": parentRunRef},
 			"history":        history,
+		}
+		if route.Mode == "join" {
+			routing["routing_mode"] = "join"
+			routing["join_id"] = route.JoinID
+			joinTaskIDs = append(joinTaskIDs, taskID)
 		}
 		raw, err := canonjson.Marshal(routing)
 		if err != nil {
@@ -1062,7 +1085,7 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 			CreatedAt:            created,
 		})
 	}
-	return &downstreamPlan{Tasks: children, ProvenanceReason: "station_default_downstream"}, nil
+	return &downstreamPlan{Tasks: children, JoinTaskIDs: joinTaskIDs, ProvenanceReason: "station_default_downstream"}, nil
 }
 
 func (s *Service) readTaskOutDescriptor(run *store.RunRecord) (*taskOutDescriptor, *store.ArtifactRecord, bool, error) {

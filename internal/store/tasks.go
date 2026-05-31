@@ -12,33 +12,33 @@ import (
 
 // TaskRecord is the persisted shape of a task (Spec §4.3.1).
 type TaskRecord struct {
-	TaskID                 string
-	SchemaVersion          string
-	DestinationStationID   string
-	WindowStart            time.Time
-	WindowEnd              time.Time
-	Force                  bool
-	ParentTaskID           string
+	TaskID               string
+	SchemaVersion        string
+	DestinationStationID string
+	WindowStart          time.Time
+	WindowEnd            time.Time
+	Force                bool
+	ParentTaskID         string
 	// ParentRunRetryIndex references the contributing run via task-scoped
 	// composite identity (task_id, retry_index). Spec §3.7 / §3.6.1.
-	ParentRunRetryIndex    sql.NullInt64
-	SplitGroupID           string
-	Priority               string
-	ClientMetadata         json.RawMessage
-	RoutingContent         json.RawMessage
-	RoutingContentHash     string
-	SubmissionOrigin       string // "client" | "backend"
-	State                  string
-	FailureSummary         string
+	ParentRunRetryIndex sql.NullInt64
+	SplitGroupID        string
+	Priority            string
+	ClientMetadata      json.RawMessage
+	RoutingContent      json.RawMessage
+	RoutingContentHash  string
+	SubmissionOrigin    string // "client" | "backend"
+	State               string
+	FailureSummary      string
 	// LatestRetryIndex is the retry_index of the most recent run for this
 	// task; nil until a run has been prepared.
-	LatestRetryIndex       sql.NullInt64
+	LatestRetryIndex sql.NullInt64
 	// CanonicalRetryIndex is the retry_index of the run currently elected
 	// canonical for this task (Spec §3.10).
-	CanonicalRetryIndex    sql.NullInt64
-	IdempotencyRecordID    string
-	CreatedAt              time.Time
-	CompletedAt            sql.NullTime
+	CanonicalRetryIndex sql.NullInt64
+	IdempotencyRecordID string
+	CreatedAt           time.Time
+	CompletedAt         sql.NullTime
 
 	// LatestRunID and CanonicalRunID are non-persisted convenience fields
 	// populated by Get/List via JOIN onto runs(task_id, retry_index). They
@@ -162,6 +162,19 @@ func (r *TaskRepo) SetState(ctx context.Context, taskID, state, failureSummary s
 	return nil
 }
 
+// SetStateIfCurrent updates a task state only when it currently matches the
+// supplied state. It returns true when a row was changed.
+func (r *TaskRepo) SetStateIfCurrent(ctx context.Context, taskID, currentState, nextState, failureSummary string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE tasks SET state = ?, failure_summary = ? WHERE task_id = ? AND state = ?`,
+		nextState, nullStr(failureSummary), taskID, currentState)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // SetLatestRun records the latest run's retry_index for a task.
 func (r *TaskRepo) SetLatestRun(ctx context.Context, taskID string, retryIndex int) error {
 	_, err := r.q.ExecContext(ctx,
@@ -203,10 +216,10 @@ type ListFilter struct {
 // ListPage holds one page of task records plus a cursor describing the next
 // page (or empty values if there are no more results).
 type ListPage struct {
-	Items          []*TaskRecord
-	NextCreatedAt  time.Time
-	NextTaskID     string
-	HasMore        bool
+	Items         []*TaskRecord
+	NextCreatedAt time.Time
+	NextTaskID    string
+	HasMore       bool
 }
 
 // List returns one page of tasks ordered by (created_at DESC, task_id DESC).

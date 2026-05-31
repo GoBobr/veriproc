@@ -86,7 +86,14 @@ func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
 				Time("window_end", t.WindowEnd).
 				Err(err).
 				Msg("prepare run failed")
-			if errors.Is(err, ErrFatalPrepare) {
+			switch {
+			case errors.Is(err, ErrWaitingInputs):
+				if _, ferr := d.svc.store.Tasks().SetStateIfCurrent(ctx, t.TaskID, "accepted", "waiting_inputs", err.Error()); ferr != nil {
+					d.logger.Error().Str("task_id", t.TaskID).Err(ferr).Msg("could not mark task waiting for inputs")
+				} else {
+					d.logger.Info().Str("task_id", t.TaskID).Err(err).Msg("task waiting for mandatory inputs")
+				}
+			case errors.Is(err, ErrFatalPrepare):
 				if ferr := d.svc.store.Tasks().SetState(ctx, t.TaskID, "failed", err.Error()); ferr != nil {
 					d.logger.Error().Str("task_id", t.TaskID).Err(ferr).Msg("could not mark task failed after fatal prepare error")
 				} else {

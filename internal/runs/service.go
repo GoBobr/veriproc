@@ -50,8 +50,13 @@ var (
 	// ErrFatalPrepare is returned by PrepareRun when the failure is permanent
 	// and the task must not be retried automatically. The dispatcher uses this
 	// to transition the task to "failed" instead of looping indefinitely.
-	// Examples: mandatory input not found, working root cannot be created.
+	// Examples: mandatory input not found for a non-join task, working root
+	// cannot be created.
 	ErrFatalPrepare = errors.New("runs: fatal preparation error")
+	// ErrWaitingInputs is returned by PrepareRun for join-created tasks whose
+	// mandatory inputs are not all available yet. The dispatcher parks these
+	// tasks in waiting_inputs until another join producer wakes them.
+	ErrWaitingInputs = errors.New("runs: waiting for mandatory inputs")
 	// ErrFatalDispatch is returned by Dispatch when the failure is permanent
 	// and the run must not be retried automatically. Examples: executor type
 	// not configured in instance.yaml.
@@ -229,6 +234,10 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 	manifest, err := s.resolveManifest(ctx, runID, runRef, task, rev, workingRoot)
 	if err != nil {
 		_ = os.RemoveAll(workingRoot)
+		var missing *missingMandatoryInputError
+		if errors.As(err, &missing) && isJoinTask(task) {
+			return nil, fmt.Errorf("%w: %w", ErrWaitingInputs, err)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrFatalPrepare, err)
 	}
 	fingerprintValue := computeFingerprint(rev, manifest, task.Force, task.WindowStart, task.WindowEnd)
@@ -682,7 +691,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 			seqCounter++
 			manifest.Entries = append(manifest.Entries, entry)
 			if !input.Optional {
-				return nil, fmt.Errorf("mandatory input %s not found in category %s: %s", input.FileType, input.Category, missingReason)
+				return nil, &missingMandatoryInputError{FileType: input.FileType, Category: input.Category, Reason: missingReason}
 			}
 			s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 				Str("input_key", input.FileType).Bool("optional", input.Optional).
@@ -749,6 +758,31 @@ type selectedInputCandidate struct {
 	IntervalGroupKey   string
 	Discriminator      string
 	WinnerMetadata     string
+}
+
+type missingMandatoryInputError struct {
+	FileType string
+	Category string
+	Reason   string
+}
+
+func (e *missingMandatoryInputError) Error() string {
+	return fmt.Sprintf("mandatory input %s not found in category %s: %s", e.FileType, e.Category, e.Reason)
+}
+
+func isJoinTask(task *store.TaskRecord) bool {
+	if task == nil || len(task.RoutingContent) == 0 {
+		return false
+	}
+	var routing map[string]any
+	if err := json.Unmarshal(task.RoutingContent, &routing); err != nil {
+		return false
+	}
+	if mode, ok := routing["routing_mode"].(string); ok && mode == "join" {
+		return true
+	}
+	_, ok := routing["join_id"].(string)
+	return ok
 }
 
 // classicalCandidate is an internal struct holding a parsed candidate during

@@ -175,12 +175,16 @@ func (o *OutputDefinitions) UnmarshalYAML(value *yaml.Node) error {
 
 type DownstreamTarget struct {
 	StationID string `yaml:"station_id" json:"station_id"`
+	JoinID    string `yaml:"join_id,omitempty" json:"join_id,omitempty"`
 	// Mode controls when the downstream is triggered.
 	// "normal" (default, empty): triggered immediately on run finalization.
 	// "task_out": declared as an allowed target, but concrete child tasks are
 	//             created only from algorithm-produced task-out.yaml entries.
 	// "fan_in": triggered only when the split group spawned by this station
 	//           reaches "complete" state (all members canonical).
+	// "join": creates or wakes one shared downstream task, identified by
+	//         join_id, target station, and processing window. The task waits
+	//         until all mandatory target inputs are resolvable.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
@@ -408,6 +412,7 @@ func normalizeDefinition(def Definition) Definition {
 	}
 	for i := range def.Downstream {
 		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)
+		def.Downstream[i].JoinID = strings.TrimSpace(def.Downstream[i].JoinID)
 		def.Downstream[i].Mode = strings.TrimSpace(strings.ToLower(def.Downstream[i].Mode))
 	}
 	for i := range def.Outputs {
@@ -543,10 +548,13 @@ func validateDefinition(def Definition) error {
 			return errors.New("downstream target must define station_id")
 		}
 		switch down.Mode {
-		case "", "normal", "task_out", "fan_in":
+		case "", "normal", "task_out", "fan_in", "join":
 			// valid
 		default:
 			return fmt.Errorf("downstream target %s mode %q invalid", down.StationID, down.Mode)
+		}
+		if down.Mode == "join" && down.JoinID == "" {
+			return fmt.Errorf("downstream target %s mode join requires join_id", down.StationID)
 		}
 	}
 	for _, out := range def.Outputs {
