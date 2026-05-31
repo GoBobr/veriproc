@@ -17,10 +17,16 @@ function fmtTime(raw: unknown): string {
   return s.replace(/(\.(\d{3}))\d+(Z|[+-]\d{2}:\d{2})?$/, "$1$3");
 }
 
+const TERMINAL_STATES = new Set(["complete", "failed", "cancelled"]);
+const POLL_INTERVAL_MS = 3000;
+
 export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
   const { client, session } = useAuth();
-  const taskQ = useFetch(() => client.getTask(instanceID, taskID), [instanceID, taskID]);
-  const runsQ = useFetch(() => client.listTaskRuns(instanceID, taskID), [instanceID, taskID]);
+  // Poll while active; stop once the task reaches a terminal state.
+  const [taskTerminal, setTaskTerminal] = useState(false);
+  const pollInterval = taskTerminal ? 0 : POLL_INTERVAL_MS;
+  const taskQ = usePoll(() => client.getTask(instanceID, taskID), pollInterval, [instanceID, taskID]);
+  const runsQ = usePoll(() => client.listTaskRuns(instanceID, taskID), pollInterval, [instanceID, taskID]);
 
   const runs = (runsQ.data?.items ?? []) as Array<Record<string, unknown>>;
   const [retryIndex, setRetryIndex] = useState<number | null>(initialRetry ?? null);
@@ -28,6 +34,12 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
   const taskState = String(taskQ.data?.state ?? "");
   const isOperator = session?.role === "operator";
   const canRetry = isOperator && (taskState === "failed" || taskState === "cancelled");
+
+  // Stop polling once we observe a terminal state.
+  useEffect(() => {
+    if (taskState && TERMINAL_STATES.has(taskState)) setTaskTerminal(true);
+    else if (taskState) setTaskTerminal(false);
+  }, [taskState]);
   // Derive the state of the currently selected run so we can show Cancel.
   const selectedRun = retryIndex !== null
     ? runs.find((r) => Number(r.retry_index ?? 0) === retryIndex)
@@ -36,6 +48,11 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
   const executionNode = String(selectedRun?.execution_node ?? "");
   const selectedRunFailure = String(selectedRun?.failure_summary ?? selectedRun?.failure_reason ?? "");
   const canCancel = isOperator && (selectedRunState === "running" || selectedRunState === "queued");
+  // Task-level failure summary (e.g. a fatal preparation error that occurs
+  // before any run is created). Surfaced only when no run carries its own
+  // failure detail, so we don't duplicate the per-run reason below.
+  const taskFailure = String(taskQ.data?.failure_summary ?? "");
+  const showTaskFailure = taskState === "failed" && runs.length === 0 && taskFailure !== "";
 
   useEffect(() => {
     if (retryIndex === null && runs.length > 0) {
@@ -121,6 +138,12 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             <span>{selectedRunFailure}</span>
           </div>
         )}
+        {showTaskFailure && (
+          <div class="run-failure-reason">
+            {taskState}
+            <span>{taskFailure}</span>
+          </div>
+        )}
         {workingRoot && (
           <div class="working-root">
             <span class="working-root-label">working root</span>
@@ -128,7 +151,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
           </div>
         )}
       </div>
-      {retryIndex !== null && (
+      {retryIndex !== null && runs.length > 0 && (
         <RunBrowser
           instanceID={instanceID}
           taskID={taskID}

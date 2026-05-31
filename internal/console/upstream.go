@@ -187,6 +187,7 @@ type StationSummary struct {
 	Counts       SummaryCounts  `json:"counts"`
 	Slots        []SummarySlot  `json:"slots"`
 	LastRefresh  *time.Time     `json:"last_refresh,omitempty"`
+	Downstream   []string       `json:"downstream,omitempty"`
 }
 
 // StationsSummary is the multi-station summary response.

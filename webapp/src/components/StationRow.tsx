@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { SubmitDialog } from "./SubmitDialog";
+import { PushDownstreamDialog } from "./PushDownstreamDialog";
 import { useAuth } from "../state/auth";
 import { taskHref } from "../state/router";
 import type { DashboardSlot, DashboardStationRow } from "../api/types";
@@ -23,6 +24,7 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
   const { session, client } = useAuth();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [showSubmit, setShowSubmit] = useState(false);
+  const [pushTask, setPushTask] = useState<{ taskID: string; targetStationID: string; force: boolean } | null>(null);
   const isOperator = session?.role === "operator";
 
   const onLabelContext = (e: MouseEvent) => {
@@ -103,6 +105,18 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
           },
         });
       }
+      // Per-downstream-station push actions derived from station definition.
+      for (const targetID of (row.downstream ?? [])) {
+        const tid = slot.task_id!;
+        items.push({
+          label: `Push to ${targetID}`,
+          onClick: () => setPushTask({ taskID: tid, targetStationID: targetID, force: false }),
+        });
+        items.push({
+          label: `Push to ${targetID} (force)`,
+          onClick: () => setPushTask({ taskID: tid, targetStationID: targetID, force: true }),
+        });
+      }
     }
     items.push({
       label: "Open task page",
@@ -154,6 +168,19 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
           onClose={() => setShowSubmit(false)}
           onSubmit={async (body) => {
             await client.submitTask(instanceID, row.station_id, body);
+            onChanged();
+          }}
+        />
+      )}
+      {pushTask && (
+        <PushDownstreamDialog
+          instanceID={instanceID}
+          taskID={pushTask.taskID}
+          targetStationID={pushTask.targetStationID}
+          defaultForce={pushTask.force}
+          onClose={() => setPushTask(null)}
+          onSubmit={async (stationID, body) => {
+            await client.submitTask(instanceID, stationID, body);
             onChanged();
           }}
         />

@@ -156,8 +156,12 @@ type DBConfig struct {
 
 // PathsConfig configures filesystem roots referenced by later milestones.
 type PathsConfig struct {
-	WorkingRootBase   string `yaml:"working_root_base"`
-	StationConfigRoot string `yaml:"station_config_root"`
+	WorkingRootBase   string   `yaml:"working_root_base"`
+	StationConfigRoot string   `yaml:"station_config_root"`
+	// StationOrder lists station IDs in the desired display order. When set it
+	// overrides the default directory-alphabetical order. Station IDs not
+	// listed here are appended after the listed ones, sorted alphabetically.
+	StationOrder      []string `yaml:"station_order"`
 }
 
 // Defaults returns a Config populated with built-in defaults.

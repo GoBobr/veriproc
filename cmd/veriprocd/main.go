@@ -78,12 +78,17 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
+	var loadedDirOrder []string // station IDs in directory-alphabetical order
 	if cfg.Storage.StationConfigRoot != "" {
 		specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st)
 		if err != nil {
 			return fmt.Errorf("load stations: %w", err)
 		}
 		logger.Info().Str("dir", cfg.Storage.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
+		loadedDirOrder = make([]string, len(specs))
+		for i, sp := range specs {
+			loadedDirOrder[i] = sp.StationID
+		}
 	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 	taskSvc.SetNaming(cfg.Naming)
@@ -95,6 +100,13 @@ func run(args []string) error {
 	}
 	groupSvc := groups.NewService(st, nil)
 	stationSvc := stations.NewService(st, nil)
+	// Apply station display order: explicit config wins; fall back to
+	// directory-alphabetical order from LoadDir.
+	if len(cfg.Storage.StationOrder) > 0 {
+		stationSvc.SetStationOrder(cfg.Storage.StationOrder)
+	} else if len(loadedDirOrder) > 0 {
+		stationSvc.SetStationOrder(loadedDirOrder)
+	}
 	archivePaths := map[string]string{}
 	for id, archive := range cfg.RollingArchives {
 		archivePaths[id] = archive.Path

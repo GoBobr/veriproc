@@ -40,6 +40,8 @@ export interface DashboardStationRow {
   slots: DashboardSlot[];
   overflow: number;
   last_refresh?: string;
+  /** Station IDs declared as downstream targets in the station definition. */
+  downstream?: string[];
 }
 
 export interface DashboardInstance {

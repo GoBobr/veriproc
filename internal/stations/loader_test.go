@@ -94,6 +94,32 @@ outputs:
 	}
 }
 
+func TestLoader_NormalizesInputMandatoryToOptional(t *testing.T) {
+	mandatoryTrue := true
+	mandatoryFalse := false
+	def := stations.Definition{
+		StationID:   "STATION-A",
+		StationName: "SCE_2",
+		Execution:   stations.Execution{Executable: "./scripts/run.sh"},
+		Inputs: []stations.InputDefinition{
+			{FileType: "AX_OPT", Category: "aux", Mandatory: &mandatoryFalse}, // explicit non-mandatory
+			{FileType: "AX_REQ", Category: "aux", Mandatory: &mandatoryTrue},  // explicit mandatory
+			{FileType: "AX_DEFAULT", Category: "aux"},                         // omitted => mandatory
+			{FileType: "AX_OPTFLAG", Category: "aux", Optional: true},         // optional flag honored
+		},
+	}
+	spec, err := stations.SpecFromDefinition(def)
+	if err != nil {
+		t.Fatalf("SpecFromDefinition: %v", err)
+	}
+	want := []bool{true, false, false, true}
+	for i, w := range want {
+		if got := spec.Inputs[i].Optional; got != w {
+			t.Errorf("input %q: Optional = %v, want %v", spec.Inputs[i].FileType, got, w)
+		}
+	}
+}
+
 func TestLoader_DuplicateStationDetection(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "one", `station_id: DUP

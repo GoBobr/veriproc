@@ -288,8 +288,15 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 		return "", nil, err
 	}
 
+	// Resolve effective path mode: station-level joborder.paths overrides the
+	// instance-level generators.job_order.paths when explicitly set.
+	effectivePathMode := s.jobOrderPaths
+	if joCfg.Paths != "" {
+		effectivePathMode = joCfg.Paths
+	}
+
 	// Build the base joborder document.
-	doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, s.jobOrderPaths)
+	doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, effectivePathMode)
 
 	// Resolve and merge joborder.include into doc.
 	if len(joCfg.Include) > 0 {

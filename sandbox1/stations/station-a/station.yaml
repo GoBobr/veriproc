@@ -103,6 +103,19 @@ joborder:
   # json → joborder.json.  Must be a plain filename (no directory separators).
   name: joborder.yaml
 
+  # Per-station path style override for input/output paths written into the
+  # job order document.  Overrides the instance-level
+  # generators.job_order.paths setting for this station only.
+  # Options: relative | absolute
+  #   relative – paths written as "./..." relative to the working root
+  #              (default when the instance setting is also omitted or "relative")
+  #   absolute – paths written as full filesystem paths; useful for processors
+  #              that cannot resolve relative paths from the working root
+  #              (e.g. called from a different directory).
+  # Uncomment to force absolute paths for this station regardless of the
+  # instance default:
+  # paths: absolute
+
   # Arbitrary YAML mapping merged into the top level of the generated job order.
   # Scalar values and nested mappings may use context references <key> or
   # <key.subkey>.  Available context names at run time:

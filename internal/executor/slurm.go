@@ -308,6 +308,9 @@ func renderWrapper(desc JobDescription, effective effectiveSlurm) string {
 	b.WriteString("    echo \"node:      $(hostname)\"\n")
 	b.WriteString("    echo \"cpus:      ${SLURM_CPUS_PER_TASK:-N/A}\"\n")
 	b.WriteString("    echo \"mem_mb:    ${SLURM_MEM_PER_NODE:-N/A}\"\n")
+	if effective.Mode == SlurmDocker && effective.Container.Image != "" {
+		b.WriteString("    echo \"image:     " + effective.Container.Image + "\"\n")
+	}
 	b.WriteString("  else\n")
 	b.WriteString("    echo \"executor:  " + effective.Mode + "\"\n")
 	b.WriteString("    echo \"host:      $(hostname)\"\n")

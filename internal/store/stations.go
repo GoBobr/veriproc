@@ -11,8 +11,9 @@ import (
 // StationListRecord is the operator-facing current station view derived from
 // the latest known revision for each station_id.
 type StationListRecord struct {
-	StationID   string
-	StationName string
+	StationID          string
+	StationName        string
+	DeclaredDownstream string // raw JSON, empty if none
 }
 
 // StationRevisionRecord matches Spec §3.2 / §4.3 (station_revisions).
@@ -146,7 +147,7 @@ func (r *StationRevisionRepo) ExistsStationID(ctx context.Context, stationID str
 // ListCurrent returns one current operator-facing record per station_id.
 func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRecord, error) {
 	rows, err := r.q.QueryContext(ctx, `
-		SELECT sr.station_id, sr.station_name
+		SELECT sr.station_id, sr.station_name, COALESCE(sr.declared_downstream, '')
 		FROM station_revisions sr
 		WHERE NOT EXISTS (
 			SELECT 1
@@ -165,7 +166,7 @@ func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRe
 	out := []*StationListRecord{}
 	for rows.Next() {
 		var rec StationListRecord
-		if err := rows.Scan(&rec.StationID, &rec.StationName); err != nil {
+		if err := rows.Scan(&rec.StationID, &rec.StationName, &rec.DeclaredDownstream); err != nil {
 			return nil, err
 		}
 		out = append(out, &rec)

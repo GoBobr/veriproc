@@ -40,6 +40,9 @@ type DashboardStationRow struct {
 	Slots        []DashboardSlot `json:"slots"`
 	Overflow     int             `json:"overflow"`
 	LastRefresh  *time.Time      `json:"last_refresh,omitempty"`
+	// Downstream lists the station IDs declared as downstream targets in the
+	// station definition. Used by the UI to build "Push downstream" actions.
+	Downstream   []string        `json:"downstream,omitempty"`
 }
 
 // DashboardInstance is the per-instance dashboard view returned to the
@@ -83,6 +86,7 @@ func ExpandStationRow(
 		QueuedCount:  summary.QueuedCount,
 		Counts:       summary.Counts,
 		LastRefresh:  summary.LastRefresh,
+		Downstream:   summary.Downstream,
 	}
 
 	var running, completed, queued, failed []DashboardSlot

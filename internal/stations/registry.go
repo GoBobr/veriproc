@@ -105,7 +105,7 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			declaredExecution = string(b)
 		}
 		declaredJobOrder := ""
-		if sp.JobOrder.Format != "" || sp.JobOrder.Name != "" || len(sp.JobOrder.Include) > 0 {
+		if sp.JobOrder.Format != "" || sp.JobOrder.Name != "" || sp.JobOrder.Paths != "" || len(sp.JobOrder.Include) > 0 {
 			b, _ := json.Marshal(sp.JobOrder)
 			declaredJobOrder = string(b)
 		}

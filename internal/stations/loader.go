@@ -84,6 +84,10 @@ type JobOrderConfig struct {
 	// Name is the filename for the joborder file, relative to the working root.
 	// Defaults to "joborder.yaml", "joborder.toml", or "joborder.json" per format.
 	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Paths overrides the instance-level generators.job_order.paths setting for
+	// this station only. Accepted values: "relative" (default), "absolute".
+	// When omitted the instance-level setting is used.
+	Paths string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Include is an arbitrary mapping merged into the generated joborder document.
 	// Context references within Include are resolved before rendering.
 	Include map[string]any `yaml:"include,omitempty" json:"include,omitempty"`
@@ -97,8 +101,11 @@ type InputDefinition struct {
 	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
 	WindowMatch     string `yaml:"window_match,omitempty" json:"window_match,omitempty"`
 	Margins         []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
-	Mandatory       bool   `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
-	Optional        bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	// Mandatory is a pointer so the loader can distinguish an explicit
+	// "mandatory: false" (non-blocking input) from an omitted field. It is
+	// normalized into Optional at load time; the matcher reads Optional only.
+	Mandatory *bool `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Optional  bool  `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 type OutputDefinition struct {
@@ -321,13 +328,18 @@ func normalizeDefinition(def Definition) Definition {
 			def.JobOrder.Name = "joborder.yaml"
 		}
 	}
+	def.JobOrder.Paths = strings.TrimSpace(strings.ToLower(def.JobOrder.Paths))
 	for i := range def.Inputs {
 		def.Inputs[i].FileType = strings.TrimSpace(def.Inputs[i].FileType)
 		def.Inputs[i].Category = strings.TrimSpace(def.Inputs[i].Category)
 		def.Inputs[i].ObjectKind = strings.TrimSpace(strings.ToLower(def.Inputs[i].ObjectKind))
 		def.Inputs[i].Pattern = strings.TrimSpace(def.Inputs[i].Pattern)
-		if def.Inputs[i].Mandatory {
-			def.Inputs[i].Optional = false
+		// An explicit "mandatory" setting is authoritative and drives the
+		// canonical Optional flag the matcher reads: mandatory:true => not
+		// optional; mandatory:false => optional. When omitted, Optional keeps
+		// its declared value (default false, i.e. mandatory).
+		if def.Inputs[i].Mandatory != nil {
+			def.Inputs[i].Optional = !*def.Inputs[i].Mandatory
 		}
 	}
 	for i := range def.Outputs {
@@ -426,6 +438,12 @@ func validateDefinition(def Definition) error {
 		if strings.HasPrefix(clean, "..") {
 			return fmt.Errorf("joborder.name %q must not escape the working root", def.JobOrder.Name)
 		}
+	}
+	switch def.JobOrder.Paths {
+	case "", "relative", "absolute":
+		// valid
+	default:
+		return fmt.Errorf("joborder.paths %q invalid; must be \"relative\" or \"absolute\"", def.JobOrder.Paths)
 	}
 	for _, input := range def.Inputs {
 		if input.FileType == "" {

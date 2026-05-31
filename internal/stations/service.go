@@ -2,6 +2,7 @@ package stations
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -19,6 +20,9 @@ type Service struct {
 	store                      *store.Store
 	clock                      func() time.Time
 	completedVisibilityTimeout time.Duration
+	// stationOrder is the display ordering applied by List/Summary. When nil
+	// the DB default (station_id alphabetical) is used.
+	stationOrder               []string
 }
 
 type SummaryCounts struct {
@@ -44,6 +48,8 @@ type StationView struct {
 	Counts       SummaryCounts `json:"counts,omitempty"`
 	Slots        []Slot        `json:"slots,omitempty"`
 	LastRefresh  time.Time     `json:"last_refresh,omitempty"`
+	// Downstream lists the station IDs that this station triggers automatically.
+	Downstream   []string      `json:"downstream,omitempty"`
 }
 
 func NewService(st *store.Store, now func() time.Time) *Service {
@@ -64,6 +70,40 @@ func (s *Service) SetCompletedVisibilityTimeout(d time.Duration) {
 	s.completedVisibilityTimeout = d
 }
 
+// SetStationOrder configures the display order for List and Summary.
+// Stations not present in order are appended after the listed ones, sorted
+// alphabetically by station_id. An empty slice restores the default
+// (station_id alphabetical from the store).
+func (s *Service) SetStationOrder(order []string) {
+	s.stationOrder = append([]string(nil), order...)
+}
+
+// applyOrder reorders views in-place according to s.stationOrder.
+func (s *Service) applyOrder(views []StationView) {
+	if len(s.stationOrder) == 0 {
+		return
+	}
+	rank := make(map[string]int, len(s.stationOrder))
+	for i, id := range s.stationOrder {
+		rank[id] = i
+	}
+	maxRank := len(s.stationOrder)
+	sort.SliceStable(views, func(i, j int) bool {
+		ri, oki := rank[views[i].StationID]
+		rj, okj := rank[views[j].StationID]
+		if !oki {
+			ri = maxRank
+		}
+		if !okj {
+			rj = maxRank
+		}
+		if ri != rj {
+			return ri < rj
+		}
+		return views[i].StationID < views[j].StationID
+	})
+}
+
 func (s *Service) List(ctx context.Context) ([]StationView, error) {
 	current, err := s.store.Stations().ListCurrent(ctx)
 	if err != nil {
@@ -75,9 +115,32 @@ func (s *Service) List(ctx context.Context) ([]StationView, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, StationView{StationID: rec.StationID, StationName: rec.StationName, Paused: paused})
+		view := StationView{StationID: rec.StationID, StationName: rec.StationName, Paused: paused}
+		if rec.DeclaredDownstream != "" {
+			view.Downstream = parseDownstreamIDs(rec.DeclaredDownstream)
+		}
+		out = append(out, view)
 	}
+	s.applyOrder(out)
 	return out, nil
+}
+
+// parseDownstreamIDs decodes the declared_downstream JSON and returns the
+// station_id of each target. Invalid JSON is silently ignored.
+func parseDownstreamIDs(raw string) []string {
+	var targets []struct {
+		StationID string `json:"station_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(targets))
+	for _, t := range targets {
+		if t.StationID != "" {
+			ids = append(ids, t.StationID)
+		}
+	}
+	return ids
 }
 
 func (s *Service) Pause(ctx context.Context, stationID string) (*StationView, error) {

@@ -74,6 +74,22 @@ storage:
   # The loader looks one level deep: <root>/<station-dir>/station.yaml.
   station_config_root: sandbox1/stations
 
+  # Optional: desired display order for stations in the API, CLI, and web
+  # console. List station IDs in the order they should appear.
+  #
+  # Behaviour:
+  #   - When set, the listed stations appear first, in the given order.
+  #   - Stations not present in this list are appended after the listed ones,
+  #     sorted alphabetically by station_id.
+  #   - When omitted (or empty), stations are sorted alphabetically by the
+  #     name of their config directory (i.e. the order produced by LoadDir).
+  #
+  # Example — put the main instrument processor first, then ancillary ones:
+  # station_order:
+  #   - scecli
+  #   - scl2a
+  #   - aux-ingest
+
 # ─── Naming policy ────────────────────────────────────────────────────────────
 naming:
   # Which timestamp to embed in the auto-generated task ID.
