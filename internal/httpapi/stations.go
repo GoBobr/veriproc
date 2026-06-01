@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/eum/veriproc/internal/httpapi/apierr"
@@ -27,7 +28,8 @@ func (h *stationHandler) summary(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := h.svc.Summary(r.Context(), since)
+	slotCap := parseSlotCount(r)
+	items, err := h.svc.Summary(r.Context(), since, slotCap)
 	if err != nil {
 		writeStationErr(w, r, err)
 		return
@@ -40,12 +42,22 @@ func (h *stationHandler) summaryOne(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.SummaryStation(r.Context(), r.PathValue("station_id"), since)
+	slotCap := parseSlotCount(r)
+	out, err := h.svc.SummaryStation(r.Context(), r.PathValue("station_id"), since, slotCap)
 	if err != nil {
 		writeStationErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"since": since, "station": out})
+}
+
+func parseSlotCount(r *http.Request) int {
+	if v := r.URL.Query().Get("slot_count"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 12
 }
 
 func parseStationSummarySince(w http.ResponseWriter, r *http.Request) (time.Time, bool) {

@@ -47,8 +47,17 @@ func NewGateway(opts Options) (*Gateway, error) {
 		return nil, errors.New("console: missing db")
 	}
 	if opts.NewClient == nil {
+		slotCap := 12
+		if opts.Config.UI.VisibleSlotCount > 0 {
+			slotCap = opts.Config.UI.VisibleSlotCount
+		}
 		opts.NewClient = func(inst InstanceConfig) (UpstreamClient, error) {
-			return NewHTTPUpstreamClient(inst)
+			cl, err := NewHTTPUpstreamClient(inst)
+			if err != nil {
+				return nil, err
+			}
+			cl.slotCap = slotCap
+			return cl, nil
 		}
 	}
 	if opts.Now == nil {

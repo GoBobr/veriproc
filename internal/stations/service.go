@@ -174,14 +174,14 @@ func (s *Service) setPaused(ctx context.Context, stationID string, paused bool) 
 	return &StationView{StationID: stationID, Paused: paused}, nil
 }
 
-func (s *Service) Summary(ctx context.Context, since time.Time) ([]StationView, error) {
+func (s *Service) Summary(ctx context.Context, since time.Time, slotCap int) ([]StationView, error) {
 	list, err := s.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 	now := s.clock()
 	for i := range list {
-		summary, err := s.summaryForStation(ctx, list[i], since, now)
+		summary, err := s.summaryForStation(ctx, list[i], since, now, slotCap)
 		if err != nil {
 			return nil, err
 		}
@@ -190,8 +190,8 @@ func (s *Service) Summary(ctx context.Context, since time.Time) ([]StationView, 
 	return list, nil
 }
 
-func (s *Service) SummaryStation(ctx context.Context, stationID string, since time.Time) (*StationView, error) {
-	list, err := s.Summary(ctx, since)
+func (s *Service) SummaryStation(ctx context.Context, stationID string, since time.Time, slotCap int) (*StationView, error) {
+	list, err := s.Summary(ctx, since, slotCap)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,10 @@ func (s *Service) SummaryStation(ctx context.Context, stationID string, since ti
 	return nil, fmt.Errorf("%w: station_id=%s", ErrUnknownStation, stationID)
 }
 
-func (s *Service) summaryForStation(ctx context.Context, base StationView, since, now time.Time) (StationView, error) {
+func (s *Service) summaryForStation(ctx context.Context, base StationView, since, now time.Time, slotCap int) (StationView, error) {
+	if slotCap <= 0 {
+		slotCap = 12
+	}
 	runsPage, err := s.store.Runs().List(ctx, store.RunListFilter{StationID: base.StationID, Limit: 200})
 	if err != nil {
 		return base, err
@@ -291,10 +294,10 @@ func (s *Service) summaryForStation(ctx context.Context, base StationView, since
 	base.QueuedCount = queuedAcceptedNoRun + len(queued)
 	base.LastRefresh = now
 
-	slots := make([]Slot, 0, 12)
+	slots := make([]Slot, 0, slotCap)
 	appendSlots := func(kind string, in []*store.RunRecord) {
 		for _, r := range in {
-			if len(slots) >= 12 {
+			if len(slots) >= slotCap {
 				return
 			}
 			slot := Slot{Kind: kind, RunID: r.RunID, TaskID: r.TaskID, RetryIndex: r.RetryIndex, State: r.State}

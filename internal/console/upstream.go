@@ -43,9 +43,10 @@ type UpstreamClient interface {
 // HTTPUpstreamClient implements UpstreamClient against a live veriprocd REST
 // API. It is safe for concurrent use.
 type HTTPUpstreamClient struct {
-	baseURL string
-	token   string
-	hc      *http.Client
+	baseURL  string
+	token    string
+	hc       *http.Client
+	slotCap  int
 }
 
 // NewHTTPUpstreamClient constructs an UpstreamClient for the supplied
@@ -201,6 +202,9 @@ func (c *HTTPUpstreamClient) StationsSummary(ctx context.Context, since time.Tim
 	if !since.IsZero() {
 		q.Set("since", since.UTC().Format(time.RFC3339Nano))
 	}
+	if c.slotCap > 0 {
+		q.Set("slot_count", strconv.Itoa(c.slotCap))
+	}
 	var out StationsSummary
 	if err := c.do(ctx, "GET", "/api/v1/stations/summary", q, nil, &out); err != nil {
 		return StationsSummary{}, err
@@ -217,6 +221,9 @@ func (c *HTTPUpstreamClient) StationSummary(ctx context.Context, stationID strin
 	q := url.Values{}
 	if !since.IsZero() {
 		q.Set("since", since.UTC().Format(time.RFC3339Nano))
+	}
+	if c.slotCap > 0 {
+		q.Set("slot_count", strconv.Itoa(c.slotCap))
 	}
 	var out stationOneSummaryResponse
 	if err := c.do(ctx, "GET", "/api/v1/stations/"+url.PathEscape(stationID)+"/summary", q, nil, &out); err != nil {
