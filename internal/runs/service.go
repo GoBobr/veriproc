@@ -76,6 +76,7 @@ type Service struct {
 	registerGroup       GroupRegistrar
 	notifyGroupComplete GroupCompleteNotifier
 	instanceID          string
+	instanceRoot        string
 	definitions         map[string]any
 	executionEnv        map[string]string
 	facility            map[string]string
@@ -111,6 +112,7 @@ type Config struct {
 	RegisterGroup       GroupRegistrar
 	NotifyGroupComplete GroupCompleteNotifier
 	InstanceID          string
+	InstanceRoot        string
 	Definitions         map[string]any
 	ExecutionEnv        map[string]string
 	Facility            map[string]string
@@ -156,6 +158,7 @@ func NewService(cfg Config) *Service {
 		registerGroup:       cfg.RegisterGroup,
 		notifyGroupComplete: cfg.NotifyGroupComplete,
 		instanceID:          cfg.InstanceID,
+		instanceRoot:        cfg.InstanceRoot,
 		definitions:         cloneAnyMap(cfg.Definitions),
 		executionEnv:        cloneStringMap(cfg.ExecutionEnv),
 		facility:            cloneStringMap(cfg.Facility),
@@ -325,7 +328,7 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 
 	jobOrderPath, jobOrderArtifact, err := s.writeJobOrder(ctx, run)
 	if err != nil {
-		return nil, fmt.Errorf("write job-order: %w", err)
+		return nil, fmt.Errorf("%w: write job-order: %w", ErrFatalDispatch, err)
 	}
 
 	taskHistoryArtifact, err := s.writeTaskHistory(ctx, run)
@@ -392,6 +395,7 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 		Environment:      cloneStringMap(s.executionEnv),
 		SplitGroupID:     task.SplitGroupID,
 		StationConfigDir: filepath.Dir(executable),
+		InstanceRoot:     s.instanceRoot,
 	}
 	exec, err := s.execRegistry.Resolve(desc.Mode)
 	if err != nil {
@@ -1391,6 +1395,9 @@ func (s *Service) buildRunContext(run *store.RunRecord, task *store.TaskRecord, 
 	ctx["start"] = task.WindowStart.UTC().Format("20060102T150405")
 	ctx["end"] = task.WindowEnd.UTC().Format("20060102T150405")
 	ctx["working_root"] = run.WorkingRoot
+	if s.instanceRoot != "" {
+		ctx["instance_root"] = s.instanceRoot
+	}
 	if jobOrderPath != "" {
 		ctx["joborder"] = map[string]any{
 			"path": jobOrderPath,

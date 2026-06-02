@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,11 @@ import (
 type Config struct {
 	// InstanceID is the deployment-level instance identifier (Spec 2.3.1).
 	InstanceID string `yaml:"instance_id"`
+
+	// InstanceRoot is the absolute directory of the loaded config file.
+	// Injected at runtime; not read from YAML. Available as the reserved
+	// context key <instance_root> in station configurations.
+	InstanceRoot string `yaml:"-"`
 
 	SchemaVersion string           `yaml:"schema_version"`
 	HTTP          HTTPConfig       `yaml:"http"`
@@ -221,6 +227,9 @@ func Load(args []string, env map[string]string) (*Config, error) {
 		if err := applyFile(&cfg, configPath); err != nil {
 			return nil, err
 		}
+		if abs, err := filepath.Abs(configPath); err == nil {
+			cfg.InstanceRoot = filepath.Dir(abs)
+		}
 	}
 
 	// Step 3: env overlay.
@@ -305,16 +314,17 @@ func applyEnv(cfg *Config, env map[string]string) {
 // reservedContextNames lists top-level definition keys that are reserved
 // for runtime injection and must not be set in instance definitions (Spec §2.3.1).
 var reservedContextNames = map[string]bool{
-	"station_id":   true,
-	"station_name": true,
-	"task_id":      true,
-	"retry_index":  true,
-	"run_ref":      true,
-	"job_id":       true,
-	"start":        true,
-	"end":          true,
-	"working_root": true,
-	"joborder":     true,
+	"station_id":    true,
+	"station_name":  true,
+	"task_id":       true,
+	"retry_index":   true,
+	"run_ref":       true,
+	"job_id":        true,
+	"start":         true,
+	"end":           true,
+	"working_root":  true,
+	"joborder":      true,
+	"instance_root": true,
 }
 
 // Validate enforces invariants on the resolved configuration.

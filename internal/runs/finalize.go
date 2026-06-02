@@ -307,15 +307,49 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 		effectivePathMode = joCfg.Paths
 	}
 
+	// Run preprocess_script (if declared) to extract dynamic variables that
+	// are injected into the context as the "prep" namespace (<prep.KEY>) and
+	// as .PrepVars["KEY"] in template joborders.
+	var prepVars map[string]string
+	if joCfg.PreprocessScript != "" {
+		baseCtx := s.buildRunContext(run, task, rev, path)
+		runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
+		pv, perr := runPreprocessScript(
+			joCfg.PreprocessScript,
+			joCfg.PreprocessArgs,
+			baseCtx,
+			manifest,
+			run,
+			effectivePathMode == "absolute",
+			s.logger.With().Str("run_ref", runRef).Str("station", rev.StationID).Logger(),
+		)
+		if perr != nil {
+			s.logger.Error().
+				Err(perr).
+				Str("run_ref", runRef).
+				Str("station", rev.StationID).
+				Msg("joborder preprocess_script failed")
+			return "", nil, fmt.Errorf("joborder preprocess_script: %w", perr)
+		}
+		prepVars = pv
+	}
+
+	// buildCtx constructs the station run context augmented with prep vars.
+	buildCtx := func() map[string]any {
+		ctx := s.buildRunContext(run, task, rev, path)
+		injectPrepVars(ctx, prepVars)
+		return ctx
+	}
+
 	var body []byte
 	if joCfg.Renderer == "template" {
-		runCtx := s.buildRunContext(run, task, rev, path)
+		runCtx := buildCtx()
 		resolvedParams, rerr := stations.ResolveMap(joCfg.Params, runCtx)
 		if rerr != nil {
 			return "", nil, fmt.Errorf("resolve joborder.params: %w", rerr)
 		}
 		joCfg.Params = resolvedParams
-		body, err = renderTemplateJobOrder(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), joCfg, effectivePathMode)
+		body, err = renderTemplateJobOrder(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), joCfg, effectivePathMode, prepVars)
 		if err != nil {
 			return "", nil, fmt.Errorf("render template joborder: %w", err)
 		}
@@ -330,7 +364,7 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 
 		// Resolve and merge joborder.include into doc.
 		if len(joCfg.Include) > 0 {
-			runCtx := s.buildRunContext(run, task, rev, path)
+			runCtx := buildCtx()
 			resolvedInclude, rerr := stations.ResolveMap(joCfg.Include, runCtx)
 			if rerr != nil {
 				return "", nil, fmt.Errorf("resolve joborder.include: %w", rerr)

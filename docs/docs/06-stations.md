@@ -94,6 +94,8 @@ downstream:
 | `joborder` | `name` | Output filename for the job order in the working root. |
 | `joborder` | `include` | Station-provided fields placed at the **root** of the job order. |
 | `joborder` | `meta` | When `false`, omit the generated `veriproc_meta` group from the file (audit is still recorded out of band). |
+| `joborder` | `preprocess_script` | Optional path to an executable run **before** the job order is rendered. Its stdout (`KEY=VALUE` lines) is injected into the context as `<prep.KEY>` / `.PrepVars["KEY"]`. |
+| `joborder` | `preprocess_args` | Argument list passed to `preprocess_script`; supports `{input:FILE_TYPE}` tokens and context references. |
 | `inputs[]` | `file_type` | The product/aux file type to resolve. |
 | `inputs[]` | `category` | Which `product_categories` entry to search. |
 | `inputs[]` | `window_match` | Selection rule (see below). |
@@ -179,9 +181,18 @@ References are resolved in:
 - and other string-valued station fields.
 
 Reserved runtime keys available in the context include `station_id`, `station_name`,
-`task_id`, `retry_index`, `run_ref`, `job_id`, `start`, `end`, `working_root`, and
-`joborder`. Do **not** define instance `definitions` with these names — the daemon rejects
-that (see [Configuration §5.9](05-configuration.md)).
+`task_id`, `retry_index`, `run_ref`, `job_id`, `start`, `end`, `working_root`,
+`instance_root`, and `joborder`. Do **not** define instance `definitions` with these
+names — the daemon rejects that (see [Configuration §5.9](05-configuration.md)).
+
+`instance_root` is the absolute path of the directory that contains the loaded
+`instance.yaml` config file. It is particularly useful for referencing scripts or
+auxiliary files that ship alongside the instance config:
+
+```yaml
+joborder:
+  preprocess_script: <instance_root>/scripts/extract_meta.py
+```
 
 ```yaml
 # Instance definitions (instance.yaml)
@@ -221,6 +232,86 @@ and output paths in the job order are relative to the working root or absolute.
   the station's declared inputs.
 - Each input entry may resolve to **one or many** filesystem objects of the same
   `file_type`, and an object may be a regular file or a directory.
+
+### Job-order preprocess script
+
+When `joborder.preprocess_script` is set, VeriProc executes the script (or any
+executable) **before** rendering the job order. The script can inspect resolved input
+files and print dynamic parameters to stdout; those are then available to the renderer
+as context references.
+
+#### How it works
+
+1. The script is executed with the arguments from `preprocess_args` (after token and
+   context-reference expansion).
+2. Every line printed to **stdout** must be `KEY=VALUE` (blank lines and lines starting
+   with `#` are ignored). Any other line format — or a non-zero exit code — immediately
+   fails the run.
+3. The extracted variables are available in the renderer's context under the `prep`
+   namespace:
+   - **Default renderer:** `<prep.KEY_NAME>` inside `joborder.include` values.
+   - **Template renderer:** `{{ index .PrepVars "KEY_NAME" }}` inside the template.
+
+#### `{input:FILE_TYPE}` token in `preprocess_args`
+
+Each element of `preprocess_args` may contain one or more `{input:FILE_TYPE}` tokens.
+Each token is replaced by the **space-joined absolute (or relative) paths** of all
+present manifest entries of that file type. If no present entries match the given type,
+the expansion fails and the run is aborted.
+
+Context references (`<name.path>`) in `preprocess_args` and in `preprocess_script` are
+resolved against the standard station context (same namespace as `execution.args`).
+
+#### Example — default renderer
+
+```yaml
+joborder:
+  format: yaml
+  preprocess_script: <instance_root>/scripts/scan_range.sh
+  preprocess_args:
+    - "{input:SCE_DATA}"
+  include:
+    start_scanline: <prep.MIN_SCANLINE>
+    end_scanline: <prep.MAX_SCANLINE>
+    n_scanlines: <prep.N_SCANLINES>
+    log_level: DEBUG
+```
+
+The script receives the resolved path to the `SCE_DATA` input file as `$1` and is
+expected to print:
+
+```text
+MIN_SCANLINE=6825
+MAX_SCANLINE=7444
+N_SCANLINES=620
+```
+
+The rendered job order will contain the resolved values at the root.
+
+#### Example — template renderer
+
+```yaml
+joborder:
+  renderer: template
+  format: yaml
+  preprocess_script: <instance_root>/scripts/scan_range.sh
+  preprocess_args:
+    - "{input:SCE_DATA}"
+  template: |
+    start_scanline: {{ index .PrepVars "MIN_SCANLINE" }}
+    end_scanline: {{ index .PrepVars "MAX_SCANLINE" }}
+    run_ref: {{ .RunRef }}
+```
+
+#### Failure behaviour
+
+| Condition | Result |
+|-----------|--------|
+| Script exits with non-zero code | Run transitions to `failed`; task is marked `failed`. |
+| Stdout contains a line that is not `KEY=VALUE`, blank, or `#` comment | Run transitions to `failed`. |
+| `{input:FILE_TYPE}` references a type with no present entries | Run transitions to `failed`. |
+
+The failure message always names the script and the underlying cause.
 
 ### `format: none`
 

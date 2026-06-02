@@ -131,6 +131,7 @@ func run(args []string) error {
 		Naming:            cfg.Naming,
 		Integrity:         cfg.Integrity,
 		InstanceID:        cfg.InstanceID,
+		InstanceRoot:      cfg.InstanceRoot,
 		Facility:          cfg.Facility,
 		Definitions:       cfg.Definitions,
 		ExecutionEnv:      cfg.ExecutionEnv,

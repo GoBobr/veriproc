@@ -106,6 +106,19 @@ type JobOrderConfig struct {
 	// renderer. Set to false to omit it for processors that reject unknown keys.
 	// Has no effect when renderer is "template" (template controls everything).
 	Meta *bool `yaml:"meta,omitempty" json:"meta,omitempty"`
+	// PreprocessScript is an optional executable run before joborder rendering.
+	// Its stdout is parsed as KEY=VALUE lines and the values are injected into
+	// the station context under the "prep" namespace (e.g. <prep.MIN_SCANLINE>
+	// in joborder.include or .PrepVars["MIN_SCANLINE"] in templates).
+	// The script path supports station context references (e.g. <instance_root>).
+	// If the script exits non-zero or its output cannot be parsed, the run fails.
+	PreprocessScript string `yaml:"preprocess_script,omitempty" json:"preprocess_script,omitempty"`
+	// PreprocessArgs is the argument list passed to PreprocessScript.
+	// Each element supports both station context references (<name>) and
+	// input-file tokens of the form {input:FILE_TYPE}, which expand to the
+	// space-joined absolute (or relative) paths of all resolved inputs of that
+	// file type.
+	PreprocessArgs []string `yaml:"preprocess_args,omitempty" json:"preprocess_args,omitempty"`
 }
 
 // InputFilter declares a single filtering rule applied to input candidates

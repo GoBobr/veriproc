@@ -860,6 +860,333 @@ func TestRuns_JobOrderTemplateTOML(t *testing.T) {
 	}
 }
 
+// TestRuns_JobOrderPreprocessScriptDefault verifies that when preprocess_script
+// is set on the default (include) renderer, the KEY=VALUE output is available
+// as <prep.KEY> context references inside joborder.include.
+func TestRuns_JobOrderPreprocessScriptDefault(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "prep-default.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	inputName := "20250703_SCE_DATA_v1.nc"
+	if err := os.WriteFile(filepath.Join(archive, inputName), []byte("scene\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	// Preprocess script: echoes fixed scan-line values derived from the input
+	// file path (just verifies argument passing and prep namespace injection).
+	prepScript := writeExecutable(t, dir, "prep.sh", `#!/bin/sh
+set -eu
+# $1 is the input file path
+printf 'MIN_SCANLINE=6825\nMAX_SCANLINE=7444\nN_SCANLINES=620\n'
+`)
+	mainScript := writeExecutable(t, dir, "main.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.nc\"\n")
+
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "PREP-DEFAULT",
+		StationName:   "Preprocess Default",
+		ContentHash:   "sha256:prep-default",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: mainScript},
+		Inputs:        []stations.InputDefinition{{FileType: "SCE_DATA", Category: "product"}},
+		Outputs:       []stations.OutputDefinition{{Name: "out.nc", FileType: "SCENE_OUT", Required: true}},
+		JobOrder: stations.JobOrderConfig{
+			Format:           "yaml",
+			PreprocessScript: prepScript,
+			PreprocessArgs:   []string{"{input:SCE_DATA}"},
+			Include: map[string]any{
+				"start_scanline": "<prep.MIN_SCANLINE>",
+				"end_scanline":   "<prep.MAX_SCANLINE>",
+				"n_scanlines":    "<prep.N_SCANLINES>",
+				"log_level":      "DEBUG",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "ab1234" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:             st,
+		Executors:         executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:          reg,
+		WorkingRootBase:   filepath.Join(dir, "work"),
+		RollingArchives:   map[string]string{"hot": archive},
+		ProductCategories: map[string][]string{"product": {"rolling:hot"}},
+		IDFactory:         func() string { runN++; return "run-prepd-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "PREP-DEFAULT"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+
+	raw, err := os.ReadFile(filepath.Join(run.WorkingRoot, "joborder.yaml"))
+	if err != nil {
+		t.Fatalf("read joborder.yaml: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse joborder.yaml: %v", err)
+	}
+
+	// Prep vars must appear as resolved values at the root of the joborder.
+	if got := fmt.Sprintf("%v", doc["start_scanline"]); got != "6825" {
+		t.Errorf("start_scanline = %v, want 6825", doc["start_scanline"])
+	}
+	if got := fmt.Sprintf("%v", doc["end_scanline"]); got != "7444" {
+		t.Errorf("end_scanline = %v, want 7444", doc["end_scanline"])
+	}
+	if got := fmt.Sprintf("%v", doc["n_scanlines"]); got != "620" {
+		t.Errorf("n_scanlines = %v, want 620", doc["n_scanlines"])
+	}
+	if doc["log_level"] != "DEBUG" {
+		t.Errorf("log_level = %v, want DEBUG", doc["log_level"])
+	}
+}
+
+// TestRuns_JobOrderPreprocessScriptTemplate verifies that preprocess_script
+// vars are available as .PrepVars["KEY"] in a Go template joborder renderer.
+func TestRuns_JobOrderPreprocessScriptTemplate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "prep-tmpl.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	archive := filepath.Join(dir, "archive", "hot")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "20250703_SCENE_v1.nc"), []byte("scene\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	prepScript := writeExecutable(t, dir, "prep-tmpl.sh", `#!/bin/sh
+printf 'MIN_SCANLINE=100\nMAX_SCANLINE=200\n'
+`)
+	mainScript := writeExecutable(t, dir, "main-tmpl.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.nc\"\n")
+
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "PREP-TEMPLATE",
+		StationName:   "Preprocess Template",
+		ContentHash:   "sha256:prep-template",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: mainScript},
+		Inputs:        []stations.InputDefinition{{FileType: "SCENE", Category: "product"}},
+		Outputs:       []stations.OutputDefinition{{Name: "out.nc", FileType: "SCENE_OUT", Required: true}},
+		JobOrder: stations.JobOrderConfig{
+			Renderer:         "template",
+			Format:           "yaml",
+			PreprocessScript: prepScript,
+			Template: "start_scanline: {{ index .PrepVars \"MIN_SCANLINE\" }}\n" +
+				"end_scanline: {{ index .PrepVars \"MAX_SCANLINE\" }}\n" +
+				"run_ref: {{ .RunRef }}\n",
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "cd5678" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:             st,
+		Executors:         executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:          reg,
+		WorkingRootBase:   filepath.Join(dir, "work"),
+		RollingArchives:   map[string]string{"hot": archive},
+		ProductCategories: map[string][]string{"product": {"rolling:hot"}},
+		IDFactory:         func() string { runN++; return "run-prept-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "PREP-TEMPLATE"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+
+	raw, err := os.ReadFile(filepath.Join(run.WorkingRoot, "joborder.yaml"))
+	if err != nil {
+		t.Fatalf("read joborder.yaml: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse joborder.yaml: %v", err)
+	}
+	if fmt.Sprintf("%v", doc["start_scanline"]) != "100" {
+		t.Errorf("start_scanline = %v, want 100", doc["start_scanline"])
+	}
+	if fmt.Sprintf("%v", doc["end_scanline"]) != "200" {
+		t.Errorf("end_scanline = %v, want 200", doc["end_scanline"])
+	}
+	expectedRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
+	if doc["run_ref"] != expectedRef {
+		t.Errorf("run_ref = %v, want %s", doc["run_ref"], expectedRef)
+	}
+}
+
+// TestRuns_JobOrderPreprocessScriptFailure verifies that when preprocess_script
+// exits with a non-zero code, the run transitions to failed and the task is
+// also marked failed.
+func TestRuns_JobOrderPreprocessScriptFailure(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "prep-fail.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	prepScript := writeExecutable(t, dir, "bad-prep.sh", "#!/bin/sh\necho 'fatal error in prep' >&2\nexit 1\n")
+	mainScript := writeExecutable(t, dir, "main-fail.sh", "#!/bin/sh\ntouch \"$VERIPROC_RUN_DIR/out.dat\"\n")
+
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "PREP-FAIL",
+		StationName:   "Preprocess Fail",
+		ContentHash:   "sha256:prep-fail",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: mainScript},
+		Outputs:       []stations.OutputDefinition{{Name: "out.dat", FileType: "FAIL_OUT", Required: true}},
+		JobOrder: stations.JobOrderConfig{
+			Format:           "yaml",
+			PreprocessScript: prepScript,
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "ef9012" })
+	rsvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executors:       executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:        reg,
+		WorkingRootBase: filepath.Join(dir, "work"),
+		IDFactory:       func() string { return "run-prepfail" },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "PREP-FAIL"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "failed")
+	tk, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	if tk.State != "failed" {
+		t.Errorf("task state = %q, want failed", tk.State)
+	}
+	if !strings.Contains(strings.ToLower(tk.FailureSummary), "preprocess") {
+		t.Errorf("failure_summary should mention 'preprocess', got: %q", tk.FailureSummary)
+	}
+}
+
+// TestRuns_JobOrderPreprocessScriptInstanceRoot verifies that <instance_root>
+// in preprocess_script is resolved to the configured InstanceRoot.
+func TestRuns_JobOrderPreprocessScriptInstanceRoot(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "prep-ir.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// Scripts live under <instanceRoot>/scripts/
+	scriptsDir := filepath.Join(dir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	prepScript := writeExecutable(t, scriptsDir, "extract.sh", "#!/bin/sh\nprintf 'N_SCANLINES=42\n'\n")
+	_ = prepScript // path used via <instance_root>/scripts/extract.sh
+
+	mainScript := writeExecutable(t, dir, "main-ir.sh", "#!/bin/sh\nset -eu\ntouch \"$VERIPROC_RUN_DIR/out.nc\"\n")
+
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "PREP-IR",
+		StationName:   "Preprocess InstanceRoot",
+		ContentHash:   "sha256:prep-ir",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: mainScript},
+		Outputs:       []stations.OutputDefinition{{Name: "out.nc", FileType: "OUT_NC", Required: true}},
+		JobOrder: stations.JobOrderConfig{
+			Format:           "yaml",
+			PreprocessScript: "<instance_root>/scripts/extract.sh",
+			Include: map[string]any{
+				"n_scanlines": "<prep.N_SCANLINES>",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "abc123" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executors:       executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:        reg,
+		WorkingRootBase: filepath.Join(dir, "work"),
+		InstanceRoot:    dir, // <instance_root> resolves to dir
+		IDFactory:       func() string { runN++; return "run-ir-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "PREP-IR"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+
+	raw, err := os.ReadFile(filepath.Join(run.WorkingRoot, "joborder.yaml"))
+	if err != nil {
+		t.Fatalf("read joborder.yaml: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse joborder.yaml: %v", err)
+	}
+	if fmt.Sprintf("%v", doc["n_scanlines"]) != "42" {
+		t.Errorf("n_scanlines = %v, want 42", doc["n_scanlines"])
+	}
+}
+
 // TestRuns_JobOrderFormatNone — a station with joborder.format=none writes no
 // joborder file and exposes no joborder artifact.
 func TestRuns_JobOrderFormatNone(t *testing.T) {

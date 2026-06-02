@@ -54,10 +54,13 @@ type jobOrderTemplateContext struct {
 	Inputs          []jobOrderTemplateInput
 	Outputs         []jobOrderTemplateOutput
 	Params          map[string]any
+	// PrepVars holds the KEY=VALUE pairs emitted by joborder.preprocess_script.
+	// Access via {{ index .PrepVars "MIN_SCANLINE" }} or {{ .PrepVars.KEY }}.
+	PrepVars        map[string]string
 }
 
-func renderTemplateJobOrder(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, joCfg stations.JobOrderConfig, pathMode string) ([]byte, error) {
-	ctx := buildJobOrderTemplateContext(run, task, rev, manifest, outputs, manifestPath, joCfg.Params, pathMode)
+func renderTemplateJobOrder(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, joCfg stations.JobOrderConfig, pathMode string, prepVars map[string]string) ([]byte, error) {
+	ctx := buildJobOrderTemplateContext(run, task, rev, manifest, outputs, manifestPath, joCfg.Params, pathMode, prepVars)
 	funcs := template.FuncMap{
 		"input":    ctx.input,
 		"inputs":   ctx.inputs,
@@ -84,7 +87,7 @@ func renderTemplateJobOrder(run *store.RunRecord, task *store.TaskRecord, rev *s
 	return body, nil
 }
 
-func buildJobOrderTemplateContext(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, params map[string]any, pathMode string) jobOrderTemplateContext {
+func buildJobOrderTemplateContext(run *store.RunRecord, task *store.TaskRecord, rev *store.StationRevisionRecord, manifest *store.ManifestRecord, outputs []stations.OutputDefinition, manifestPath string, params map[string]any, pathMode string, prepVars map[string]string) jobOrderTemplateContext {
 	absolutePaths := pathMode == "absolute"
 	inputs := make([]jobOrderTemplateInput, 0, len(manifest.Entries))
 	for _, entry := range manifest.Entries {
@@ -134,9 +137,10 @@ func buildJobOrderTemplateContext(run *store.RunRecord, task *store.TaskRecord, 
 			StartUnix: task.WindowStart.UTC().Format("20060102T150405"),
 			EndUnix:   task.WindowEnd.UTC().Format("20060102T150405"),
 		},
-		Inputs:  inputs,
-		Outputs: outDocs,
-		Params:  cloneAnyMap(params),
+		Inputs:   inputs,
+		Outputs:  outDocs,
+		Params:   cloneAnyMap(params),
+		PrepVars: prepVars,
 	}
 }
 

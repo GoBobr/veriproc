@@ -75,6 +75,9 @@ type JobDescription struct {
 	// and its auxiliary scripts/templates. Exposed to the workload as
 	// VERIPROC_STATION_DIR so scripts can reference co-located files.
 	StationConfigDir string
+	// InstanceRoot is the absolute directory of the loaded instance config
+	// file. Exposed to the workload as VERIPROC_INSTANCE_ROOT.
+	InstanceRoot string
 	// Environment contains operator-defined environment variables from instance
 	// configuration. Names must not use the reserved VERIPROC_ prefix.
 	Environment map[string]string

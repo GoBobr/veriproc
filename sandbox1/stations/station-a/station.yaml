@@ -122,7 +122,38 @@ joborder:
   #   – All top-level keys from instance definitions (e.g. <facility.processing_center>)
   #   – Runtime values: <task_id>, <station_id>, <window_start>, <window_end>,
   #                     <retry_index>, <run_ref>, <split_group_id>
+  #   – Reserved path: <instance_root> – absolute directory of the instance config file
   #   – Resolved input paths (see spec §5.4 for the full input context shape)
+
+  # ── Preprocess script (optional) ─────────────────────────────────────────
+  # When set, the daemon executes this script before rendering the job order.
+  # The script must print KEY=VALUE lines to stdout; these are injected into
+  # the renderer context under the <prep.*> namespace.
+  #
+  # preprocess_script: path/to/script      # absolute, relative to CWD, or
+  #                                        # with context refs e.g. <instance_root>/scripts/prep.sh
+  # preprocess_args:
+  #   - --mode minmax_scanline             # literal args …
+  #   - "{input:CLI_1B_RAD______}"        # … or {input:FILE_TYPE} tokens
+  #                                        #   → expanded to space-joined input paths
+  #
+  # Variables from the script are then available in joborder.include as:
+  #   start_scanline: <prep.MIN_SCANLINE>
+  #   end_scanline:   <prep.MAX_SCANLINE>
+  # Or in a Go template renderer as:
+  #   start_scanline: {{ index .PrepVars "MIN_SCANLINE" }}
+  #
+  # <instance_root> resolves to the directory that contains instance.yaml.
+  # Placing scripts there keeps paths stable across deployments:
+  #
+  # preprocess_script: <instance_root>/scripts/extract_meta.py
+  # preprocess_args:
+  #   - "{input:CLI_1B_RAD______}"
+  # include:
+  #   start_scanline: <prep.MIN_SCANLINE>
+  #   end_scanline:   <prep.MAX_SCANLINE>
+  #
+  # ─────────────────────────────────────────────────────────────────────────
   include:
     dyn_params:
       mode: NOMINAL

@@ -309,6 +309,11 @@ func renderWrapper(desc JobDescription, effective effectiveSlurm) string {
 	b.WriteString("    echo \"node:      $(hostname)\"\n")
 	b.WriteString("    echo \"cpus:      ${SLURM_CPUS_PER_TASK:-N/A}\"\n")
 	b.WriteString("    echo \"mem_mb:    ${SLURM_MEM_PER_NODE:-N/A}\"\n")
+	walltime := normalizeSlurmWalltime(effective.Resources.Walltime)
+	if walltime == "" {
+		walltime = "N/A"
+	}
+	b.WriteString("    echo \"walltime:  " + walltime + "\"\n")
 	if effective.Mode == SlurmDocker && effective.Container.Image != "" {
 		b.WriteString("    echo \"image:     " + effective.Container.Image + "\"\n")
 	}
@@ -379,6 +384,9 @@ func runtimeEnv(desc JobDescription) [][2]string {
 	}...)
 	if desc.StationConfigDir != "" {
 		env = append(env, [2]string{"VERIPROC_STATION_DIR", desc.StationConfigDir})
+	}
+	if desc.InstanceRoot != "" {
+		env = append(env, [2]string{"VERIPROC_INSTANCE_ROOT", desc.InstanceRoot})
 	}
 	if desc.SplitGroupID != "" {
 		env = append(env, [2]string{"VERIPROC_SPLIT_GROUP_ID", desc.SplitGroupID})
