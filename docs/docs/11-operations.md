@@ -13,14 +13,20 @@ resolved by:
 1. taking the input's `category` and scanning that category's folders **in order**;
 2. parsing candidate filenames with the classical `naming.filenames.filename_pattern`;
 3. selecting objects by the input's `window_match` rule against the (margin-adjusted)
-   processing window.
+   processing window;
+4. applying any `filter` rules declared on the input (e.g. `filename_component`, which
+   keeps only candidates whose parsed component value matches the corresponding component
+   of an already-resolved earlier input);
+5. grouping survivors by logical interval and picking one winner per group.
 
 Earlier folders win, so place authoritative archives ahead of fallbacks. The selected set
 is frozen into the run's **manifest** and symlinked under the working root's `input/`.
 
 **Tip:** if a mandatory input does not resolve, the run fails early in `preparing`. Check
 that the file type, category folders, and filename pattern actually match the files on
-disk.
+disk. If the input declares a `filter`, also verify that the referenced `source_file_type`
+is already resolved (appears earlier in the `inputs` list) and that its winner's component
+value matches at least one candidate.
 
 ## 11.2 Output validation & publication
 

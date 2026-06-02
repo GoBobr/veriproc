@@ -664,6 +664,10 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 			return nil, fmt.Errorf("parse rolling folders: %w", err)
 		}
 	}
+	// resolvedWinnerComponents accumulates the parsed filename components for
+	// every winner that has been selected so far, keyed by file_type. Filter
+	// rules referencing a source_file_type read from this map.
+	resolvedWinnerComponents := make(map[string][]map[string]string)
 	seqCounter := 0
 	for inputIdx, input := range inputs {
 		effectivePattern := s.effectiveInputFilenamePattern(input)
@@ -672,7 +676,7 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 		if override := rollingFolders[input.Category]; len(override) > 0 {
 			folders = override
 		}
-		winners, missingReason, err := s.classicalSelectCandidates(runRef, input, folders, task)
+		winners, missingReason, err := s.classicalSelectCandidates(runRef, input, folders, task, resolvedWinnerComponents)
 		if err != nil {
 			return nil, err
 		}
@@ -699,6 +703,13 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 			continue
 		}
 		for winnerIdx, winner := range winners {
+			// Accumulate parsed components for use by subsequent filter rules.
+			if winner.FilenameComponents != "" {
+				var comps map[string]string
+				if err := json.Unmarshal([]byte(winner.FilenameComponents), &comps); err == nil {
+					resolvedWinnerComponents[input.FileType] = append(resolvedWinnerComponents[input.FileType], comps)
+				}
+			}
 			entry := store.ManifestEntry{
 				EntryID:                  fmt.Sprintf("ent-%s-%02d-%02d", sha12(runID+":"+input.FileType), inputIdx, winnerIdx),
 				ObjectSequence:           seqCounter,
@@ -810,6 +821,10 @@ type classicalCandidate struct {
 //  3. Lowest folder-priority index (first configured folder) when discriminator ties.
 //  4. Lexicographically smallest full source path as a stable fallback.
 //
+// resolvedWinnerComponents maps file_type → list of parsed filename component
+// maps for winners already selected earlier in the same manifest resolution.
+// Filter rules declared on input may use these to constrain the candidate set.
+//
 // It returns one selectedInputCandidate per logical interval group. The second
 // return value is the reason string for a missing-input entry when the slice is empty.
 func (s *Service) classicalSelectCandidates(
@@ -817,6 +832,7 @@ func (s *Service) classicalSelectCandidates(
 	input stations.InputDefinition,
 	folders []string,
 	task *store.TaskRecord,
+	resolvedWinnerComponents map[string][]map[string]string,
 ) ([]selectedInputCandidate, string, error) {
 	effectivePattern := s.effectiveInputFilenamePattern(input)
 	windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
@@ -917,6 +933,27 @@ func (s *Service) classicalSelectCandidates(
 		return nil, "no matching candidate", nil
 	}
 
+	// Apply declared filters to the candidate set. All rules are ANDed.
+	for _, f := range input.Filters {
+		before := len(allCandidates)
+		allCandidates = applyInputFilter(allCandidates, f, resolvedWinnerComponents, s.logger, runRef, input.FileType)
+		if len(allCandidates) != before {
+			s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+				Str("input_key", input.FileType).
+				Str("filter_rule", f.Rule).
+				Int("before", before).
+				Int("after", len(allCandidates)).
+				Msg("matcher: filter applied")
+		}
+		if len(allCandidates) == 0 {
+			s.logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+				Str("input_key", input.FileType).
+				Str("filter_rule", f.Rule).
+				Msg("matcher: all candidates rejected by filter")
+			return nil, fmt.Sprintf("no candidate survived filter rule %q", f.Rule), nil
+		}
+	}
+
 	// Group by interval key preserving first-seen order.
 	groupOrder := []string{}
 	groups := map[string][]classicalCandidate{}
@@ -1003,6 +1040,85 @@ func (s *Service) classicalSelectCandidates(
 		})
 	}
 	return winners, "", nil
+}
+
+// applyInputFilter applies a single InputFilter to the candidate slice and
+// returns a filtered copy. Candidates with no ParsedComponents are passed
+// through unchanged (filters only operate on structured filenames).
+func applyInputFilter(
+	candidates []classicalCandidate,
+	f stations.InputFilter,
+	resolvedWinnerComponents map[string][]map[string]string,
+	logger zerolog.Logger,
+	runRef, inputKey string,
+) []classicalCandidate {
+	switch f.Rule {
+	case "filename_component":
+		return applyFilenameComponentFilter(candidates, f, resolvedWinnerComponents, logger, runRef, inputKey)
+	default:
+		// Unknown rules are a no-op at runtime (validation catches them at load
+		// time). Log a warning so operators can diagnose unexpected behaviour.
+		logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+			Str("input_key", inputKey).
+			Str("filter_rule", f.Rule).
+			Msg("matcher: unknown filter rule — skipped")
+		return candidates
+	}
+}
+
+// applyFilenameComponentFilter implements the "filename_component" filter rule.
+// It retains only candidates whose parsed filename component (named by
+// f.Component) equals the value from the first winner already resolved for
+// f.SourceFileType. When the source has not been resolved yet or produced no
+// winners, the filter is skipped and all candidates are returned unchanged.
+func applyFilenameComponentFilter(
+	candidates []classicalCandidate,
+	f stations.InputFilter,
+	resolvedWinnerComponents map[string][]map[string]string,
+	logger zerolog.Logger,
+	runRef, inputKey string,
+) []classicalCandidate {
+	componentKey := strings.ToLower(f.Component)
+	sourceWinners := resolvedWinnerComponents[f.SourceFileType]
+	if len(sourceWinners) == 0 {
+		logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+			Str("input_key", inputKey).
+			Str("filter_rule", "filename_component").
+			Str("source_file_type", f.SourceFileType).
+			Msg("matcher: source file type not yet resolved — filter skipped")
+		return candidates
+	}
+	wantValue, ok := sourceWinners[0][componentKey]
+	if !ok {
+		logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+			Str("input_key", inputKey).
+			Str("filter_rule", "filename_component").
+			Str("component", componentKey).
+			Str("source_file_type", f.SourceFileType).
+			Msg("matcher: component not found in source winner components — filter skipped")
+		return candidates
+	}
+	out := candidates[:0:0]
+	for _, c := range candidates {
+		if c.ParsedComponents == nil {
+			// Unstructured candidates (no parsed components) are passed through.
+			out = append(out, c)
+			continue
+		}
+		if c.ParsedComponents[componentKey] == wantValue {
+			out = append(out, c)
+		} else {
+			logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+				Str("input_key", inputKey).
+				Str("filter_rule", "filename_component").
+				Str("component", componentKey).
+				Str("want", wantValue).
+				Str("got", c.ParsedComponents[componentKey]).
+				Str("path", c.Path).
+				Msg("matcher: candidate rejected by filename_component filter")
+		}
+	}
+	return out
 }
 
 func (s *Service) effectiveInputFilenamePattern(input stations.InputDefinition) string {

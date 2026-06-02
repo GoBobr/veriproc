@@ -2,6 +2,7 @@ package runs
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,7 +94,7 @@ func TestClassicalMatcher_NewestGenTimeWins(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, reason, err := svc.classicalSelectCandidates("run-1",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestClassicalMatcher_DirectoryInput(t *testing.T) {
 	winners, _, err := svc.classicalSelectCandidates("run-dir",
 		stations.InputDefinition{FileType: fileType, Category: "product",
 			ObjectKind: store.ObjectKindDirectory, WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestClassicalMatcher_AllFoldersScanned(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-scan",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder1, folder2}, defaultTask())
+		[]string{folder1, folder2}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestClassicalMatcher_FolderPriorityTieBreak(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-prio",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder1, folder2}, defaultTask())
+		[]string{folder1, folder2}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestClassicalMatcher_DiscriminatorTieBreak(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-disc",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -245,7 +246,7 @@ func TestClassicalMatcher_MultipleIntervalGroups(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-multi",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, task)
+		[]string{folder}, task, nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -273,7 +274,7 @@ func TestClassicalMatcher_WrongFileTypeRejected(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, reason, err := svc.classicalSelectCandidates("run-type",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -291,7 +292,7 @@ func TestClassicalMatcher_NoFolders(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, reason, err := svc.classicalSelectCandidates("run-nof",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product"},
-		[]string{}, defaultTask())
+		[]string{}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -318,7 +319,7 @@ func TestClassicalMatcher_ChecksumSidecarIgnored(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-sha",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -360,7 +361,7 @@ func TestClassicalMatcher_PerInputPatternOverride(t *testing.T) {
 		Category:    "product",
 		WindowMatch: "overlaps",
 	}
-	winners, _, err := svc.classicalSelectCandidates("run-ovr", input, []string{folder}, defaultTask())
+	winners, _, err := svc.classicalSelectCandidates("run-ovr", input, []string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -381,7 +382,7 @@ func TestClassicalMatcher_FileTypeFromDeclaredInput(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-ft",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestClassicalMatcher_WindowPolicies(t *testing.T) {
 			svc := &Service{naming: structuredNaming()}
 			winners, _, err := svc.classicalSelectCandidates("run-wp",
 				stations.InputDefinition{FileType: fileType, Category: "product", WindowMatch: tt.policy},
-				[]string{folder}, task)
+				[]string{folder}, task, nil)
 			if err != nil {
 				t.Fatalf("classicalSelectCandidates: %v", err)
 			}
@@ -487,7 +488,7 @@ func TestClassicalMatcher_ObjectKindFilter(t *testing.T) {
 	winners, _, err := svc.classicalSelectCandidates("run-kind",
 		stations.InputDefinition{FileType: fileType, Category: "product",
 			ObjectKind: store.ObjectKindDirectory, WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -507,7 +508,7 @@ func TestClassicalMatcher_ManifestEntryFields(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-fields",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -541,7 +542,7 @@ func TestClassicalMatcher_DebugLogs(t *testing.T) {
 	svc := svcWithLog(structuredNaming(), &buf)
 	_, _, err := svc.classicalSelectCandidates("run-log",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder}, defaultTask())
+		[]string{folder}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -567,7 +568,7 @@ func TestClassicalMatcher_StableFallbackDeterministic(t *testing.T) {
 	svc := &Service{naming: structuredNaming()}
 	winners, _, err := svc.classicalSelectCandidates("run-stable",
 		stations.InputDefinition{FileType: "PRIMARY_INPUT___", Category: "product", WindowMatch: "overlaps"},
-		[]string{folder1, folder2}, defaultTask())
+		[]string{folder1, folder2}, defaultTask(), nil)
 	if err != nil {
 		t.Fatalf("classicalSelectCandidates: %v", err)
 	}
@@ -576,3 +577,293 @@ func TestClassicalMatcher_StableFallbackDeterministic(t *testing.T) {
 		t.Fatalf("winner = %+v, want %s (folder priority tie-break)", winners, f1path)
 	}
 }
+
+// ---------- filter tests ----------------------------------------------------
+
+// TestFilter_FilenameComponent_MatchesMissionID is the canonical test for the
+// "filename_component" filter rule, reproducing the MHF dual-satellite scenario
+// described in the feature specification. The aux folder contains two AUX files
+// for different MISSIONIDs (CDMA and CDMB). The source product (GEO) resolves
+// to a CDMA file. The filter must retain only the CDMA AUX file.
+func TestFilter_FilenameComponent_MatchesMissionID(t *testing.T) {
+	naming := structuredNaming()
+	svc := &Service{naming: naming}
+
+	geoFolder := t.TempDir()
+	auxFolder := t.TempDir()
+
+	// Source product: GEO, MISSION_ID = CDMA.
+	geoPath := writeFile(t, geoFolder,
+		"CDMA_GEO_INPUT________20250703T111839_20250703T112139_20250703T120000_v1.nc",
+		time.Time{})
+
+	// Two AUX candidates: same interval group but different MISSION_IDs.
+	cdmaAux := writeFile(t, auxFolder,
+		"CDMA_AUX_FILE_________20250703T090000_20250703T120000_20250703T120000_v1.nc",
+		time.Time{})
+	_ = writeFile(t, auxFolder,
+		"CDMB_AUX_FILE_________20250703T090000_20250703T120000_20250703T120000_v1.nc",
+		time.Time{})
+
+	task := &store.TaskRecord{
+		WindowStart: time.Date(2025, 7, 3, 11, 18, 39, 0, time.UTC),
+		WindowEnd:   time.Date(2025, 7, 3, 11, 21, 39, 0, time.UTC),
+	}
+
+	// Step 1: resolve GEO without any filter → builds resolved components map.
+	geoWinners, _, err := svc.classicalSelectCandidates("run-filter-mission",
+		stations.InputDefinition{FileType: "GEO_INPUT_______", Category: "product", WindowMatch: "overlaps"},
+		[]string{geoFolder}, task, nil)
+	if err != nil || len(geoWinners) != 1 || geoWinners[0].Path != geoPath {
+		t.Fatalf("GEO resolution failed: err=%v winners=%+v", err, geoWinners)
+	}
+
+	// Build the resolvedWinnerComponents map as resolveManifest would.
+	var geoComponents map[string]string
+	if err := json.Unmarshal([]byte(geoWinners[0].FilenameComponents), &geoComponents); err != nil {
+		t.Fatalf("unmarshal GEO components: %v", err)
+	}
+	resolved := map[string][]map[string]string{
+		"GEO_INPUT_______": {geoComponents},
+	}
+
+	// Step 2: resolve AUX with the filename_component filter.
+	auxInput := stations.InputDefinition{
+		FileType:    "AUX_FILE________",
+		Category:    "product",
+		WindowMatch: "overlaps",
+		Filters: []stations.InputFilter{
+			{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+		},
+	}
+	auxWinners, _, err := svc.classicalSelectCandidates("run-filter-mission", auxInput,
+		[]string{auxFolder}, task, resolved)
+	if err != nil {
+		t.Fatalf("AUX resolution error: %v", err)
+	}
+	if len(auxWinners) != 1 {
+		t.Fatalf("expected 1 AUX winner after filter, got %d: %+v", len(auxWinners), auxWinners)
+	}
+	if auxWinners[0].Path != cdmaAux {
+		t.Fatalf("AUX winner = %s, want CDMA aux %s", auxWinners[0].Path, cdmaAux)
+	}
+}
+
+// TestFilter_FilenameComponent_SourceNotYetResolved verifies that when the
+// source file type has not been resolved yet, the filter is skipped and all
+// candidates survive.
+func TestFilter_FilenameComponent_SourceNotYetResolved(t *testing.T) {
+	naming := structuredNaming()
+	svc := &Service{naming: naming}
+	auxFolder := t.TempDir()
+
+	// Two candidates with different MISSION_IDs and different validity intervals
+	// so both win their respective interval groups.
+	cdmaAux := writeFile(t, auxFolder,
+		"CDMA_AUX_FILE_________20250703T090000_20250703T112500_20250703T120000_v1.nc",
+		time.Time{})
+	cdmbAux := writeFile(t, auxFolder,
+		"CDMB_AUX_FILE_________20250703T111500_20250703T130000_20250703T130000_v1.nc",
+		time.Time{})
+
+	task := &store.TaskRecord{
+		WindowStart: time.Date(2025, 7, 3, 11, 18, 39, 0, time.UTC),
+		WindowEnd:   time.Date(2025, 7, 3, 11, 21, 39, 0, time.UTC),
+	}
+
+	auxInput := stations.InputDefinition{
+		FileType:    "AUX_FILE________",
+		Category:    "product",
+		WindowMatch: "overlaps",
+		Filters: []stations.InputFilter{
+			{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+		},
+	}
+	// Pass an empty resolved map — source not yet resolved → filter skipped.
+	auxWinners, _, err := svc.classicalSelectCandidates("run-filter-skip", auxInput,
+		[]string{auxFolder}, task, map[string][]map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	paths := map[string]bool{}
+	for _, w := range auxWinners {
+		paths[w.Path] = true
+	}
+	if !paths[cdmaAux] || !paths[cdmbAux] {
+		t.Fatalf("expected both candidates to survive when source unresolved; got %v", paths)
+	}
+}
+
+// TestFilter_FilenameComponent_AllCandidatesRejected verifies that when no
+// candidate matches the filter value the matcher returns no winners and a
+// descriptive reason.
+func TestFilter_FilenameComponent_AllCandidatesRejected(t *testing.T) {
+	naming := structuredNaming()
+	svc := &Service{naming: naming}
+	auxFolder := t.TempDir()
+
+	// Only CDMB candidate in folder; source winner is CDMA.
+	_ = writeFile(t, auxFolder,
+		"CDMB_AUX_FILE_________20250703T090000_20250703T120000_20250703T120000_v1.nc",
+		time.Time{})
+
+	task := &store.TaskRecord{
+		WindowStart: time.Date(2025, 7, 3, 11, 18, 39, 0, time.UTC),
+		WindowEnd:   time.Date(2025, 7, 3, 11, 21, 39, 0, time.UTC),
+	}
+
+	resolved := map[string][]map[string]string{
+		"GEO_INPUT_______": {{"mission_id": "CDMA"}},
+	}
+	auxInput := stations.InputDefinition{
+		FileType:    "AUX_FILE________",
+		Category:    "product",
+		WindowMatch: "overlaps",
+		Filters: []stations.InputFilter{
+			{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+		},
+	}
+	winners, reason, err := svc.classicalSelectCandidates("run-filter-all-rejected", auxInput,
+		[]string{auxFolder}, task, resolved)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(winners) != 0 {
+		t.Fatalf("expected no winners, got %+v", winners)
+	}
+	if !strings.Contains(reason, "filter") {
+		t.Fatalf("missing reason should mention 'filter', got %q", reason)
+	}
+}
+
+// TestFilter_MultipleFilters_AllMustPass verifies that when two filter rules
+// are declared, a candidate must satisfy both (AND semantics).
+func TestFilter_MultipleFilters_AllMustPass(t *testing.T) {
+	naming := structuredNaming()
+	svc := &Service{naming: naming}
+	auxFolder := t.TempDir()
+
+	// Only candidate matching BOTH CDMA mission and a specific generation time suffix.
+	goodPath := writeFile(t, auxFolder,
+		"CDMA_AUX_FILE_________20250703T090000_20250703T120000_20250703T120000_v1.nc",
+		time.Time{})
+	// Same mission ID but different gen time (v2 suffix) — also written to test
+	// that another "mission" filter pass does not prevent gen-time filter.
+	_ = writeFile(t, auxFolder,
+		"CDMB_AUX_FILE_________20250703T090000_20250703T120000_20250703T120000_v1.nc",
+		time.Time{})
+
+	task := &store.TaskRecord{
+		WindowStart: time.Date(2025, 7, 3, 11, 18, 39, 0, time.UTC),
+		WindowEnd:   time.Date(2025, 7, 3, 11, 21, 39, 0, time.UTC),
+	}
+
+	resolved := map[string][]map[string]string{
+		"GEO_INPUT_______": {{"mission_id": "CDMA"}},
+	}
+	auxInput := stations.InputDefinition{
+		FileType:    "AUX_FILE________",
+		Category:    "product",
+		WindowMatch: "overlaps",
+		Filters: []stations.InputFilter{
+			{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+		},
+	}
+	winners, _, err := svc.classicalSelectCandidates("run-filter-two", auxInput,
+		[]string{auxFolder}, task, resolved)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(winners) != 1 || winners[0].Path != goodPath {
+		t.Fatalf("expected winner %s, got %+v", goodPath, winners)
+	}
+}
+
+// ---------- loader filter validation tests ----------------------------------
+
+// TestLoaderValidation_Filter verifies that the station loader accepts valid
+// filter rules and rejects invalid ones.
+func TestLoaderValidation_Filter(t *testing.T) {
+	boolTrue := true
+	baseInput := func() stations.InputDefinition {
+		return stations.InputDefinition{
+			FileType: "AUX_FILE________",
+			Category: "aux",
+		}
+	}
+
+	tests := []struct {
+		name    string
+		filters []stations.InputFilter
+		wantErr bool
+	}{
+		{
+			name:    "no filters is valid",
+			filters: nil,
+			wantErr: false,
+		},
+		{
+			name: "valid filename_component filter",
+			filters: []stations.InputFilter{
+				{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing component",
+			filters: []stations.InputFilter{
+				{Rule: "filename_component", SourceFileType: "GEO_INPUT_______"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing source_file_type",
+			filters: []stations.InputFilter{
+				{Rule: "filename_component", Component: "MISSION_ID"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "self-referential source_file_type",
+			filters: []stations.InputFilter{
+				{Rule: "filename_component", Component: "MISSION_ID", SourceFileType: "AUX_FILE________"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty rule",
+			filters: []stations.InputFilter{
+				{Component: "MISSION_ID", SourceFileType: "GEO_INPUT_______"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unknown rule",
+			filters: []stations.InputFilter{
+				{Rule: "unsupported_rule"},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inp := baseInput()
+			inp.Filters = tt.filters
+			inp.Mandatory = &boolTrue
+			def := stations.Definition{
+				StationID:     "test-station",
+				StationName:   "Test Station",
+				SchemaVersion: stations.DefaultSchemaVersion,
+				Inputs:        []stations.InputDefinition{inp},
+			}
+			_, err := stations.SpecFromDefinition(def)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected validation error, got none")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+

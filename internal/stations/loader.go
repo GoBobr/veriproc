@@ -108,19 +108,37 @@ type JobOrderConfig struct {
 	Meta *bool `yaml:"meta,omitempty" json:"meta,omitempty"`
 }
 
+// InputFilter declares a single filtering rule applied to input candidates
+// during manifest resolution. Multiple rules in an input's filter list are
+// applied in order and all must pass (AND semantics).
+//
+// Supported rules:
+//
+//	"filename_component" – Keeps only candidates whose parsed filename
+//	component named by Component equals the value extracted from the first
+//	winner already resolved for SourceFileType. The component name is
+//	case-insensitive (matched as lowercase). When the source file type has not
+//	been resolved yet, or produced no winners, the filter is skipped.
+type InputFilter struct {
+	Rule           string `yaml:"rule" json:"rule"`
+	Component      string `yaml:"component,omitempty" json:"component,omitempty"`
+	SourceFileType string `yaml:"source_file_type,omitempty" json:"source_file_type,omitempty"`
+}
+
 type InputDefinition struct {
-	FileType        string `yaml:"file_type" json:"file_type"`
-	Category        string `yaml:"category" json:"category"`
-	ObjectKind      string `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
-	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
-	WindowMatch     string `yaml:"window_match,omitempty" json:"window_match,omitempty"`
-	Margins         []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
+	FileType        string        `yaml:"file_type" json:"file_type"`
+	Category        string        `yaml:"category" json:"category"`
+	ObjectKind      string        `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
+	Pattern         string        `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	FilenamePattern string        `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
+	WindowMatch     string        `yaml:"window_match,omitempty" json:"window_match,omitempty"`
+	Margins         []int         `yaml:"margins,omitempty" json:"margins,omitempty"`
 	// Mandatory is a pointer so the loader can distinguish an explicit
 	// "mandatory: false" (non-blocking input) from an omitted field. It is
 	// normalized into Optional at load time; the matcher reads Optional only.
-	Mandatory *bool `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
-	Optional  bool  `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Mandatory *bool         `yaml:"mandatory,omitempty" json:"mandatory,omitempty"`
+	Optional  bool          `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Filters   []InputFilter `yaml:"filter,omitempty" json:"filter,omitempty"`
 }
 
 type OutputDefinition struct {
@@ -531,6 +549,11 @@ func validateDefinition(def Definition) error {
 		if !validObjectKind(input.ObjectKind) {
 			return fmt.Errorf("input %s object_kind must be regular_file or directory", input.FileType)
 		}
+		for fi, f := range input.Filters {
+			if err := validateInputFilter(input.FileType, fi, f); err != nil {
+				return err
+			}
+		}
 	}
 	for _, out := range def.Outputs {
 		if out.FileType == "" {
@@ -624,3 +647,25 @@ func validObjectKind(kind string) bool {
 		return false
 	}
 }
+
+// validateInputFilter validates a single InputFilter entry.
+func validateInputFilter(fileType string, idx int, f InputFilter) error {
+	switch f.Rule {
+	case "filename_component":
+		if f.Component == "" {
+			return fmt.Errorf("input %s filter[%d]: rule %q requires component", fileType, idx, f.Rule)
+		}
+		if f.SourceFileType == "" {
+			return fmt.Errorf("input %s filter[%d]: rule %q requires source_file_type", fileType, idx, f.Rule)
+		}
+		if f.SourceFileType == fileType {
+			return fmt.Errorf("input %s filter[%d]: source_file_type must not refer to its own file_type", fileType, idx)
+		}
+	case "":
+		return fmt.Errorf("input %s filter[%d]: rule must not be empty", fileType, idx)
+	default:
+		return fmt.Errorf("input %s filter[%d]: unknown rule %q", fileType, idx, f.Rule)
+	}
+	return nil
+}
+

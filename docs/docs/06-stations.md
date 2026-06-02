@@ -100,6 +100,7 @@ downstream:
 | `inputs[]` | `margins` | `[before, after]` seconds widening the match window. |
 | `inputs[]` | `mandatory` | If true, the run fails when no match is found. |
 | `inputs[]` | `object_kind` | `file` (default) or `directory`. |
+| `inputs[]` | `filter` | Optional list of filter rules applied after window matching (see below). |
 | `outputs[]` | `file_type` | Declared output type, validated after execution. |
 | `outputs[]` | `mandatory` | If true, the run fails if the output is missing. |
 | `outputs[]` | `publish` | Optional: `rolling_archive` target and `mode` (`copy`/`move`/`link`). |
@@ -117,6 +118,48 @@ downstream:
 Selection uses the classical filename pattern from `naming.filenames` (the `<TOKEN>`
 template with `?`/`*` wildcards) to parse start/end times from candidate filenames, then
 applies the window rule and the category folder order. Earlier folders in the category win.
+
+### Input candidate filters
+
+After window matching, each input may declare a `filter:` list. Filters are applied in
+order; a candidate must pass every rule to survive.
+
+**`filename_component` rule** — keeps only candidates whose parsed value for the named
+component matches the same component's value in the first already-resolved winner of a
+`source_file_type` declared earlier in the same input list:
+
+```yaml
+inputs:
+  - file_type: CO2_1A_GEO______     # resolved first
+    category: product
+    window_match: overlaps
+    mandatory: true
+
+  - file_type: AX_____MHF____AX
+    category: aux
+    window_match: overlaps
+    mandatory: true
+    filter:
+      - rule: filename_component
+        component: MISSION_ID        # keep only candidates whose MISSION_ID ...
+        source_file_type: CO2_1A_GEO______  # ... matches the GEO winner's MISSION_ID
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `rule` | yes | Filter rule name. Currently only `filename_component` is supported. |
+| `component` | for `filename_component` | Parsed filename component to compare (e.g. `MISSION_ID`). Case-insensitive. |
+| `source_file_type` | for `filename_component` | `file_type` of the already-resolved input to take the reference value from. Must not be the same `file_type` as the filtered input itself. |
+
+**Behaviour details:**
+
+- Filters are applied _after_ window matching and _before_ interval grouping and winner
+  selection.
+- If the `source_file_type` has not yet been resolved at the time the filter runs (e.g.
+  it appears later in the `inputs` list), the filter is silently skipped and all
+  candidates survive.
+- If every candidate is rejected by a filter rule, the input resolves to no winners and
+  the reason message names the rule. A mandatory input then fails the run in `preparing`.
 
 ## 6.3 Context references
 
