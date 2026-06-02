@@ -1243,3 +1243,90 @@ func TestRuns_JobOrderFormatNone(t *testing.T) {
 		t.Errorf("expected no joborder artifact, got %d", len(arts))
 	}
 }
+
+// TestRuns_JobOrderOutputDirectory verifies that a station-level
+// directory field on an output definition is resolved via context references
+// and written into the joborder. The run must also complete successfully,
+// proving that validateOutputs looks in the custom directory.
+func TestRuns_JobOrderOutputDirectory(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open("sqlite://" + filepath.Join(dir, "jo-outdir.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := store.Migrate(ctx, st); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Script writes the expected output to the custom output2/ directory.
+	script := writeExecutable(t, dir, "jo-outdir.sh",
+		"#!/bin/sh\nset -eu\nmkdir -p \"$VERIPROC_WORKING_ROOT/output2\"\ntouch \"$VERIPROC_WORKING_ROOT/output2/result.dat\"\n")
+	reg := stations.NewRegistry()
+	if err := reg.Seed(ctx, st, stations.Spec{
+		StationID:     "JO-OUTDIR",
+		StationName:   "JobOrder OutputDir",
+		ContentHash:   "sha256:jo-outdir",
+		SchemaVersion: "veriproc.station/v1",
+		Execution:     stations.Execution{Executable: script},
+		Outputs: []stations.OutputDefinition{{
+			Name:      "result.dat",
+			FileType:  "OUTDIR_RESULT",
+			Required:  true,
+			Directory: "<working_root>/output2",
+		}},
+		JobOrder: stations.JobOrderConfig{Paths: "absolute"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	tsvc := tasks.NewService(st, reg, nil, func() string { return "aa1122" })
+	runN := 0
+	rsvc := runs.NewService(runs.Config{
+		Store:           st,
+		Executors:       executor.NewSingleExecutorRegistry(executor.NewLocalExecutor(nil)),
+		Resolver:        reg,
+		WorkingRootBase: filepath.Join(dir, "work"),
+		IDFactory:       func() string { runN++; return "run-outdir-" + strconv.Itoa(runN) },
+	})
+	disp := runs.NewDispatcher(rsvc, time.Millisecond, testLogger())
+	res, err := tsvc.Submit(ctx, tasks.SubmitInput{
+		Destination: tasks.Destination{StationID: "JO-OUTDIR"},
+		Window:      tasks.Window{Start: time.Now().UTC(), End: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	waitForTaskState(t, ctx, st, disp, res.Task.TaskID, "completed")
+	task, _ := st.Tasks().Get(ctx, res.Task.TaskID)
+	run, _ := st.Runs().Get(ctx, task.CanonicalRunID)
+	// Parse the written joborder.
+	raw, err := os.ReadFile(filepath.Join(run.WorkingRoot, "joborder.yaml"))
+	if err != nil {
+		t.Fatalf("joborder.yaml not found: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("invalid YAML: %v", err)
+	}
+	outs, ok := doc["outputs"].([]any)
+	if !ok || len(outs) == 0 {
+		t.Fatalf("outputs missing or empty: %#v", doc)
+	}
+	outMap, ok := outs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("outputs[0] not a map: %T", outs[0])
+	}
+	wantDir := filepath.ToSlash(filepath.Join(run.WorkingRoot, "output2"))
+	if outMap["directory"] != wantDir {
+		t.Errorf("outputs[0].directory = %v, want %s", outMap["directory"], wantDir)
+	}
+	// Artifact must point at the file in the custom directory.
+	arts, _ := st.Artifacts().ListByRun(ctx, run.RunID, "output")
+	if len(arts) == 0 {
+		t.Fatal("no output artifacts recorded")
+	}
+	wantPath := filepath.Join(run.WorkingRoot, "output2", "result.dat")
+	if arts[0].Path != wantPath {
+		t.Errorf("artifact path = %s, want %s", arts[0].Path, wantPath)
+	}
+}

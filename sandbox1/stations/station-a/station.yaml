@@ -255,6 +255,18 @@ outputs:
     # write a variable number of output files per run.
     # multiple: false
 
+    # Custom directory where the workload writes this output. Supports context
+    # references resolved against the standard station run context. When omitted,
+    # defaults to <working_root>/output/ (the standard output directory).
+    # The resolved path is written into the job order under outputs[].directory
+    # and is also the directory the daemon scans during output validation, so the
+    # workload must create and populate it.
+    #
+    # Examples:
+    #   directory: <working_root>/output2/          # second output type in its own sub-dir
+    #   directory: <working_root>/output/<task_id>  # per-task sub-directory
+    # directory: <working_root>/output2/
+
     # Publication into a rolling archive after run finalisation.
     # Omit the publish block entirely to skip publication for this output.
     publish:

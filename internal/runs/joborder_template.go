@@ -107,16 +107,12 @@ func buildJobOrderTemplateContext(run *store.RunRecord, task *store.TaskRecord, 
 			Present:    entry.Present,
 		})
 	}
-	outputDir := filepath.ToSlash(filepath.Join(run.WorkingRoot, "output"))
-	if !absolutePaths {
-		outputDir = "./output"
-	}
 	outDocs := make([]jobOrderTemplateOutput, 0, len(outputs))
 	for _, out := range outputs {
 		outDocs = append(outDocs, jobOrderTemplateOutput{
 			FileType:   out.FileType,
 			Name:       out.Name,
-			Directory:  outputDir,
+			Directory:  filepath.ToSlash(out.Directory),
 			ObjectKind: out.ObjectKind,
 			Required:   out.Required,
 		})

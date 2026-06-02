@@ -166,8 +166,13 @@ type OutputDefinition struct {
 	// Pattern glob) to be captured as individual output artifacts instead of
 	// only the newest single match. Use for fan-out stations that write a
 	// variable number of output files per run.
-	Multiple bool           `yaml:"multiple,omitempty" json:"multiple,omitempty"`
-	Publish  *OutputPublish `yaml:"publish,omitempty" json:"publish,omitempty"`
+	Multiple bool `yaml:"multiple,omitempty" json:"multiple,omitempty"`
+	// Directory overrides the default output directory written into the
+	// joborder. Supports context references (e.g. <working_root>/output2/).
+	// When empty the standard <working_root>/output directory is used.
+	// Validation also looks in this directory for produced files.
+	Directory string         `yaml:"directory,omitempty" json:"directory,omitempty"`
+	Publish   *OutputPublish `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
 
 // OutputPublish declares that a validated output should be published to a

@@ -341,6 +341,13 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 		return ctx
 	}
 
+	// Pre-resolve output directories so both renderers can use out.Directory directly.
+	absolutePaths := effectivePathMode == "absolute"
+	resolvedOutputs, err := resolveOutputDirs(outputs, run.WorkingRoot, absolutePaths, buildCtx())
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve output directories: %w", err)
+	}
+
 	var body []byte
 	if joCfg.Renderer == "template" {
 		runCtx := buildCtx()
@@ -349,13 +356,13 @@ func (s *Service) writeJobOrder(ctx context.Context, run *store.RunRecord) (stri
 			return "", nil, fmt.Errorf("resolve joborder.params: %w", rerr)
 		}
 		joCfg.Params = resolvedParams
-		body, err = renderTemplateJobOrder(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), joCfg, effectivePathMode, prepVars)
+		body, err = renderTemplateJobOrder(run, task, rev, manifest, resolvedOutputs, filepath.ToSlash(manifestPath), joCfg, effectivePathMode, prepVars)
 		if err != nil {
 			return "", nil, fmt.Errorf("render template joborder: %w", err)
 		}
 	} else {
 		// Build the base joborder document.
-		doc := jobOrderDocument(run, task, rev, manifest, outputs, filepath.ToSlash(manifestPath), s.generators, effectivePathMode)
+		doc := jobOrderDocument(run, task, rev, manifest, resolvedOutputs, filepath.ToSlash(manifestPath), s.generators, effectivePathMode)
 
 		// Drop veriproc_meta when the station explicitly sets meta: false.
 		if joCfg.Meta != nil && !*joCfg.Meta {
@@ -410,9 +417,17 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 	if len(outputs) == 0 {
 		return nil, nil
 	}
-	dir := filepath.Join(run.WorkingRoot, "output")
+	task, err := s.store.Tasks().Get(ctx, run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	runCtx := s.buildRunContext(run, task, rev, "")
 	arts := make([]*store.ArtifactRecord, 0, len(outputs))
 	for _, out := range outputs {
+		dir, err := resolveOutputAbsDir(out, run.WorkingRoot, runCtx)
+		if err != nil {
+			return nil, err
+		}
 		if out.Multiple {
 			// Fan-out outputs: collect all files matching the pattern.
 			paths, merr := s.resolveAllOutputPaths(dir, out)
@@ -720,6 +735,53 @@ func declaredOutputs(rev *store.StationRevisionRecord) ([]stations.OutputDefinit
 	return outputs, nil
 }
 
+// resolveOutputDirs returns a copy of outputs with each Directory resolved via
+// the station run context. Entries with an empty Directory get the default
+// ("./output" or "<workingRoot>/output" depending on absolutePaths).
+// The resolved value replaces the raw context-reference string so callers can
+// use out.Directory directly without further resolution.
+func resolveOutputDirs(outputs []stations.OutputDefinition, workingRoot string, absolutePaths bool, runCtx map[string]any) ([]stations.OutputDefinition, error) {
+	defaultDir := "./output"
+	if absolutePaths {
+		defaultDir = filepath.Join(workingRoot, "output")
+	}
+	resolved := make([]stations.OutputDefinition, len(outputs))
+	copy(resolved, outputs)
+	for i, out := range resolved {
+		if out.Directory == "" {
+			resolved[i].Directory = defaultDir
+			continue
+		}
+		v, err := stations.ResolveString(out.Directory, runCtx)
+		if err != nil {
+			return nil, fmt.Errorf("output[%s] directory: %w", out.FileType, err)
+		}
+		sv, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("output[%s] directory: resolved to non-string %T", out.FileType, v)
+		}
+		resolved[i].Directory = sv
+	}
+	return resolved, nil
+}
+
+// resolveOutputAbsDir returns the absolute directory for out, always using
+// absolute paths. Used during run finalization (validateOutputs).
+func resolveOutputAbsDir(out stations.OutputDefinition, workingRoot string, runCtx map[string]any) (string, error) {
+	if out.Directory == "" {
+		return filepath.Join(workingRoot, "output"), nil
+	}
+	v, err := stations.ResolveString(out.Directory, runCtx)
+	if err != nil {
+		return "", fmt.Errorf("output %q directory: %w", out.FileType, err)
+	}
+	sv, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("output %q directory: resolved to non-string %T", out.FileType, v)
+	}
+	return filepath.FromSlash(sv), nil
+}
+
 func (s *Service) writeManifestExport(run *store.RunRecord, manifest *store.ManifestRecord) (string, error) {
 	path := filepath.Join(run.WorkingRoot, "manifest", "resolved-inputs.yaml")
 	type exportEntry struct {
@@ -802,13 +864,9 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 			"files":     inputMap[key],
 		})
 	}
-	outputDir := filepath.Join(run.WorkingRoot, "output")
-	if !absolutePaths {
-		outputDir = "./output"
-	}
 	outDocs := make([]map[string]any, 0, len(outputs))
 	for _, out := range outputs {
-		outDocs = append(outDocs, map[string]any{"file_type": out.FileType, "directory": outputDir})
+		outDocs = append(outDocs, map[string]any{"file_type": out.FileType, "directory": filepath.ToSlash(out.Directory)})
 	}
 	generator := map[string]any{"type": "system-default", "version": "local-mvp"}
 	if v := generators["job_order"]; v != "" {

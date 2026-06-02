@@ -105,6 +105,7 @@ downstream:
 | `inputs[]` | `filter` | Optional list of filter rules applied after window matching (see below). |
 | `outputs[]` | `file_type` | Declared output type, validated after execution. |
 | `outputs[]` | `mandatory` | If true, the run fails if the output is missing. |
+| `outputs[]` | `directory` | Custom directory where the workload writes this output. Supports context references (e.g. `<working_root>/output2/`). Defaults to `<working_root>/output/`. The daemon resolves this path, writes it into the `outputs[].directory` field of the job order, and looks in this directory during output validation. |
 | `outputs[]` | `publish` | Optional: `rolling_archive` target and `mode` (`copy`/`move`/`link`). |
 | `downstream[]` | `station_id` | Stations to route to on canonical success. |
 
@@ -326,7 +327,7 @@ When the job runs, its working root contains:
 <working-root>/
   joborder.yaml          # generated job order (name from joborder.name)
   input/                 # symlinks to all resolved input objects
-  output/                # algorithm writes outputs here
+  output/                # default directory for algorithm outputs
   logs/                  # stdout/stderr and run logs
   manifest.*             # frozen input selection
   task-out.*             # optional downstream routing descriptor written by the algorithm
@@ -334,6 +335,35 @@ When the job runs, its working root contains:
 
 The algorithm reads its inputs through `input/`, writes outputs and logs within the
 working root, and may emit a task-output descriptor to drive downstream routing.
+
+### Custom output directories
+
+By default all outputs are expected in `<working-root>/output/` and the job order carries
+that path. When an output needs a different directory (e.g. a second output type that must
+land in a distinct sub-folder) you can declare a `directory` field on the output:
+
+```yaml
+outputs:
+  - file_type: GHG_2__REMOTAP__
+    mandatory: true
+    directory: <working_root>/output2/
+    publish:
+      rolling_archive: rolling-eucent
+      mode: copy
+```
+
+The value is resolved against the station context (so `<working_root>` becomes the
+run's absolute working-root path), written into the job order under `outputs[].directory`,
+and used by the daemon when validating produced files after execution. The workload must
+therefore create the directory itself and write its output there — for example:
+
+```sh
+mkdir -p "$VERIPROC_WORKING_ROOT/output2"
+cp result.nc "$VERIPROC_WORKING_ROOT/output2/"
+```
+
+Any context reference accepted by `joborder.include` can be used in `directory`,
+including `<instance_root>`, `<task_id>`, and instance-level `definitions` keys.
 
 ## 6.6 Downstream routing
 
