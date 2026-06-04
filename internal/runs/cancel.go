@@ -112,6 +112,7 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 					if merr := s.store.Runs().MarkCancelled(ctx, runID, now); merr != nil && !errors.Is(merr, store.ErrInvalidTransition) {
 						return nil, merr
 					}
+					_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
 					out.CancellationComplete = true
 				}
 			}
@@ -122,6 +123,7 @@ func (s *Service) Cancel(ctx context.Context, runID string) (*CancelOutcome, err
 		if err := s.store.Runs().MarkCancelled(ctx, runID, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
 			return nil, err
 		}
+		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
 		out.CancellationComplete = true
 	}
 

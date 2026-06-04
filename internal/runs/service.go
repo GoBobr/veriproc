@@ -525,8 +525,9 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		if reason == "" {
 			reason = "executor reported failure"
 		}
-		if err := s.store.Runs().MarkFailed(ctx, runID, reason, now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
-			return nil, err
+		markErr := s.store.Runs().MarkFailed(ctx, runID, reason, now)
+		if markErr != nil && !errors.Is(markErr, store.ErrInvalidTransition) {
+			return nil, markErr
 		}
 		ev := s.logger.Info().Str("run_ref", runRef).Str("status", "failed").Str("reason", reason).Str("executor", job.Executor)
 		if obs.Node != "" {
@@ -540,9 +541,17 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 				_ = s.store.Artifacts().Insert(ctx, logArt)
 			}
 		}
+		// Only contribute to join downstream on the actual state transition (not
+		// on repeated poll ticks where the run is already failed).
+		if markErr == nil {
+			if err := s.contributeToJoinDownstream(ctx, run, now); err != nil {
+				s.logger.Warn().Err(err).Str("run_ref", runRef).Msg("join downstream contribution after run failure")
+			}
+		}
 	case executor.StatusCancelled:
-		if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
-			return nil, err
+		markErr := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now)
+		if markErr != nil && !errors.Is(markErr, store.ErrInvalidTransition) {
+			return nil, markErr
 		}
 		ev := s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Str("executor", job.Executor)
 		if obs.Node != "" {
@@ -550,15 +559,26 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 		}
 		ev.Msg("job finished")
 		_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
+		if markErr == nil {
+			if err := s.contributeToJoinDownstream(ctx, run, now); err != nil {
+				s.logger.Warn().Err(err).Str("run_ref", runRef).Msg("join downstream contribution after run cancellation")
+			}
+		}
 	case executor.StatusUnknown:
 		// Safety net: if sacct returns an unrecognised state but cancellation was
 		// requested, treat the job as cancelled so the run doesn't stay stuck.
 		if run.CancellationRequestedAt.Valid {
-			if err := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now); err != nil && !errors.Is(err, store.ErrInvalidTransition) {
-				return nil, err
+			markErr := s.store.Runs().MarkFailed(ctx, runID, "cancelled", now)
+			if markErr != nil && !errors.Is(markErr, store.ErrInvalidTransition) {
+				return nil, markErr
 			}
 			s.logger.Info().Str("run_ref", runRef).Str("status", "cancelled").Str("executor", job.Executor).Msg("job finished (unknown state, cancellation requested)")
 			_ = s.store.Tasks().SetState(ctx, run.TaskID, "failed", "cancelled")
+			if markErr == nil {
+				if err := s.contributeToJoinDownstream(ctx, run, now); err != nil {
+					s.logger.Warn().Err(err).Str("run_ref", runRef).Msg("join downstream contribution after run cancellation")
+				}
+			}
 		}
 	}
 	return s.store.Runs().Get(ctx, runID)
