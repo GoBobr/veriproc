@@ -47,7 +47,73 @@ A later source overrides an earlier one only when it supplies a non-empty value.
 | `VERIPROC_STATION_CONFIG_ROOT` | `storage.station_config_root` |
 | `VERIPROC_EXECUTOR` | `executor.type` (legacy single-executor form) |
 
-## 5.2 Top-level structure
+## 5.2 Environment variable expansion in YAML files
+
+Any value in the instance configuration file — and in every `station.yaml` and its
+associated job-order template file — may reference an OS / container environment variable
+using `${VAR}` or `$VAR` syntax.  The daemon expands all references **before** the YAML
+is parsed, so substitution works in any position: paths, DSNs, archive roots, plain
+scalars, etc.
+
+```yaml
+# instance.yaml — all ${…} references are replaced at startup
+db:
+  dsn: sqlite:///vpdata/${MY_INSTANCE_SUBDIR}/veriproc.db
+
+storage:
+  working_root_base: ${MY_WORKING_ROOT_BASE}
+  station_config_root: ${MY_STATION_CONFIG_ROOT}
+
+rolling_archives:
+  aux:
+    path: ${MY_AUX_DIR}
+  rolling-eucent:
+    path: ${MY_ROLLING_ARCHIVE}
+```
+
+**Rules:**
+
+| Rule | Detail |
+|------|--------|
+| Undefined → fatal error | Every referenced variable must exist in the process environment. An undefined variable causes a startup failure that lists all missing names. |
+| `$$` → literal `$` | Use `$$` to embed a literal dollar sign in a YAML value. |
+| Syntax | Both `${VAR}` and `$VAR` are accepted (standard shell expansion rules). |
+| Station configs included | Expansion is applied to each `station.yaml` and its job-order template file using the same environment snapshot. |
+| No interference with `<key>` | The `<key>` / `<key.subkey>` station context-reference syntax is resolved at run time, after YAML parsing — it is unaffected by env-var expansion. |
+
+**Typical Docker Compose usage:**
+
+```yaml
+# docker-compose.yaml
+services:
+  veriprocd:
+    environment:
+      MY_DATA_ROOT:    /mnt/data
+      MY_AUX_DIR:      /mnt/data/aux.v2
+      MY_PRODUCT_DIR:  /mnt/data/products/EUcent/v3
+      MY_ROLLING_ARCHIVE: /mnt/data/rolling
+      MY_WORKING_ROOT_BASE: /mnt/data/working-roots
+      MY_STATION_CONFIG_ROOT: /config/stations
+```
+
+```yaml
+# instance.yaml  (mounted into the container)
+rolling_archives:
+  aux:
+    path: ${MY_AUX_DIR}
+    mode: read_only
+    retention: keep-fixtures
+  prods:
+    path: ${MY_PRODUCT_DIR}
+    mode: read_only
+    retention: keep-fixtures
+  rolling:
+    path: ${MY_ROLLING_ARCHIVE}
+    mode: read_write
+    retention: keep-fixtures
+```
+
+## 5.3 Top-level structure
 
 ```yaml
 schema_version: veriproc.instance/v1   # config schema identifier
@@ -68,7 +134,7 @@ executor:    { … }                     # executor registry
 generators:  { … }                     # job-order / working-root generator identity
 ```
 
-## 5.3 `http` — REST server
+## 5.4 `http` — REST server
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -87,7 +153,7 @@ http:
   shutdown_timeout: 15s
 ```
 
-## 5.4 `log` — logging
+## 5.5 `log` — logging
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -97,7 +163,7 @@ http:
 Console format honors `NO_COLOR` and detects whether the output is a TTY. Requests carry a
 correlation ID (`X-Correlation-ID`) that appears in log lines.
 
-## 5.5 `db` — state store
+## 5.6 `db` — state store
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -113,7 +179,7 @@ db:
 
 In Docker, point the path at a writable volume, e.g. `sqlite:///data/veriproc.db`.
 
-## 5.6 `storage` — filesystem roots
+## 5.7 `storage` — filesystem roots
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -128,7 +194,7 @@ storage:
   station_order: [scen-clim, clim-l2, scene-l2]
 ```
 
-## 5.7 `naming` — identity & path policy
+## 5.8 `naming` — identity & path policy
 
 Controls how task IDs, working-root paths, and filenames are generated.
 
@@ -184,7 +250,7 @@ The pattern uses `<TOKEN>` placeholders, `?` for single-character wildcards, and
 trailing wildcards. See [Stations & Job Orders](06-stations.md) for how this drives input
 selection.
 
-## 5.8 `integrity` — checksum & metadata policy
+## 5.9 `integrity` — checksum & metadata policy
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
@@ -193,7 +259,7 @@ selection.
 | `record_size_when_available` | bool | `true` | Persist file sizes when known. |
 | `record_mtime_when_available` | bool | `true` | Persist modification times when known. |
 
-## 5.9 `definitions` — station context
+## 5.10 `definitions` — station context
 
 An arbitrary nested YAML mapping injected at the root of the **station context-reference
 namespace**. Stations reference these values with `<name>` / `<name.path>` syntax (see
@@ -215,7 +281,7 @@ definitions:
 A station could then use `<facility.processing_center>` or `<generic_mode>` in its
 arguments or job order.
 
-## 5.10 `execution_env` — extra job environment
+## 5.11 `execution_env` — extra job environment
 
 Custom environment variables exported into every job process, **in addition** to the
 reserved `VERIPROC_*` runtime variables (see [Executors](07-executors.md)).
@@ -231,7 +297,7 @@ execution_env:
   PROCESSING_MODE: NRT
 ```
 
-## 5.11 `facility` — facility metadata
+## 5.12 `facility` — facility metadata
 
 A flat string map of facility metadata available to stations and audit records.
 
@@ -241,7 +307,7 @@ facility:
   environment: OPE
 ```
 
-## 5.12 `rolling_archives` — named archive roots
+## 5.13 `rolling_archives` — named archive roots
 
 A map of archive name → definition. Stations and product categories reference archives by
 name with the `rolling:<name>` selector.
@@ -264,7 +330,7 @@ rolling_archives:
     mode: read_write
 ```
 
-## 5.13 `product_categories` — input search lists
+## 5.14 `product_categories` — input search lists
 
 An **ordered** list of categories, each naming an ordered list of folders to search when
 resolving inputs. Folders reference rolling archives via `rolling:<name>`. Order matters:
@@ -283,7 +349,7 @@ product_categories:
 
 A station input declares its category; resolution scans that category's folders in order.
 
-## 5.14 `executor` — execution backend(s)
+## 5.15 `executor` — execution backend(s)
 
 Two equivalent forms are accepted.
 
@@ -341,7 +407,7 @@ executor:
 
 See [Executors](07-executors.md) for behavior, the runtime environment, and SLURM details.
 
-## 5.15 `generators` — job-order & working-root identity
+## 5.16 `generators` — job-order & working-root identity
 
 Records the generator identity used to build job orders and working roots, for audit and
 for inclusion in fingerprints when output-affecting.
@@ -365,7 +431,7 @@ generators:
     version: local-mvp-v1
 ```
 
-## 5.16 Complete annotated example
+## 5.17 Complete annotated example
 
 The bundled [`sandbox/instance.yaml`](../../sandbox/instance.yaml) is a complete, working
 example. A condensed version:
@@ -414,7 +480,7 @@ generators:
   working_root: { type: system-default, version: local-mvp-v1 }
 ```
 
-## 5.17 Validation behavior
+## 5.18 Validation behavior
 
 The daemon validates configuration at startup and refuses to start on error. Common
 failures:

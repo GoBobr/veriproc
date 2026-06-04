@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eum/veriproc/internal/envexpand"
 	"github.com/eum/veriproc/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -227,7 +228,13 @@ type DownstreamTarget struct {
 // LoadDir scans root for */station.yaml, computes revision hashes, and seeds
 // the supplied registry/store. Files are processed in lexical path order so
 // duplicate detection is deterministic.
-func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Store) ([]Spec, error) {
+//
+// env is the process environment map used for ${VAR} expansion inside each
+// station.yaml (and its associated joborder template file, if any). Pass nil
+// to skip expansion; any ${VAR} reference in YAML would then be a literal
+// string, which is almost certainly wrong — prefer passing config.EnvSnapshot()
+// from the daemon entry point.
+func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Store, env map[string]string) ([]Spec, error) {
 	paths, err := stationFiles(root)
 	if err != nil {
 		return nil, err
@@ -235,7 +242,7 @@ func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Sto
 	specs := make([]Spec, 0, len(paths))
 	seen := map[string]string{}
 	for _, path := range paths {
-		def, err := ReadDefinition(path)
+		def, err := ReadDefinition(path, env)
 		if err != nil {
 			return nil, err
 		}
@@ -289,22 +296,26 @@ func stationFiles(root string) ([]string, error) {
 	return paths, nil
 }
 
-func ReadDefinition(path string) (Definition, error) {
+func ReadDefinition(path string, env map[string]string) (Definition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Definition{}, fmt.Errorf("stations: read %q: %w", path, err)
 	}
+	expanded, err := envexpand.Strict(string(data), env)
+	if err != nil {
+		return Definition{}, fmt.Errorf("stations: expand %q: %w", path, err)
+	}
 	var def Definition
-	if err := yaml.Unmarshal(data, &def); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &def); err != nil {
 		return Definition{}, fmt.Errorf("stations: parse %q: %w", path, err)
 	}
-	if err := loadJobOrderTemplate(path, &def); err != nil {
+	if err := loadJobOrderTemplate(path, &def, env); err != nil {
 		return Definition{}, err
 	}
 	return def, nil
 }
 
-func loadJobOrderTemplate(stationPath string, def *Definition) error {
+func loadJobOrderTemplate(stationPath string, def *Definition, env map[string]string) error {
 	templateFile := strings.TrimSpace(def.JobOrder.TemplateFile)
 	if templateFile == "" {
 		return nil
@@ -320,8 +331,12 @@ func loadJobOrderTemplate(stationPath string, def *Definition) error {
 	if err != nil {
 		return fmt.Errorf("%s: read joborder.template_file %q: %w", stationPath, templateFile, err)
 	}
+	expanded, err := envexpand.Strict(string(body), env)
+	if err != nil {
+		return fmt.Errorf("%s: expand joborder.template_file %q: %w", stationPath, templateFile, err)
+	}
 	def.JobOrder.TemplateFile = templateFile
-	def.JobOrder.Template = string(body)
+	def.JobOrder.Template = expanded
 	return nil
 }
 

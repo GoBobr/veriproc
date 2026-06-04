@@ -79,7 +79,7 @@ outputs:
 `)
 	st := openStore(t)
 	reg := stations.NewRegistry()
-	specs, err := stations.LoadDir(context.Background(), root, reg, st)
+	specs, err := stations.LoadDir(context.Background(), root, reg, st, nil)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
@@ -128,7 +128,7 @@ station_name: Alpha
 	writeStation(t, root, "two", `station_id: DUP
 station_name: Beta
 `)
-	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if !errors.Is(err, stations.ErrDuplicateStation) {
 		t.Fatalf("err = %v, want ErrDuplicateStation", err)
 	}
@@ -184,7 +184,7 @@ func TestLoader_JobOrder_Formats(t *testing.T) {
 			content += "joborder:\n  format: " + format + "\n"
 		}
 		writeStation(t, root, "s", content)
-		_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+		_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 		if err != nil {
 			t.Errorf("format %q: unexpected error: %v", format, err)
 		}
@@ -195,7 +195,7 @@ func TestLoader_JobOrder_Formats(t *testing.T) {
 func TestLoader_JobOrder_InvalidFormat(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "s", "station_id: JO-BAD\nstation_name: JO Bad\njoborder:\n  format: xml\n")
-	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid joborder format")
 	}
@@ -211,7 +211,7 @@ joborder:
   include:
     extra: forbidden
 `)
-	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error: format none must not have include")
 	}
@@ -221,7 +221,7 @@ joborder:
 func TestLoader_JobOrder_NoneWithName(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "s", "station_id: JO-NONE2\nstation_name: JO None2\njoborder:\n  format: none\n  name: should-not-exist.yaml\n")
-	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error: format none must not have name")
 	}
@@ -241,7 +241,7 @@ joborder:
 	if err := os.WriteFile(templatePath, []byte("input = {{ tomlq (input \"PRIMARY\") }}\n"), 0o644); err != nil {
 		t.Fatalf("write template: %v", err)
 	}
-	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
@@ -258,7 +258,7 @@ joborder:
 func TestLoader_Execution_RelativePathResolvedToAbsolute(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "s", "station_id: EXE-REL\nstation_name: Exe Rel\nexecution:\n  executable: ./scripts/run.sh\n")
-	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestLoader_Execution_RelativePathResolvedToAbsolute(t *testing.T) {
 func TestLoader_Execution_RelativePath(t *testing.T) {
 	root := t.TempDir()
 	writeStation(t, root, "s", "station_id: EXE-REL\nstation_name: Exe Rel\nexecution:\n  executable: ./scripts/run.sh\n")
-	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,7 +306,7 @@ execution:
       - /shared:/shared
     user: host
 `)
-	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil)
+	specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
@@ -330,7 +330,7 @@ execution:
 	mode: slurm-docker
 	executable: /opt/proc/run.sh
 `)
-	if _, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil); err == nil {
+	if _, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil); err == nil {
 		t.Fatal("expected validation error")
 	}
 }

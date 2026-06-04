@@ -43,7 +43,10 @@ func main() {
 }
 
 func run(args []string) error {
-	cfg, err := config.Load(args, config.EnvSnapshot())
+	// Capture the full process environment once. It drives both ${VAR} expansion
+	// in YAML configuration files and the VERIPROC_* overlay applied by Load.
+	env := config.EnvSnapshot()
+	cfg, err := config.Load(args, env)
 	if err != nil {
 		return err
 	}
@@ -80,7 +83,7 @@ func run(args []string) error {
 	registry := stations.NewRegistry()
 	var loadedDirOrder []string // station IDs in directory-alphabetical order
 	if cfg.Storage.StationConfigRoot != "" {
-		specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st)
+			specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st, env)
 		if err != nil {
 			return fmt.Errorf("load stations: %w", err)
 		}

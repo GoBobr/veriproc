@@ -20,6 +20,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/eum/veriproc/internal/envexpand"
 	"github.com/eum/veriproc/internal/policy"
 )
 
@@ -222,9 +223,9 @@ func Load(args []string, env map[string]string) (*Config, error) {
 		return nil, fmt.Errorf("config: parse flags: %w", err)
 	}
 
-	// Step 2: file overlay.
+	// Step 2: file overlay — expand ${VAR} / $VAR before YAML parsing.
 	if configPath != "" {
-		if err := applyFile(&cfg, configPath); err != nil {
+		if err := applyFile(&cfg, configPath, env); err != nil {
 			return nil, err
 		}
 		if abs, err := filepath.Abs(configPath); err == nil {
@@ -258,12 +259,16 @@ func Load(args []string, env map[string]string) (*Config, error) {
 	return &cfg, nil
 }
 
-func applyFile(cfg *Config, path string) error {
+func applyFile(cfg *Config, path string, env map[string]string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("config: read %q: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	expanded, err := envexpand.Strict(string(data), env)
+	if err != nil {
+		return fmt.Errorf("config: expand %q: %w", path, err)
+	}
+	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 		return fmt.Errorf("config: parse %q: %w", path, err)
 	}
 	return nil
@@ -567,8 +572,10 @@ func slurmWalltime(value string) (string, error) {
 	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds), nil
 }
 
-// EnvSnapshot returns a snapshot of process environment variables prefixed
-// with VERIPROC_ (and VERIPROC_CONFIG), suitable for passing to Load.
+// EnvSnapshot returns a snapshot of the full process environment, suitable
+// for passing to Load. The returned map is used both for ${VAR} expansion in
+// the YAML configuration file and for the VERIPROC_* overlay step (which
+// only reads keys with that prefix).
 func EnvSnapshot() map[string]string {
 	out := map[string]string{}
 	for _, kv := range os.Environ() {
@@ -576,11 +583,7 @@ func EnvSnapshot() map[string]string {
 		if i <= 0 {
 			continue
 		}
-		k := kv[:i]
-		if !strings.HasPrefix(k, "VERIPROC_") {
-			continue
-		}
-		out[k] = kv[i+1:]
+		out[kv[:i]] = kv[i+1:]
 	}
 	return out
 }
