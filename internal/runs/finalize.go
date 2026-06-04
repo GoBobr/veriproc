@@ -730,6 +730,13 @@ func (s *Service) MarkFailedAndLog(ctx context.Context, runID, reason string) er
 	if err := s.store.Tasks().SetState(ctx, run.TaskID, "failed", reason); err != nil {
 		return err
 	}
+	// Even when a producer fails, downstream join tasks must still receive an
+	// arrival contribution so they are not blocked indefinitely. Since join
+	// inputs are often declared optional the join task can run with partial
+	// inputs from the remaining producers.
+	if err := s.contributeToJoinDownstream(ctx, run, now); err != nil {
+		s.logger.Warn().Err(err).Str("run_id", runID).Msg("join downstream contribution after run failure")
+	}
 	// Fire the group-complete notifier even on failure so partial-aggregation
 	// logic in the notifier can advance the group state (e.g. statE runs when
 	// at least one split-group member succeeded, even if others failed).
@@ -738,6 +745,119 @@ func (s *Service) MarkFailedAndLog(ctx context.Context, runID, reason string) er
 		groupID := task.SplitGroupID
 		notifier := s.notifyGroupComplete
 		go notifier(context.Background(), groupID)
+	}
+	return nil
+}
+
+// contributeToJoinDownstream ensures that any downstream join tasks for the
+// given run receive an arrival contribution. It is called from both the
+// success path (Finalize) — via the InTx block — and the failure path
+// (MarkFailedAndLog), so that a failed producer never blocks a join task
+// indefinitely. Each call is idempotent at the provenance link level.
+func (s *Service) contributeToJoinDownstream(ctx context.Context, run *store.RunRecord, now time.Time) error {
+	task, err := s.store.Tasks().Get(ctx, run.TaskID)
+	if err != nil {
+		return err
+	}
+	rev, err := s.store.Stations().Get(ctx, run.StationRevisionID)
+	if err != nil {
+		return err
+	}
+	var routes []stations.DownstreamTarget
+	if rev.DeclaredDownstream != "" {
+		if err := json.Unmarshal([]byte(rev.DeclaredDownstream), &routes); err != nil {
+			return fmt.Errorf("parse downstream: %w", err)
+		}
+	}
+
+	parentRunRef := fmt.Sprintf("%s/r%d", task.TaskID, run.RetryIndex)
+
+	for _, route := range routes {
+		if route.Mode != "join" {
+			continue
+		}
+		resolved, err := s.resolver.Resolve(ctx, route.StationID)
+		if err != nil {
+			return fmt.Errorf("resolve downstream %s: %w", route.StationID, err)
+		}
+
+		// Reproduce the same deterministic task ID as buildDownstreamPlan.
+		hashMaterial := fmt.Sprintf("join|%s|%s|%s|%s",
+			route.JoinID, resolved.StationID,
+			task.WindowStart.UTC().Format(time.RFC3339Nano),
+			task.WindowEnd.UTC().Format(time.RFC3339Nano))
+		hashSeed := sha256.Sum256([]byte(hashMaterial))
+		hex6 := hex.EncodeToString(hashSeed[:3])
+		joinTaskID := policy.GenerateTaskID(resolved.StationID, task.WindowStart.UTC(), hex6)
+
+		// Build minimal routing content in case this producer is the first to
+		// create the join task (the task ID hash ensures it matches any
+		// previously inserted record from a successful producer).
+		routing := map[string]any{
+			"schema_version": task.SchemaVersion,
+			"destination":    map[string]any{"station_id": resolved.StationID},
+			"window": map[string]any{
+				"start": task.WindowStart.UTC().Format(time.RFC3339Nano),
+				"end":   task.WindowEnd.UTC().Format(time.RFC3339Nano),
+			},
+			"force":        false,
+			"parent":       map[string]any{"run_ref": parentRunRef},
+			"routing_mode": "join",
+			"join_id":      route.JoinID,
+		}
+		raw, err := canonjson.Marshal(routing)
+		if err != nil {
+			return err
+		}
+		rsum := sha256.Sum256(raw)
+
+		joinTask := &store.TaskRecord{
+			TaskID:               joinTaskID,
+			SchemaVersion:        task.SchemaVersion,
+			DestinationStationID: resolved.StationID,
+			WindowStart:          task.WindowStart,
+			WindowEnd:            task.WindowEnd,
+			ParentTaskID:         task.TaskID,
+			ParentRunRetryIndex:  sql.NullInt64{Int64: int64(run.RetryIndex), Valid: true},
+			RoutingContent:       raw,
+			RoutingContentHash:   hex.EncodeToString(rsum[:]),
+			SubmissionOrigin:     "backend",
+			State:                "waiting_inputs",
+			CreatedAt:            now,
+		}
+		expected := s.joinExpectedCount(route.JoinID, resolved.StationID)
+
+		if err := s.store.InTx(ctx, func(tx *store.Tx) error {
+			if err := tx.Tasks().Insert(ctx, joinTask); err != nil && !errors.Is(err, store.ErrConflict) {
+				return err
+			}
+			link := &store.ProvenanceLink{
+				LinkID:           "prov-" + sha12(run.RunID+":"+joinTaskID),
+				SourceType:       "run",
+				SourceID:         run.RunID,
+				TargetType:       "task",
+				TargetID:         joinTaskID,
+				RelationshipType: "produced_downstream",
+				Role:             "parent",
+				Reason:           "station_default_downstream",
+				CreatedAt:        now,
+			}
+			if err := tx.Provenance().Insert(ctx, link); err != nil && !errors.Is(err, store.ErrConflict) {
+				return err
+			}
+			arrived, err := tx.Tasks().IncrementJoinArrival(ctx, joinTaskID)
+			if err != nil {
+				return err
+			}
+			if expected > 0 && int(arrived) >= expected {
+				if _, err := tx.Tasks().SetStateIfCurrent(ctx, joinTaskID, "waiting_inputs", "accepted", ""); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("join downstream %s: %w", joinTaskID, err)
+		}
 	}
 	return nil
 }

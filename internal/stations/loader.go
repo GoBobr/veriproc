@@ -129,14 +129,20 @@ type JobOrderConfig struct {
 // Supported rules:
 //
 //	"filename_component" – Keeps only candidates whose parsed filename
-//	component named by Component equals the value extracted from the first
-//	winner already resolved for SourceFileType. The component name is
-//	case-insensitive (matched as lowercase). When the source file type has not
-//	been resolved yet, or produced no winners, the filter is skipped.
+//	component named by Component equals a reference value. The reference is
+//	supplied in exactly one of two ways:
+//	  - source_file_type: compare against the same component extracted from
+//	    the first already-resolved winner of that file type. When the source
+//	    has not been resolved yet or produced no winners, the filter is skipped.
+//	  - equals_to: compare against a constant string, which may contain
+//	    station context references (e.g. <mission_id> or <env:MISSION_ID>)
+//	    resolved at startup.
+//	The component name is case-insensitive (matched as lowercase).
 type InputFilter struct {
 	Rule           string `yaml:"rule" json:"rule"`
 	Component      string `yaml:"component,omitempty" json:"component,omitempty"`
 	SourceFileType string `yaml:"source_file_type,omitempty" json:"source_file_type,omitempty"`
+	EqualsTo       string `yaml:"equals_to,omitempty" json:"equals_to,omitempty"`
 }
 
 type InputDefinition struct {
@@ -685,10 +691,15 @@ func validateInputFilter(fileType string, idx int, f InputFilter) error {
 		if f.Component == "" {
 			return fmt.Errorf("input %s filter[%d]: rule %q requires component", fileType, idx, f.Rule)
 		}
-		if f.SourceFileType == "" {
-			return fmt.Errorf("input %s filter[%d]: rule %q requires source_file_type", fileType, idx, f.Rule)
+		hasSource := f.SourceFileType != ""
+		hasEquals := f.EqualsTo != ""
+		if !hasSource && !hasEquals {
+			return fmt.Errorf("input %s filter[%d]: rule %q requires either source_file_type or equals_to", fileType, idx, f.Rule)
 		}
-		if f.SourceFileType == fileType {
+		if hasSource && hasEquals {
+			return fmt.Errorf("input %s filter[%d]: rule %q must not set both source_file_type and equals_to", fileType, idx, f.Rule)
+		}
+		if hasSource && f.SourceFileType == fileType {
 			return fmt.Errorf("input %s filter[%d]: source_file_type must not refer to its own file_type", fileType, idx)
 		}
 	case "":

@@ -51,24 +51,24 @@ A later source overrides an earlier one only when it supplies a non-empty value.
 
 Any value in the instance configuration file — and in every `station.yaml` and its
 associated job-order template file — may reference an OS / container environment variable
-using `${VAR}` or `$VAR` syntax.  The daemon expands all references **before** the YAML
-is parsed, so substitution works in any position: paths, DSNs, archive roots, plain
-scalars, etc.
+using the `<env:VAR_NAME>` syntax.  The daemon expands all `<env:…>` tokens **before**
+the YAML is parsed, so substitution works in any position: paths, DSNs, archive roots,
+plain scalars, etc.
 
 ```yaml
-# instance.yaml — all ${…} references are replaced at startup
+# instance.yaml — all <env:…> tokens are replaced at startup
 db:
-  dsn: sqlite:///vpdata/${MY_INSTANCE_SUBDIR}/veriproc.db
+  dsn: sqlite:///vpdata/<env:MY_INSTANCE_SUBDIR>/veriproc.db
 
 storage:
-  working_root_base: ${MY_WORKING_ROOT_BASE}
-  station_config_root: ${MY_STATION_CONFIG_ROOT}
+  working_root_base: <env:MY_WORKING_ROOT_BASE>
+  station_config_root: <env:MY_STATION_CONFIG_ROOT>
 
 rolling_archives:
   aux:
-    path: ${MY_AUX_DIR}
+    path: <env:MY_AUX_DIR>
   rolling-eucent:
-    path: ${MY_ROLLING_ARCHIVE}
+    path: <env:MY_ROLLING_ARCHIVE>
 ```
 
 **Rules:**
@@ -76,10 +76,10 @@ rolling_archives:
 | Rule | Detail |
 |------|--------|
 | Undefined → fatal error | Every referenced variable must exist in the process environment. An undefined variable causes a startup failure that lists all missing names. |
-| `$$` → literal `$` | Use `$$` to embed a literal dollar sign in a YAML value. |
-| Syntax | Both `${VAR}` and `$VAR` are accepted (standard shell expansion rules). |
+| VAR_NAME format | Must be a valid shell identifier: `[A-Za-z_][A-Za-z0-9_]*`. |
 | Station configs included | Expansion is applied to each `station.yaml` and its job-order template file using the same environment snapshot. |
 | No interference with `<key>` | The `<key>` / `<key.subkey>` station context-reference syntax is resolved at run time, after YAML parsing — it is unaffected by env-var expansion. |
+| `$VAR` passes through verbatim | Shell-variable notation (`$VAR`, `${VAR}`) is **not** expanded. Values like `"$MY_RUNTIME_VAR"` pass through unchanged into job orders and runner scripts, where the processor resolves them at execution time. |
 
 **Typical Docker Compose usage:**
 
@@ -100,17 +100,30 @@ services:
 # instance.yaml  (mounted into the container)
 rolling_archives:
   aux:
-    path: ${MY_AUX_DIR}
+    path: <env:MY_AUX_DIR>
     mode: read_only
     retention: keep-fixtures
   prods:
-    path: ${MY_PRODUCT_DIR}
+    path: <env:MY_PRODUCT_DIR>
     mode: read_only
     retention: keep-fixtures
   rolling:
-    path: ${MY_ROLLING_ARCHIVE}
+    path: <env:MY_ROLLING_ARCHIVE>
     mode: read_write
     retention: keep-fixtures
+```
+
+**station.yaml can use `<env:…>` too — and pass through `$VAR` untouched:**
+
+```yaml
+# station.yaml
+joborder:
+  include:
+    config_files:
+      # <env:INSTALL_DIR> is resolved from the daemon's environment at startup.
+      # $RUNTIME_VAR is left as-is; the processor expands it inside the container.
+      - "<env:INSTALL_DIR>/cfg/processor.cfg"
+      - "$RUNTIME_VAR/cfg/extra.cfg"
 ```
 
 ## 5.3 Top-level structure

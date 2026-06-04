@@ -10,25 +10,28 @@
 #
 # ─── Environment variable expansion ──────────────────────────────────────────
 # Any YAML value in this file (and in station.yaml files) may reference an
-# OS / container environment variable using ${VAR} or $VAR syntax:
+# OS / container environment variable using the <env:VAR> syntax:
 #
 #   storage:
-#     working_root_base: ${MY_WORKING_ROOT_BASE}
+#     working_root_base: <env:MY_WORKING_ROOT_BASE>
 #
-# The daemon expands all references before parsing the YAML, so the full YAML
-# structure is available for substitution (paths, DSNs, archive roots, etc.).
-# $$ is an escape sequence that produces a literal $.
+# The daemon expands all <env:VAR> tokens before parsing the YAML, so the full
+# YAML structure is available for substitution (paths, DSNs, archive roots, …).
 #
 # Rules:
 #   - Every referenced variable must be defined in the process environment.
 #     An undefined variable causes a fatal startup error listing all missing
 #     names — there is no silent fallback to an empty string.
+#   - VAR_NAME must be a valid shell identifier: [A-Za-z_][A-Za-z0-9_]*.
 #   - Expansion applies to the raw YAML text, so it works in any value
 #     position regardless of YAML type (string, int, bool, …).
 #   - Expansion is also applied to station.yaml files and their associated
 #     job-order template files, using the same environment snapshot.
-#   - The ${VAR} / $VAR syntax does not interfere with the station context
+#   - The <env:VAR> syntax does NOT interfere with the station context
 #     reference syntax <key> / <key.subkey>, which is resolved at run time.
+#   - Shell-variable notation $VAR and ${VAR} is left completely untouched,
+#     so values like "$MY_RUNTIME_VAR" pass through verbatim into job orders
+#     and runner scripts to be resolved by the processor at run time.
 #
 # Typical usage (Docker Compose / Kubernetes):
 #
@@ -38,9 +41,9 @@
 #
 #   rolling_archives:                         # instance.yaml
 #     aux:
-#       path: ${MY_AUX_DIR}
+#       path: <env:MY_AUX_DIR>
 #     prods:
-#       path: ${MY_DATA_ROOT}/products
+#       path: <env:MY_DATA_ROOT>/products
 #
 # This sandbox file does not use env var expansion (all paths are relative to
 # the repository root) so that it works out of the box without any environment

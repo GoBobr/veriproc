@@ -224,6 +224,34 @@ inputs:
     window_match: overlaps
     margins: [7200, 7200]
     mandatory: true
+    # ── Filter example ──────────────────────────────────────────────────────
+    # Optional. Keep only candidates that match a specific filename component
+    # value. Two alternatives for the reference value:
+    #
+    #   source_file_type: CO2_1A_GEO______
+    #     Compare against the same component of an already-resolved input.
+    #     The source must appear earlier in the inputs list.
+    #
+    #   equals_to: <mission_id>
+    #     Compare against a constant defined in instance.yaml definitions:.
+    #     Context references (<key>) are resolved from definitions at match
+    #     time. Environment variable references (<env:VAR>) are expanded at
+    #     startup. Both alternatives require the component name (case-insensitive).
+    #
+    # Example: keep only CAMF files whose MISSION_ID equals the instance
+    # definitions.mission_id value (e.g. "CDM1"):
+    #
+    # filter:
+    #   - rule: filename_component
+    #     component: MISSION_ID
+    #     equals_to: <mission_id>
+    #
+    # Example: keep only CAMF files whose MISSION_ID matches the GEO winner:
+    #
+    # filter:
+    #   - rule: filename_component
+    #     component: MISSION_ID
+    #     source_file_type: CO2_1A_GEO______
 
 # ─── Outputs ──────────────────────────────────────────────────────────────────
 # Ordered list of output definitions. After the workload exits successfully the

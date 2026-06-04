@@ -128,8 +128,11 @@ After window matching, each input may declare a `filter:` list. Filters are appl
 order; a candidate must pass every rule to survive.
 
 **`filename_component` rule** — keeps only candidates whose parsed value for the named
-component matches the same component's value in the first already-resolved winner of a
-`source_file_type` declared earlier in the same input list:
+component matches a reference value. The reference is supplied in exactly one of two ways:
+
+- **`source_file_type`** — compare against the same component extracted from the first
+  already-resolved winner of the named file type (must appear earlier in the `inputs`
+  list):
 
 ```yaml
 inputs:
@@ -148,19 +151,41 @@ inputs:
         source_file_type: CO2_1A_GEO______  # ... matches the GEO winner's MISSION_ID
 ```
 
+- **`equals_to`** — compare against a constant string. The value may contain station
+  context references (`<key>` resolved from instance `definitions` at match time) or
+  environment variable references (`<env:VAR>` expanded at startup):
+
+```yaml
+inputs:
+  - file_type: AX_____MHF____AX
+    category: aux
+    window_match: overlaps
+    mandatory: true
+    filter:
+      - rule: filename_component
+        component: MISSION_ID
+        equals_to: <mission_id>      # from instance definitions: { mission_id: CDM1 }
+  # or:
+        equals_to: <env:MISSION_ID>  # from environment variable, expanded at startup
+```
+
 | Field | Required | Meaning |
 |-------|----------|---------|
 | `rule` | yes | Filter rule name. Currently only `filename_component` is supported. |
 | `component` | for `filename_component` | Parsed filename component to compare (e.g. `MISSION_ID`). Case-insensitive. |
-| `source_file_type` | for `filename_component` | `file_type` of the already-resolved input to take the reference value from. Must not be the same `file_type` as the filtered input itself. |
+| `source_file_type` | one of `source_file_type` or `equals_to` | `file_type` of the already-resolved input to take the reference value from. Must not be the same `file_type` as the filtered input itself. |
+| `equals_to` | one of `source_file_type` or `equals_to` | Constant string to compare against. May contain `<key>` context references or `<env:VAR>` expansion tokens. |
 
 **Behaviour details:**
 
 - Filters are applied _after_ window matching and _before_ interval grouping and winner
   selection.
-- If the `source_file_type` has not yet been resolved at the time the filter runs (e.g.
-  it appears later in the `inputs` list), the filter is silently skipped and all
-  candidates survive.
+- For `source_file_type`: if the source has not yet been resolved at the time the filter
+  runs (e.g. it appears later in the `inputs` list), the filter is silently skipped and
+  all candidates survive.
+- For `equals_to`: if the value contains a context reference (`<key>`) that cannot be
+  resolved from `definitions`, the filter is skipped with a warning log. `<env:VAR>`
+  references are always resolved at startup — a missing variable is a fatal startup error.
 - If every candidate is rejected by a filter rule, the input resolves to no winners and
   the reason message names the rule. A mandatory input then fails the run in `preparing`.
 
@@ -365,7 +390,7 @@ outputs:
     mandatory: true
     directory: <working_root>/output2/
     publish:
-      rolling_archive: rolling-eucent
+      rolling_archive: rolling-orbit
       mode: copy
 ```
 

@@ -953,7 +953,7 @@ func (s *Service) classicalSelectCandidates(
 	// Apply declared filters to the candidate set. All rules are ANDed.
 	for _, f := range input.Filters {
 		before := len(allCandidates)
-		allCandidates = applyInputFilter(allCandidates, f, resolvedWinnerComponents, s.logger, runRef, input.FileType)
+		allCandidates = applyInputFilter(allCandidates, f, resolvedWinnerComponents, s.definitions, s.logger, runRef, input.FileType)
 		if len(allCandidates) != before {
 			s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
 				Str("input_key", input.FileType).
@@ -1066,11 +1066,15 @@ func applyInputFilter(
 	candidates []classicalCandidate,
 	f stations.InputFilter,
 	resolvedWinnerComponents map[string][]map[string]string,
+	definitions map[string]any,
 	logger zerolog.Logger,
 	runRef, inputKey string,
 ) []classicalCandidate {
 	switch f.Rule {
 	case "filename_component":
+		if f.EqualsTo != "" {
+			return applyFilenameComponentEqualsFilter(candidates, f, definitions, logger, runRef, inputKey)
+		}
 		return applyFilenameComponentFilter(candidates, f, resolvedWinnerComponents, logger, runRef, inputKey)
 	default:
 		// Unknown rules are a no-op at runtime (validation catches them at load
@@ -1133,6 +1137,68 @@ func applyFilenameComponentFilter(
 				Str("got", c.ParsedComponents[componentKey]).
 				Str("path", c.Path).
 				Msg("matcher: candidate rejected by filename_component filter")
+		}
+	}
+	return out
+}
+
+// applyFilenameComponentEqualsFilter implements the equals_to variant of the
+// "filename_component" rule. It retains only candidates whose parsed filename
+// component (named by f.Component) equals the constant string f.EqualsTo,
+// which may contain station context references (<key> / <key.subkey>) resolved
+// against the instance definitions at filter time.
+//
+// Comparison is case-insensitive on the component key but case-sensitive on the
+// resolved value, consistent with the source_file_type variant.
+func applyFilenameComponentEqualsFilter(
+	candidates []classicalCandidate,
+	f stations.InputFilter,
+	definitions map[string]any,
+	logger zerolog.Logger,
+	runRef, inputKey string,
+) []classicalCandidate {
+	componentKey := strings.ToLower(f.Component)
+
+	// Resolve any context references in equals_to against instance definitions.
+	rawResolved, err := stations.ResolveString(f.EqualsTo, definitions)
+	if err != nil {
+		logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+			Str("input_key", inputKey).
+			Str("filter_rule", "filename_component").
+			Str("component", componentKey).
+			Str("equals_to", f.EqualsTo).
+			Err(err).
+			Msg("matcher: equals_to context resolution failed — filter skipped")
+		return candidates
+	}
+	wantValue, ok := rawResolved.(string)
+	if !ok {
+		logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+			Str("input_key", inputKey).
+			Str("filter_rule", "filename_component").
+			Str("component", componentKey).
+			Str("equals_to", f.EqualsTo).
+			Msg("matcher: equals_to resolved to non-string value — filter skipped")
+		return candidates
+	}
+
+	out := candidates[:0:0]
+	for _, c := range candidates {
+		if c.ParsedComponents == nil {
+			out = append(out, c)
+			continue
+		}
+		if c.ParsedComponents[componentKey] == wantValue {
+			out = append(out, c)
+		} else {
+			logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+				Str("input_key", inputKey).
+				Str("filter_rule", "filename_component").
+				Str("component", componentKey).
+				Str("want", wantValue).
+				Str("got", c.ParsedComponents[componentKey]).
+				Str("path", c.Path).
+				Msg("matcher: candidate rejected by filename_component equals_to filter")
 		}
 	}
 	return out
