@@ -37,6 +37,16 @@ type Resolver interface {
 	Resolve(ctx context.Context, stationID string) (*store.StationRevisionRecord, error)
 }
 
+// JoinCounter is an optional extension to Resolver that counts how many
+// upstream stations contribute to a given join target. It is implemented by
+// Registry and used by the join wakeup logic in the runs service.
+type JoinCounter interface {
+	// CountJoinProducers returns the number of registered stations that
+	// declare a downstream join route with the supplied join_id to
+	// targetStationID.
+	CountJoinProducers(joinID, targetStationID string) int
+}
+
 // Spec describes one station the registry will serve.
 type Spec struct {
 	StationID      string
@@ -162,6 +172,31 @@ func (r *Registry) Resolve(_ context.Context, stationID string) (*store.StationR
 		return nil, fmt.Errorf("%w: station_id=%s", ErrUnknownStation, stationID)
 	}
 	return rec, nil
+}
+
+// CountJoinProducers implements JoinCounter. It scans all registered stations
+// and counts those that declare a downstream join with joinID to
+// targetStationID.
+func (r *Registry) CountJoinProducers(joinID, targetStationID string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	count := 0
+	for _, rec := range r.byID {
+		if rec.DeclaredDownstream == "" {
+			continue
+		}
+		var downstream []DownstreamTarget
+		if err := json.Unmarshal([]byte(rec.DeclaredDownstream), &downstream); err != nil {
+			continue
+		}
+		for _, d := range downstream {
+			if d.Mode == "join" && d.JoinID == joinID && d.StationID == targetStationID {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
 
 // shortHash returns a stable short suffix for revision id derivation.

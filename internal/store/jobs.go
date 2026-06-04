@@ -16,6 +16,7 @@ type JobRecord struct {
 	SchedulerID             string
 	SchedulerState          string
 	Node                    string // scheduler-allocated node(s); empty until first observed
+	ElapsedTime             string // scheduler-reported wall-clock runtime (e.g. sacct Elapsed "[DD-]HH:MM:SS")
 	SubmissionAttempt       int
 	SubmittedAt             sql.NullTime
 	LastObservedAt          sql.NullTime
@@ -91,6 +92,17 @@ func (r *JobRepo) SetNode(ctx context.Context, jobID, node string) error {
 	return err
 }
 
+// SetElapsedTime records the scheduler-reported wall-clock runtime for a job
+// (e.g. sacct Elapsed "[DD-]HH:MM:SS"). It is a no-op if elapsed is empty.
+func (r *JobRepo) SetElapsedTime(ctx context.Context, jobID, elapsed string) error {
+	if elapsed == "" {
+		return nil
+	}
+	_, err := r.q.ExecContext(ctx,
+		`UPDATE jobs SET elapsed_time = ? WHERE job_id = ?`, elapsed, jobID)
+	return err
+}
+
 // Get returns a job by id.
 func (r *JobRepo) Get(ctx context.Context, jobID string) (*JobRecord, error) {
 	row := r.q.QueryRowContext(ctx, jobSelect+` WHERE job_id = ?`, jobID)
@@ -117,6 +129,7 @@ func (r *JobRepo) ListByRun(ctx context.Context, runID string) ([]*JobRecord, er
 
 const jobSelect = `SELECT job_id, run_id, executor,
 	COALESCE(scheduler_id, ''), COALESCE(scheduler_state, ''), COALESCE(execution_node, ''),
+	COALESCE(elapsed_time, ''),
 	submission_attempt, submitted_at, last_observed_at, terminal_at,
 	cancellation_requested_at, COALESCE(reconciliation_status, '')
 FROM jobs`
@@ -124,7 +137,7 @@ FROM jobs`
 func scanJob(s scanner) (*JobRecord, error) {
 	var j JobRecord
 	if err := s.Scan(&j.JobID, &j.RunID, &j.Executor,
-		&j.SchedulerID, &j.SchedulerState, &j.Node,
+		&j.SchedulerID, &j.SchedulerState, &j.Node, &j.ElapsedTime,
 		&j.SubmissionAttempt, &j.SubmittedAt, &j.LastObservedAt, &j.TerminalAt,
 		&j.CancellationRequestedAt, &j.ReconciliationStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

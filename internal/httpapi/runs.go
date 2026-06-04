@@ -41,6 +41,7 @@ type runWire struct {
 	RetryIndex              int        `json:"retry_index"`
 	ExecutorType            string     `json:"executor_type,omitempty"`
 	ExecutionNode           string     `json:"execution_node,omitempty"`
+	ElapsedTime             string     `json:"elapsed_time,omitempty"`
 	WorkingRoot             string     `json:"working_root,omitempty"`
 	ProcessingFingerprint   string     `json:"processing_fingerprint,omitempty"`
 	FailureReason           string     `json:"failure_reason,omitempty"`
@@ -69,6 +70,7 @@ type jobWire struct {
 	SchedulerID       string     `json:"scheduler_id,omitempty"`
 	SchedulerState    string     `json:"scheduler_native_state,omitempty"`
 	ExecutionNode     string     `json:"execution_node,omitempty"`
+	ElapsedTime       string     `json:"elapsed_time,omitempty"`
 	SubmissionAttempt int        `json:"submission_attempt"`
 	SubmittedAt       *time.Time `json:"submitted_at,omitempty"`
 	LastObservedAt    *time.Time `json:"last_observed_at,omitempty"`
@@ -257,6 +259,7 @@ func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.Run
 			last := jobs[len(jobs)-1]
 			rw.ExecutorType = last.Executor
 			rw.ExecutionNode = last.Node
+			rw.ElapsedTime = last.ElapsedTime
 		}
 		resp.Items = append(resp.Items, rw)
 	}
@@ -530,6 +533,7 @@ func toJobWire(j *store.JobRecord) jobWire {
 		SchedulerID:       j.SchedulerID,
 		SchedulerState:    j.SchedulerState,
 		ExecutionNode:     j.Node,
+		ElapsedTime:       j.ElapsedTime,
 		SubmissionAttempt: j.SubmissionAttempt,
 		SubmittedAt:       nullableTime(j.SubmittedAt),
 		LastObservedAt:    nullableTime(j.LastObservedAt),

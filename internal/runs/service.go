@@ -492,6 +492,9 @@ func (s *Service) Poll(ctx context.Context, runID string) (*store.RunRecord, err
 	if obs.Node != "" {
 		_ = s.store.Jobs().SetNode(ctx, job.JobID, obs.Node) // best-effort; non-fatal
 	}
+	if obs.Elapsed != "" {
+		_ = s.store.Jobs().SetElapsedTime(ctx, job.JobID, obs.Elapsed) // best-effort; non-fatal
+	}
 
 	runRef := fmt.Sprintf("%s/r%d", run.TaskID, run.RetryIndex)
 	switch obs.Status {
@@ -798,6 +801,16 @@ func isJoinTask(task *store.TaskRecord) bool {
 	}
 	_, ok := routing["join_id"].(string)
 	return ok
+}
+
+// joinExpectedCount returns the number of upstream producers for a join target
+// by delegating to the optional JoinCounter capability of the resolver.
+// Returns 0 when the resolver does not implement JoinCounter.
+func (s *Service) joinExpectedCount(joinID, targetStationID string) int {
+	if jc, ok := s.resolver.(stations.JoinCounter); ok {
+		return jc.CountJoinProducers(joinID, targetStationID)
+	}
+	return 0
 }
 
 // classicalCandidate is an internal struct holding a parsed candidate during

@@ -263,6 +263,23 @@ the expansion fails and the run is aborted.
 Context references (`<name.path>`) in `preprocess_args` and in `preprocess_script` are
 resolved against the standard station context (same namespace as `execution.args`).
 
+#### Type casting with `:type`
+
+Prep-script output values are always strings. When a `<prep.KEY>` reference is used
+in a YAML joborder field that expects a number or boolean, append a **type-cast
+suffix** to convert the value automatically:
+
+| Syntax | Result type | Example |
+|--------|-------------|---------|
+| `<prep.KEY:int>` | 64-bit integer | `start_scanline: <prep.MIN_SCANLINE:int>` |
+| `<prep.KEY:float>` | 64-bit float | `threshold: <prep.THRESHOLD:float>` |
+| `<prep.KEY:bool>` | boolean | `verbose: <prep.VERBOSE:bool>` |
+| `<prep.KEY:string>` | string (trims whitespace) | `label: <prep.LABEL:string>` |
+
+Without a cast suffix the value stays a string, which yaml.v3 may quote when the
+content looks like a number or timestamp. With `:int` / `:float` / `:bool` the YAML
+is rendered as an unquoted native scalar.
+
 #### Example — default renderer
 
 ```yaml
@@ -272,9 +289,9 @@ joborder:
   preprocess_args:
     - "{input:SCE_DATA}"
   include:
-    start_scanline: <prep.MIN_SCANLINE>
-    end_scanline: <prep.MAX_SCANLINE>
-    n_scanlines: <prep.N_SCANLINES>
+    start_scanline: <prep.MIN_SCANLINE:int>
+    end_scanline: <prep.MAX_SCANLINE:int>
+    n_scanlines: <prep.N_SCANLINES:int>
     log_level: DEBUG
 ```
 

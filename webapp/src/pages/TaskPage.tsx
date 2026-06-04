@@ -46,6 +46,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
     : null;
   const selectedRunState = String(selectedRun?.state ?? "");
   const executionNode = String(selectedRun?.execution_node ?? "");
+  const elapsedTime = String(selectedRun?.elapsed_time ?? "");
   const selectedRunFailure = String(selectedRun?.failure_summary ?? selectedRun?.failure_reason ?? "");
   const canCancel = isOperator && (selectedRunState === "running" || selectedRunState === "queued");
   // Task-level failure summary (e.g. a fatal preparation error that occurs
@@ -110,6 +111,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             <div>state<span>{selectedRunState || String(taskQ.data.state ?? "—")}</span></div>
             <div>window<span>{fmtTime(taskQ.data.start)} – {fmtTime(taskQ.data.end)}</span></div>
             <div>created<span>{fmtTime(taskQ.data.created_at)}</span></div>
+            <div>elapsed<span>{elapsedTime || "—"}</span></div>
           </div>
         )}
         {runs.length > 0 && (

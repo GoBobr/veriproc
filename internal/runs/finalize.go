@@ -178,8 +178,17 @@ func (s *Service) Finalize(ctx context.Context, runID string) (*store.RunRecord,
 				return err
 			}
 			if joinTasks[child.TaskID] {
-				if _, err := tx.Tasks().SetStateIfCurrent(ctx, child.TaskID, "waiting_inputs", "accepted", ""); err != nil {
+				// Atomically increment the arrival counter and release the join
+				// task only when all expected producers have contributed.
+				arrived, err := tx.Tasks().IncrementJoinArrival(ctx, child.TaskID)
+				if err != nil {
 					return err
+				}
+				expected := downstreamPlan.JoinExpected[child.TaskID]
+				if expected > 0 && int(arrived) >= expected {
+					if _, err := tx.Tasks().SetStateIfCurrent(ctx, child.TaskID, "waiting_inputs", "accepted", ""); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -432,6 +441,9 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 			// Fan-out outputs: collect all files matching the pattern.
 			paths, merr := s.resolveAllOutputPaths(dir, out)
 			if merr != nil {
+				if !out.Required {
+					continue
+				}
 				return nil, merr
 			}
 			for _, path := range paths {
@@ -469,10 +481,16 @@ func (s *Service) validateOutputs(ctx context.Context, run *store.RunRecord) ([]
 		}
 		path, name, err := s.resolveOutputPath(dir, out)
 		if err != nil {
+			if !out.Required {
+				continue
+			}
 			return nil, err
 		}
 		info, err := os.Stat(path)
 		if err != nil {
+			if !out.Required {
+				continue
+			}
 			entries, _ := os.ReadDir(dir)
 			names := make([]string, 0, len(entries))
 			for _, e := range entries {
@@ -885,7 +903,7 @@ func jobOrderDocument(run *store.RunRecord, task *store.TaskRecord, rev *store.S
 			"generator_version": generator["version"],
 			"manifest_path":     manifestPath,
 		},
-		"order":   map[string]any{"start": task.WindowStart.UTC().Format(time.RFC3339Nano), "end": task.WindowEnd.UTC().Format(time.RFC3339Nano)},
+		"order":   map[string]any{"start": task.WindowStart.UTC(), "end": task.WindowEnd.UTC()},
 		"inputs":  inputs,
 		"outputs": outDocs,
 	}
@@ -1027,6 +1045,9 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 type downstreamPlan struct {
 	Tasks            []*store.TaskRecord
 	JoinTaskIDs      []string
+	// JoinExpected maps each join task ID to the number of upstream producers
+	// that must arrive before the task is released to the dispatcher.
+	JoinExpected     map[string]int
 	SplitGroups      []taskOutSplitGroupInit
 	TaskOutArtifact  *store.ArtifactRecord
 	ProvenanceReason string
@@ -1118,6 +1139,7 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 
 	children := make([]*store.TaskRecord, 0, len(routes))
 	joinTaskIDs := []string{}
+	joinExpected := map[string]int{}
 	baseCreated := s.clock().UTC()
 	for idx, route := range routes {
 		// "fan_in" targets are triggered by the group-complete notifier, and
@@ -1162,6 +1184,15 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 			return nil, err
 		}
 		sum := sha256.Sum256(raw)
+		// Join tasks start in waiting_inputs: they must not be dispatched until
+		// all expected upstream producers have finalised (Spec §join).
+		initialState := "accepted"
+		if route.Mode == "join" {
+			initialState = "waiting_inputs"
+			if n := s.joinExpectedCount(route.JoinID, resolved.StationID); n > 0 {
+				joinExpected[taskID] = n
+			}
+		}
 		children = append(children, &store.TaskRecord{
 			TaskID:               taskID,
 			SchemaVersion:        parent.SchemaVersion,
@@ -1173,11 +1204,11 @@ func (s *Service) buildDownstreamPlan(ctx context.Context, run *store.RunRecord,
 			RoutingContent:       raw,
 			RoutingContentHash:   hex.EncodeToString(sum[:]),
 			SubmissionOrigin:     "backend",
-			State:                "accepted",
+			State:                initialState,
 			CreatedAt:            created,
 		})
 	}
-	return &downstreamPlan{Tasks: children, JoinTaskIDs: joinTaskIDs, ProvenanceReason: "station_default_downstream"}, nil
+	return &downstreamPlan{Tasks: children, JoinTaskIDs: joinTaskIDs, JoinExpected: joinExpected, ProvenanceReason: "station_default_downstream"}, nil
 }
 
 func (s *Service) readTaskOutDescriptor(run *store.RunRecord) (*taskOutDescriptor, *store.ArtifactRecord, bool, error) {

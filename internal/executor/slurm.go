@@ -451,6 +451,10 @@ func parseSacctObservation(stdout string, observedAt time.Time) Observation {
 		if len(fields) > 1 {
 			exitField = strings.TrimSpace(fields[1])
 		}
+		elapsedField := ""
+		if len(fields) > 2 {
+			elapsedField = strings.TrimSpace(fields[2])
+		}
 		nodeList := ""
 		if len(fields) > 3 {
 			nodeList = strings.TrimSpace(fields[3])
@@ -459,7 +463,7 @@ func parseSacctObservation(stdout string, observedAt time.Time) Observation {
 			}
 		}
 		status, exitCode, failure := mapSlurmState(state, exitField)
-		return Observation{Status: status, ObservedAt: observedAt, ExitCode: exitCode, FailureMsg: failure, NativeState: line, Node: nodeList}
+		return Observation{Status: status, ObservedAt: observedAt, ExitCode: exitCode, FailureMsg: failure, NativeState: line, Node: nodeList, Elapsed: elapsedField}
 	}
 	return Observation{Status: StatusUnknown, ObservedAt: observedAt, NativeState: "UNKNOWN"}
 }

@@ -138,8 +138,9 @@ joborder:
   #                                        #   → expanded to space-joined input paths
   #
   # Variables from the script are then available in joborder.include as:
-  #   start_scanline: <prep.MIN_SCANLINE>
-  #   end_scanline:   <prep.MAX_SCANLINE>
+  #   start_scanline: <prep.MIN_SCANLINE:int>   # :int cast → YAML integer (no quotes)
+  #   end_scanline:   <prep.MAX_SCANLINE:int>   # without cast the value stays a string
+  # Supported casts: :int  :float  :bool  :string
   # Or in a Go template renderer as:
   #   start_scanline: {{ index .PrepVars "MIN_SCANLINE" }}
   #
@@ -150,8 +151,8 @@ joborder:
   # preprocess_args:
   #   - "{input:CLI_1B_RAD______}"
   # include:
-  #   start_scanline: <prep.MIN_SCANLINE>
-  #   end_scanline:   <prep.MAX_SCANLINE>
+  #   start_scanline: <prep.MIN_SCANLINE:int>
+  #   end_scanline:   <prep.MAX_SCANLINE:int>
   #
   # ─────────────────────────────────────────────────────────────────────────
   include:

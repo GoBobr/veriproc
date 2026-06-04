@@ -442,9 +442,6 @@ func normalizeDefinition(def Definition) Definition {
 		if def.Outputs[i].Mandatory {
 			def.Outputs[i].Required = true
 		}
-		if !def.Outputs[i].Required {
-			def.Outputs[i].Required = true
-		}
 	}
 	for i := range def.Downstream {
 		def.Downstream[i].StationID = strings.TrimSpace(def.Downstream[i].StationID)

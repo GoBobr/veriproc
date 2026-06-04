@@ -149,3 +149,94 @@ func TestResolveArgs_NoRefs(t *testing.T) {
 		t.Fatalf("got %v", out)
 	}
 }
+
+// --- Type-cast tests ---
+
+func TestResolveString_TypecastInt(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"SCANLINE": "13032"}}
+	v, err := stations.ResolveString("<prep.SCANLINE:int>", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	n, ok := v.(int64)
+	if !ok || n != 13032 {
+		t.Fatalf("expected int64(13032), got %T(%v)", v, v)
+	}
+}
+
+func TestResolveString_TypecastFloat(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"THRESH": "3.14"}}
+	v, err := stations.ResolveString("<prep.THRESH:float>", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	f, ok := v.(float64)
+	if !ok || f != 3.14 {
+		t.Fatalf("expected float64(3.14), got %T(%v)", v, v)
+	}
+}
+
+func TestResolveString_TypecastBool(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"FLAG": "true"}}
+	v, err := stations.ResolveString("<prep.FLAG:bool>", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b, ok := v.(bool)
+	if !ok || !b {
+		t.Fatalf("expected bool(true), got %T(%v)", v, v)
+	}
+}
+
+func TestResolveString_TypecastString(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"NAME": "  hello  "}}
+	v, err := stations.ResolveString("<prep.NAME:string>", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// :string trims whitespace and returns a string.
+	if v != "hello" {
+		t.Fatalf("expected \"hello\", got %v", v)
+	}
+}
+
+func TestResolveString_TypecastIntBadValue(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"X": "not-a-number"}}
+	_, err := stations.ResolveString("<prep.X:int>", ctx)
+	if err == nil {
+		t.Fatal("expected error for non-numeric value with :int cast")
+	}
+}
+
+func TestResolveString_TypecastUnknown(t *testing.T) {
+	ctx := map[string]any{"prep": map[string]any{"X": "42"}}
+	_, err := stations.ResolveString("<prep.X:datetime>", ctx)
+	if err == nil {
+		t.Fatal("expected error for unknown cast type")
+	}
+}
+
+func TestResolveString_TypecastEmbedded(t *testing.T) {
+	// In an embedded context the cast result is stringified before interpolation.
+	ctx := map[string]any{"prep": map[string]any{"N": "5"}}
+	v, err := stations.ResolveString("count-<prep.N:int>-items", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != "count-5-items" {
+		t.Fatalf("got %v", v)
+	}
+}
+
+func TestResolveString_TypecastNoCastPreservesBehavior(t *testing.T) {
+	// Existing refs without a cast suffix should work unchanged.
+	ctx := map[string]any{"prep": map[string]any{"KEY": "value"}}
+	v, err := stations.ResolveString("<prep.KEY>", ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != "value" {
+		t.Fatalf("got %v", v)
+	}
+}
+

@@ -40,6 +40,11 @@ type TaskRecord struct {
 	CreatedAt           time.Time
 	CompletedAt         sql.NullTime
 
+	// JoinArrivalCount is incremented atomically each time an upstream
+	// producer finalises for a join task. When it reaches the expected count
+	// the task is advanced from waiting_inputs to accepted.
+	JoinArrivalCount int
+
 	// LatestRunID and CanonicalRunID are non-persisted convenience fields
 	// populated by Get/List via JOIN onto runs(task_id, retry_index). They
 	// expose the internal surrogate run_id and exist solely for backend code
@@ -173,6 +178,22 @@ func (r *TaskRepo) SetStateIfCurrent(ctx context.Context, taskID, currentState, 
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// IncrementJoinArrival atomically increments join_arrival_count for the task
+// and returns the new value. It is used by the join wakeup logic to determine
+// when all expected upstream producers have finalised.
+func (r *TaskRepo) IncrementJoinArrival(ctx context.Context, taskID string) (int64, error) {
+	var count int64
+	err := r.q.QueryRowContext(ctx,
+		`UPDATE tasks SET join_arrival_count = join_arrival_count + 1
+		 WHERE task_id = ?
+		 RETURNING join_arrival_count`,
+		taskID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // SetLatestRun records the latest run's retry_index for a task.
@@ -324,7 +345,8 @@ const taskSelectColumns = `SELECT
 	latest_retry_index,
 	canonical_retry_index,
 	COALESCE(idempotency_record_id, ''),
-	created_at, completed_at`
+	created_at, completed_at,
+	join_arrival_count`
 
 // rowScanner abstracts *sql.Row and *sql.Rows for shared scan logic.
 type rowScanner interface {
@@ -350,6 +372,7 @@ func scanTask(s rowScanner) (*TaskRecord, error) {
 		&t.FailureSummary, &t.LatestRetryIndex, &t.CanonicalRetryIndex,
 		&t.IdempotencyRecordID,
 		&t.CreatedAt, &t.CompletedAt,
+		&t.JoinArrivalCount,
 	); err != nil {
 		return nil, err
 	}

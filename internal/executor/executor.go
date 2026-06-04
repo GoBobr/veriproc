@@ -122,6 +122,7 @@ type Observation struct {
 	FailureMsg  string
 	NativeState string // free-form executor-native state string for diagnostics
 	Node        string // scheduler-allocated node(s), if available (e.g. sacct NodeList)
+	Elapsed     string // scheduler-reported wall-clock runtime, if available (e.g. sacct Elapsed "[DD-]HH:MM:SS")
 }
 
 // Executor is the abstraction used by the runs service. Implementations must
