@@ -571,7 +571,8 @@ func (c *client) cmdTask(sub string, args []string) int {
 		c.renderResource(raw, m, []string{"task_id", "station_id", "start", "end", "state", "failure_summary", "latest_retry_index", "latest_run_ref", "canonical_retry_index", "canonical_run_ref", "split_group_id", "created_at"})
 		return ExitOK
 	case "list":
-		q := buildQuery(args, []string{"station_id", "state", "split_group_id", "parent_task_id", "limit", "cursor"})
+		q := buildQuery(args, []string{"station_id", "state", "split_group_id", "parent_task_id", "limit", "cursor"},
+			map[string]string{"station": "station_id", "split_group": "split_group_id"})
 		m, raw, err := c.do(http.MethodGet, "/api/v1/tasks"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
@@ -678,7 +679,8 @@ func (c *client) cmdRun(sub string, args []string) int {
 		c.renderResource(raw, m, []string{"station_id", "run_ref", "task_id", "start", "end", "state", "canonicality", "executor_type", "execution_node", "failure_reason", "created_at", "working_root"})
 		return ExitOK
 	case "list":
-		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"})
+		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"},
+			map[string]string{"task": "task_id", "station": "station_id"})
 		m, raw, err := c.do(http.MethodGet, "/api/v1/runs"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
@@ -1285,7 +1287,7 @@ func (c *client) cmdVersion(args []string) int {
 			checkAPI = true
 		}
 	}
-	fmt.Fprintf(c.stdout, "veriproc %s (%s)\n", version.Version, version.Commit)
+	fmt.Fprintf(c.stdout, "veriproc-cli %s (%s)\n", version.Version, version.Commit)
 	if !checkAPI {
 		return ExitOK
 	}
@@ -1299,12 +1301,17 @@ func (c *client) cmdVersion(args []string) int {
 
 // --- helpers ----------------------------------------------------------------
 
-// buildQuery converts ["--state", "open"] into "?state=open" for the listed
-// keys; unknown flags are silently ignored.
-func buildQuery(args, allowed []string) string {
+// buildQuery converts --flag args to a URL query string. aliases maps a
+// user-facing flag key (post normalisation) to the API query parameter name
+// when they differ (e.g. "task" → "task_id"). Unknown flags are silently ignored.
+func buildQuery(args, allowed []string, aliases ...map[string]string) string {
 	allow := map[string]bool{}
 	for _, k := range allowed {
 		allow[k] = true
+	}
+	var aliasMap map[string]string
+	if len(aliases) > 0 {
+		aliasMap = aliases[0]
 	}
 	parts := []string{}
 	for i := 0; i < len(args); i++ {
@@ -1325,6 +1332,11 @@ func buildQuery(args, allowed []string) string {
 			val = args[i]
 		}
 		key = strings.ReplaceAll(key, "-", "_")
+		if aliasMap != nil {
+			if mapped, ok := aliasMap[key]; ok {
+				key = mapped
+			}
+		}
 		if !allow[key] {
 			continue
 		}
@@ -1346,7 +1358,7 @@ Commands:
   task retry    TASK_ID
   task delete   TASK_ID [--dry-run] [--force]
   run  get      TASK_ID/rN
-  run  list     [--task TASK_ID] [--state S]
+  run  list     [--task TASK_ID] [--station STATION_ID] [--state S]
   run  jobs     TASK_ID/rN
   run  delete   TASK_ID/rN [--dry-run] [--force]
   artifact list --run TASK_ID/rN [--type LOGICAL]
