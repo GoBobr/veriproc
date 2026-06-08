@@ -48,7 +48,7 @@ func (h *stationHandler) summaryOne(w http.ResponseWriter, r *http.Request) {
 		writeStationErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"since": since, "station": out})
+	writeJSON(w, http.StatusOK, map[string]any{"since": since, "station": *out})
 }
 
 func parseSlotCount(r *http.Request) int {

@@ -1230,14 +1230,355 @@ func (c *client) cmdStation(sub string, args []string) int {
 		c.renderResource(raw, m, []string{"station_id", "station_name", "paused", "running_count", "queued_count"})
 		return ExitOK
 
+	case "topology":
+		return c.cmdStationTopology(args)
+
 	default:
-		fmt.Fprintln(c.stderr, "veriproc station {list|summary|pause|unpause}")
+		fmt.Fprintln(c.stderr, "veriproc station {list|summary|pause|unpause|topology}")
 		return ExitUsage
 	}
 }
 
 // renderStationSummaryTable renders station summary items flattening the nested
 // counts object into SUCCESS and FAILURE columns.
+func (c *client) cmdStationTopology(args []string) int {
+	fs := flag.NewFlagSet("topology", flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	format := fs.String("format", "block", "output format: block, mermaid")
+	byInput := fs.Bool("by-input", false, "show data-flow graph (outputs -> inputs)")
+	if err := fs.Parse(args); err != nil {
+		return ExitUsage
+	}
+
+	m, _, err := c.do(http.MethodGet, "/api/v1/stations", nil)
+	if err != nil {
+		return c.reportErr(err)
+	}
+
+	items, _ := m["items"].([]any)
+	stations := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		if mp, ok := it.(map[string]any); ok {
+			stations = append(stations, mp)
+		}
+	}
+	if len(stations) == 0 {
+		fmt.Fprintln(c.stdout, "no stations configured")
+		return ExitOK
+	}
+
+	nodesMap := make(map[string]topoNode, len(stations))
+	var order []string
+	for _, st := range stations {
+		id, _ := st["station_id"].(string)
+		name, _ := st["station_name"].(string)
+		down, _ := st["downstream"].([]any)
+		downIDs := make([]string, 0, len(down))
+		for _, d := range down {
+			if sid, ok := d.(string); ok && sid != "" {
+				downIDs = append(downIDs, sid)
+			}
+		}
+		paused, _ := st["paused"].(bool)
+		if paused {
+			if name == "" {
+				name = "(paused)"
+			} else {
+				name = name + " (paused)"
+			}
+		}
+		declInputs, _ := st["declared_inputs"].([]any)
+		inputTypes := make([]string, 0, len(declInputs))
+		for _, d := range declInputs {
+			if s, ok := d.(string); ok && s != "" {
+				inputTypes = append(inputTypes, s)
+			}
+		}
+		declOutputs, _ := st["declared_outputs"].([]any)
+		outputTypes := make([]string, 0, len(declOutputs))
+		for _, d := range declOutputs {
+			if s, ok := d.(string); ok && s != "" {
+				outputTypes = append(outputTypes, s)
+			}
+		}
+		nodesMap[id] = topoNode{
+			id:          id,
+			name:        name,
+			paused:      paused,
+			downstream:  downIDs,
+			inputTypes:  inputTypes,
+			outputTypes: outputTypes,
+		}
+		order = append(order, id)
+	}
+
+	if *byInput {
+		switch strings.ToLower(*format) {
+		case "mermaid":
+			return c.renderTopologyInputMermaid(nodesMap, order)
+		default:
+			return c.renderTopologyInputBlock(nodesMap, order)
+		}
+	}
+	switch strings.ToLower(*format) {
+	case "mermaid":
+		return c.renderTopologyMermaid(nodesMap, order)
+	default:
+		return c.renderTopologyBlock(nodesMap, order)
+	}
+}
+
+type topoNode struct {
+	id          string
+	name        string
+	paused      bool
+	downstream  []string
+	inputTypes  []string
+	outputTypes []string
+}
+
+func (c *client) renderTopologyBlock(nodes map[string]topoNode, order []string) int {
+	sort.Strings(order)
+
+	fmt.Fprintln(c.stdout, "Station Topology")
+	fmt.Fprintln(c.stdout, "===============")
+	fmt.Fprint(c.stdout, "\n")
+
+	for i, sid := range order {
+		n := nodes[sid]
+		if n.id == "" {
+			continue
+		}
+		boxWidth := len(n.name) + 2
+		if boxWidth < 12 {
+			boxWidth = 12
+		}
+		padded := fmt.Sprintf(" %s ", n.name)
+		for len(padded) < boxWidth {
+			padded += " "
+		}
+		line := strings.Repeat("─", boxWidth-2)
+		fmt.Fprintf(c.stdout, "┌─%s─┐\n", line)
+		fmt.Fprintf(c.stdout, "│%s│\n", padded)
+		fmt.Fprintf(c.stdout, "└─%s─┘\n", line)
+		for _, ch := range n.downstream {
+			if _, ok := nodes[ch]; ok {
+				fmt.Fprintf(c.stdout, "  └──► %s\n", ch)
+			}
+		}
+		if i < len(order)-1 {
+			fmt.Fprintln(c.stdout)
+		}
+	}
+	return ExitOK
+}
+
+func (c *client) renderTopologyMermaid(nodes map[string]topoNode, order []string) int {
+	fmt.Fprintln(c.stdout, "````mermaid")
+	fmt.Fprintln(c.stdout, "flowchart LR")
+
+	hasIncoming := make(map[string]bool)
+	for _, n := range nodes {
+		for _, ch := range n.downstream {
+			hasIncoming[ch] = true
+		}
+	}
+
+	var graphNodes []string
+	for _, sid := range order {
+		n := nodes[sid]
+		if n.id == "" {
+			continue
+		}
+		if len(n.downstream) > 0 || hasIncoming[n.id] {
+			graphNodes = append(graphNodes, sid)
+		}
+	}
+
+	for _, sid := range graphNodes {
+		n := nodes[sid]
+		nodeLabel := n.id
+		if n.name != "" {
+			nodeLabel = n.id + "\\n" + strings.ReplaceAll(n.name, "\n", "\\n")
+		}
+		fmt.Fprintf(c.stdout, "    %s[\"%s\"]\n", sid, nodeLabel)
+	}
+
+	for _, sid := range graphNodes {
+		n := nodes[sid]
+		for _, chID := range n.downstream {
+			if chN, ok := nodes[chID]; ok {
+				if chN.paused {
+					fmt.Fprintf(c.stdout, "    %s -.-> %s [label=downstream (paused)]\n", n.id, chID)
+				} else {
+					fmt.Fprintf(c.stdout, "    %s --> %s\n", n.id, chID)
+				}
+			}
+		}
+	}
+	fmt.Fprintln(c.stdout, "````")
+	return ExitOK
+}
+
+type dataFlowEdge struct {
+	from    string
+	to      string
+	product string
+}
+
+func buildDataFlowEdges(nodes map[string]topoNode) []dataFlowEdge {
+	var edges []dataFlowEdge
+	for _, n := range nodes {
+		for _, outType := range n.outputTypes {
+			for _, other := range nodes {
+				if other.id == n.id {
+					continue
+				}
+				for _, inType := range other.inputTypes {
+					if outType == inType {
+						edges = append(edges, dataFlowEdge{from: n.id, to: other.id, product: outType})
+					}
+				}
+			}
+		}
+	}
+	return edges
+}
+
+func (c *client) renderTopologyInputBlock(nodes map[string]topoNode, order []string) int {
+	sort.Strings(order)
+	edges := buildDataFlowEdges(nodes)
+
+	products := make(map[string]bool)
+	for _, e := range edges {
+		products[e.product] = true
+	}
+	var productOrder []string
+	for p := range products {
+		productOrder = append(productOrder, p)
+	}
+	sort.Strings(productOrder)
+
+	fmt.Fprintln(c.stdout, "Station Topology (data flow)")
+	fmt.Fprintln(c.stdout, "==========================")
+	fmt.Fprint(c.stdout, "\n")
+
+	if len(productOrder) == 0 {
+		fmt.Fprintln(c.stdout, "note: no station outputs match any other station's inputs")
+		fmt.Fprintln(c.stdout)
+		for _, sid := range order {
+			n := nodes[sid]
+			if n.id == "" {
+				continue
+			}
+			fmt.Fprintf(c.stdout, "  %s (%s):\n", n.id, n.name)
+			if len(n.inputTypes) == 0 {
+				fmt.Fprintln(c.stdout, "    inputs:  (none)")
+			} else {
+				fmt.Fprintf(c.stdout, "    inputs:  %s\n", strings.Join(n.inputTypes, ", "))
+			}
+			if len(n.outputTypes) == 0 {
+				fmt.Fprintln(c.stdout, "    outputs: (none)")
+			} else {
+				fmt.Fprintf(c.stdout, "    outputs: %s\n", strings.Join(n.outputTypes, ", "))
+			}
+			fmt.Fprintln(c.stdout)
+		}
+		return ExitOK
+	}
+
+	for idx, prod := range productOrder {
+		fmt.Fprintf(c.stdout, "product: %s\n", prod)
+		fmt.Fprint(c.stdout, "\n  ")
+		fmt.Fprint(c.stdout, strings.Repeat("─", 40))
+		fmt.Fprint(c.stdout, "\n\n")
+		for _, e := range edges {
+			if e.product != prod {
+				continue
+			}
+			fmt.Fprintf(c.stdout, "    %s ───[%s]───► %s\n", e.from, prod, e.to)
+		}
+		fmt.Fprint(c.stdout, "\n")
+		if idx < len(productOrder)-1 {
+			fmt.Fprintln(c.stdout)
+		}
+	}
+	return ExitOK
+}
+
+func (c *client) renderTopologyInputMermaid(nodes map[string]topoNode, order []string) int {
+	edges := buildDataFlowEdges(nodes)
+
+	participating := make(map[string]bool)
+	for _, e := range edges {
+		participating[e.from] = true
+		participating[e.to] = true
+	}
+	var graphOrder []string
+	for _, sid := range order {
+		if participating[sid] {
+			graphOrder = append(graphOrder, sid)
+		}
+	}
+
+	if len(graphOrder) == 0 && len(edges) == 0 {
+		fmt.Fprintln(c.stdout, "````mermaid")
+		fmt.Fprintln(c.stdout, "flowchart LR")
+		for _, sid := range order {
+			n := nodes[sid]
+			if n.id == "" {
+				continue
+			}
+			label := n.id
+			if n.name != "" {
+				label = n.name + " (no matching edges)"
+			} else {
+				label = n.id + " (no matching edges)"
+			}
+			fmt.Fprintf(c.stdout, "    %s[\"%s\\ninputs: %s\\noutputs: %s\"]\n",
+				sid, label,
+				strings.Join(n.inputTypes, ", "),
+				strings.Join(n.outputTypes, ", "))
+		}
+		fmt.Fprintln(c.stdout, "````")
+		return ExitOK
+	}
+
+	fmt.Fprintln(c.stdout, "````mermaid")
+	fmt.Fprintln(c.stdout, "flowchart LR")
+	for _, sid := range graphOrder {
+		n := nodes[sid]
+		if n.name != "" {
+			fmt.Fprintf(c.stdout, "    %s[\"%s\\n%s\"]\n", sid, sid, strings.ReplaceAll(n.name, "\n", "\\n"))
+		} else {
+			fmt.Fprintf(c.stdout, "    %s[\"%s\"]\n", sid, sid)
+		}
+	}
+
+	type prodEdge struct {
+		from string
+		to   string
+		prod string
+	}
+	var products []string
+	prodEdges := make(map[string][]prodEdge)
+	for _, e := range edges {
+		if _, ok := prodEdges[e.product]; !ok {
+			products = append(products, e.product)
+		}
+		prodEdges[e.product] = append(prodEdges[e.product], prodEdge{e.from, e.to, e.product})
+	}
+	sort.Strings(products)
+
+	for _, prod := range products {
+		for _, pe := range prodEdges[prod] {
+			fmt.Fprintf(c.stdout, "    %s -- %s --> %s\n", pe.from, pe.prod, pe.to)
+		}
+	}
+	fmt.Fprintln(c.stdout, "````")
+	return ExitOK
+}
+
 func (c *client) renderStationSummaryTable(items []map[string]any) {
 	tw := tabwriter.NewWriter(c.stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "STATION ID\tPAUSED\tRUNNING\tQUEUED\tSUCCESS\tFAILURE\tLAST REFRESH")
@@ -1370,8 +1711,9 @@ Commands:
   group close   GROUP_ID
   station list
   station summary [STATION_ID] [--since RFC3339]
-  station pause   STATION_ID
-  station unpause STATION_ID
+  station pause      STATION_ID
+  station unpause    STATION_ID
+  station topology   [--format block|mermaid] [--by-input]
   clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force]
   health
   readiness

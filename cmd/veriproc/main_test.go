@@ -17,6 +17,7 @@ type fakeAPI struct {
 	runs       map[string]map[string]any
 	groups     map[string]map[string]any
 	cancelHits map[string]int
+	stations   []map[string]any
 	server     *httptest.Server
 }
 
@@ -27,6 +28,9 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		runs:       map[string]map[string]any{},
 		groups:     map[string]map[string]any{},
 		cancelHits: map[string]int{},
+		stations: []map[string]any{
+			{"station_id": "ST-A", "station_name": "station-alpha", "paused": false},
+		},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -159,11 +163,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		}
 	}
 	mux.HandleFunc("/api/v1/stations", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{
-			"items": []any{
-				map[string]any{"station_id": "ST-A", "station_name": "station-alpha", "paused": false},
-			},
-		})
+		writeJSON(w, 200, map[string]any{"items": f.stations})
 	})
 	mux.HandleFunc("/api/v1/stations/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/stations/")
@@ -595,5 +595,161 @@ func TestCLI_Submit_InvalidEnd(t *testing.T) {
 		"--end", "BADEND")
 	if code != ExitValidation {
 		t.Fatalf("invalid end: exit = %d (want %d, stderr=%s)", code, ExitValidation, errs)
+	}
+}
+
+// TestCLI_Station_Topology_NoArgs — topology with no stations shows note.
+func TestCLI_Station_Topology_NoArgs(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "A") || !strings.Contains(out, "Alpha") {
+		t.Errorf("missing station A in block output: %s", out)
+	}
+	if !strings.Contains(out, "Station Topology") {
+		t.Errorf("missing header: %s", out)
+	}
+}
+
+// TestCLI_Station_Topology_Block — block format shows downstream links.
+func TestCLI_Station_Topology_BlockDownstream(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false,
+			"downstream": []any{"B"}},
+		{"station_id": "B", "station_name": "Beta", "paused": false,
+			"downstream": []any{}},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "└──► B") {
+		t.Errorf("missing downstream link to B: %s", out)
+	}
+}
+
+// TestCLI_Station_Topology_Mermaid — mermaid format renders flowchart.
+func TestCLI_Station_Topology_Mermaid(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false,
+			"downstream": []any{"B"}},
+		{"station_id": "B", "station_name": "Beta", "paused": false,
+			"downstream": []any{}},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology", "--format", "mermaid"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "mermaid") {
+		t.Errorf("missing mermaid label: %s", out)
+	}
+	if !strings.Contains(out, "A --> B") {
+		t.Errorf("missing edge A --> B: %s", out)
+	}
+}
+
+// TestCLI_Station_Topology_ByInput_Block — by-input block shows products and links.
+func TestCLI_Station_Topology_ByInput_Block(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{"PROD_X"},
+			"declared_inputs": []any{},
+		},
+		{"station_id": "B", "station_name": "Beta", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{},
+			"declared_inputs": []any{"PROD_X"},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology", "--by-input"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "data flow") {
+		t.Errorf("missing data flow label: %s", out)
+	}
+	if !strings.Contains(out, "PROD_X") {
+		t.Errorf("missing product PROD_X: %s", out)
+	}
+	if !strings.Contains(out, "A") || !strings.Contains(out, "B") {
+		t.Errorf("missing stations A and B: %s", out)
+	}
+}
+
+// TestCLI_Station_Topology_ByInput_Mermaid — by-input mermaid renders with product labels.
+func TestCLI_Station_Topology_ByInput_Mermaid(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{"PROD_Y"},
+			"declared_inputs": []any{},
+		},
+		{"station_id": "B", "station_name": "Beta", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{},
+			"declared_inputs": []any{"PROD_Y"},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology", "--by-input", "--format", "mermaid"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "mermaid") {
+		t.Errorf("missing mermaid label: %s", out)
+	}
+	if !strings.Contains(out, "PROD_Y") {
+		t.Errorf("missing product PROD_Y: %s", out)
+	}
+	if !strings.Contains(out, "A") || !strings.Contains(out, "B") {
+		t.Errorf("missing stations A and B: %s", out)
+	}
+}
+
+// TestCLI_Station_Topology_ByInput_NoEdges — no matching edges shows note + station details.
+func TestCLI_Station_Topology_ByInput_NoEdges(t *testing.T) {
+	api := newFakeAPI(t)
+	api.stations = []map[string]any{
+		{"station_id": "A", "station_name": "Alpha", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{"PROD_A"},
+			"declared_inputs": []any{},
+		},
+		{"station_id": "B", "station_name": "Beta", "paused": false,
+			"downstream": []any{},
+			"declared_outputs": []any{"PROD_B"},
+			"declared_inputs": []any{"PROD_C"},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--api-url", api.server.URL, "station", "topology", "--by-input"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "no station outputs match") {
+		t.Errorf("missing no-match note: %s", out)
+	}
+	if !strings.Contains(out, "PROD_A") || !strings.Contains(out, "PROD_B") || !strings.Contains(out, "PROD_C") {
+		t.Errorf("missing product details: %s", out)
 	}
 }

@@ -14,6 +14,8 @@ type StationListRecord struct {
 	StationID          string
 	StationName        string
 	DeclaredDownstream string // raw JSON, empty if none
+	DeclaredInputs     string // raw JSON, empty if none
+	DeclaredOutputs    string // raw JSON, empty if none
 }
 
 // StationRevisionRecord matches Spec §3.2 / §4.3 (station_revisions).
@@ -147,7 +149,10 @@ func (r *StationRevisionRepo) ExistsStationID(ctx context.Context, stationID str
 // ListCurrent returns one current operator-facing record per station_id.
 func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRecord, error) {
 	rows, err := r.q.QueryContext(ctx, `
-		SELECT sr.station_id, sr.station_name, COALESCE(sr.declared_downstream, '')
+		SELECT sr.station_id, sr.station_name,
+		       COALESCE(sr.declared_downstream, ''),
+		       COALESCE(sr.declared_inputs, ''),
+		       COALESCE(sr.declared_outputs, '')
 		FROM station_revisions sr
 		WHERE NOT EXISTS (
 			SELECT 1
@@ -166,7 +171,8 @@ func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRe
 	out := []*StationListRecord{}
 	for rows.Next() {
 		var rec StationListRecord
-		if err := rows.Scan(&rec.StationID, &rec.StationName, &rec.DeclaredDownstream); err != nil {
+		if err := rows.Scan(&rec.StationID, &rec.StationName, &rec.DeclaredDownstream,
+			&rec.DeclaredInputs, &rec.DeclaredOutputs); err != nil {
 			return nil, err
 		}
 		out = append(out, &rec)

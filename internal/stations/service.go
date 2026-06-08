@@ -50,6 +50,10 @@ type StationView struct {
 	LastRefresh  time.Time     `json:"last_refresh,omitempty"`
 	// Downstream lists the station IDs that this station triggers automatically.
 	Downstream   []string      `json:"downstream,omitempty"`
+	// DeclaredInputs are the input file_types declared by the station.
+	DeclaredInputs []string `json:"declared_inputs,omitempty"`
+	// DeclaredOutputs are the output file_types declared by the station.
+	DeclaredOutputs []string `json:"declared_outputs,omitempty"`
 }
 
 func NewService(st *store.Store, now func() time.Time) *Service {
@@ -119,10 +123,30 @@ func (s *Service) List(ctx context.Context) ([]StationView, error) {
 		if rec.DeclaredDownstream != "" {
 			view.Downstream = parseDownstreamIDs(rec.DeclaredDownstream)
 		}
+		if rec.DeclaredInputs != "" {
+			view.DeclaredInputs = parseInputOutputTypes(rec.DeclaredInputs, "file_type")
+		}
+		if rec.DeclaredOutputs != "" {
+			view.DeclaredOutputs = parseInputOutputTypes(rec.DeclaredOutputs, "file_type")
+		}
 		out = append(out, view)
 	}
 	s.applyOrder(out)
 	return out, nil
+}
+
+func parseInputOutputTypes(raw string, key string) []string {
+	entries := make([]map[string]any, 0)
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil
+	}
+	types := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if ft, ok := e[key].(string); ok && ft != "" {
+			types = append(types, ft)
+		}
+	}
+	return types
 }
 
 // parseDownstreamIDs decodes the declared_downstream JSON and returns the
