@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/stations"
 )
 
 type stationHandler struct {

@@ -7,15 +7,15 @@ package httpapi
 import (
 	"net/http"
 
-	"github.com/eum/veriproc/internal/auth"
-	"github.com/eum/veriproc/internal/cleaner"
-	"github.com/eum/veriproc/internal/config"
-	"github.com/eum/veriproc/internal/groups"
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/runs"
-	stationssvc "github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/tasks"
+	"github.com/gobobr/veriproc/internal/auth"
+	"github.com/gobobr/veriproc/internal/cleaner"
+	"github.com/gobobr/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/groups"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/runs"
+	stationssvc "github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/tasks"
 	"github.com/rs/zerolog"
 )
 

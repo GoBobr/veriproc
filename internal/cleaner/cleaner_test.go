@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 func newStore(t *testing.T) *store.Store {

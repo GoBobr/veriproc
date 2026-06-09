@@ -13,11 +13,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/auth"
-	"github.com/eum/veriproc/internal/config"
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/httpapi"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/auth"
+	"github.com/gobobr/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/httpapi"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // authTestAPI starts a minimal API with auth and quota wired in. No Tasks/Runs

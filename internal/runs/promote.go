@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // ErrPromoteIneligible is returned when a run cannot be promoted to canonical

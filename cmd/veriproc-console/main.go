@@ -19,8 +19,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/console"
-	"github.com/eum/veriproc/internal/version"
+	"github.com/gobobr/veriproc/internal/console"
+	"github.com/gobobr/veriproc/internal/version"
 )
 
 func main() {

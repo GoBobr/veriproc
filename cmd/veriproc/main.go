@@ -49,8 +49,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/eum/veriproc/internal/policy"
-	"github.com/eum/veriproc/internal/version"
+	"github.com/gobobr/veriproc/internal/policy"
+	"github.com/gobobr/veriproc/internal/version"
 )
 
 // Spec §6.10 exit codes.

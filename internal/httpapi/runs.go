@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 var errInvalidRunListRequest = errors.New("httpapi: invalid run list request")

@@ -20,8 +20,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eum/veriproc/internal/envexpand"
-	"github.com/eum/veriproc/internal/policy"
+	"github.com/gobobr/veriproc/internal/envexpand"
+	"github.com/gobobr/veriproc/internal/policy"
 )
 
 // Config is the resolved backend configuration.

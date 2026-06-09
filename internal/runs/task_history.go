@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // taskHistoryEntry is one hop in the routing chain embedded in task.yaml.

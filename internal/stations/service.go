@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // defaultCompletedVisibilityTimeout is 0, meaning no cutoff: the upstream

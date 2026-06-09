@@ -7,8 +7,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // Dispatcher drives runs through the lifecycle on a fixed cadence:

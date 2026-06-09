@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // ErrGroupNotFound is returned when the requested group id does not exist.

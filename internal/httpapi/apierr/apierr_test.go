@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/logging"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/logging"
 )
 
 // TestAPIErr_Envelope_AllCodes_5_7 — every advertised code maps to a

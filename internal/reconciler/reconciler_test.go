@@ -8,11 +8,11 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/reconciler"
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/reconciler"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // helper: build a fully wired runs.Service over a fresh sqlite store with a

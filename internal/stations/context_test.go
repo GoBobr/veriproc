@@ -3,7 +3,7 @@ package stations_test
 import (
 	"testing"
 
-	"github.com/eum/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/stations"
 )
 
 func TestResolveString_NoRefs(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/runs"
 )
 
 // TestRuns_Retry_FailedTask_3_7 — Retry on a failed task creates a new run

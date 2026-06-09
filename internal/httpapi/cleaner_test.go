@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eum/veriproc/internal/cleaner"
-	"github.com/eum/veriproc/internal/config"
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/httpapi"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/cleaner"
+	"github.com/gobobr/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/httpapi"
+	"github.com/gobobr/veriproc/internal/store"
 	"github.com/rs/zerolog"
 )
 

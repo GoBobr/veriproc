@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/eum/veriproc/internal/auth"
-	"github.com/eum/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/auth"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
 )
 
 // authMiddleware enforces bearer-token authentication on /api/v1/* paths

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eum/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/runs"
 )
 
 // TestCancel_BlockedByReconciliation — when reconciliation_started_at is

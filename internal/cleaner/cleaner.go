@@ -21,7 +21,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // Sentinel errors mapped by the HTTP layer to API error codes.

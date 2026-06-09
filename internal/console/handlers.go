@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eum/veriproc/internal/version"
+	"github.com/gobobr/veriproc/internal/version"
 )
 
 // writeJSON encodes body to w with the supplied status.

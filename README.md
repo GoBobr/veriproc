@@ -206,3 +206,7 @@ The console UI will be available at `http://localhost:8090/`.
 ### Customising the Go base image
 
 The Dockerfiles live in `docker/` and use standard multi-stage builds. The Go builder stage uses `golang:1.25-alpine`; the runtime stage uses `alpine:3.21`. Pin these to specific digests for reproducible production builds.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

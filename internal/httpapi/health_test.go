@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eum/veriproc/internal/config"
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/logging"
+	"github.com/gobobr/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/logging"
 	"github.com/rs/zerolog"
 )
 

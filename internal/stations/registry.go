@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // ErrUnknownStation is returned when the supplied station_id cannot be

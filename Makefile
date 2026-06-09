@@ -29,7 +29,7 @@ LDFLAGS          := -X $(MODULE)/internal/version.Version=$(VERSION) \
 # Override DOCKER_REGISTRY and IMAGE_PREFIX to push to your own registry.
 # Example: make docker-build DOCKER_REGISTRY=registry.example.com/veriproc
 DOCKER          ?= docker
-DOCKER_REGISTRY ?= ghcr.io/leonid-butenko
+DOCKER_REGISTRY ?= ghcr.io/gobobr
 IMAGE_DAEMON    := $(DOCKER_REGISTRY)/veriproc
 IMAGE_CONSOLE   := $(DOCKER_REGISTRY)/veriproc-console
 # DOCKER_TAG and DOCKER_BUILDARGS use = (recursive expansion) so they pick up

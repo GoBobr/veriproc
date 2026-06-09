@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // TestRuns_CancelDispatched_5_8 — happy-path: cancel a dispatched run.

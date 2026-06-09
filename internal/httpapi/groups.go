@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/eum/veriproc/internal/groups"
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/groups"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 type groupHandler struct {

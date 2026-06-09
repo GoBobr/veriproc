@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eum/veriproc/internal/envexpand"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/envexpand"
+	"github.com/gobobr/veriproc/internal/store"
 	"gopkg.in/yaml.v3"
 )
 

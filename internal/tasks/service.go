@@ -23,9 +23,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/policy"
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/policy"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // IdempotencyScope is the scope string used for task-submission idempotency

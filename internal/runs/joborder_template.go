@@ -13,8 +13,8 @@ import (
 	toml "github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 type jobOrderTemplateInput struct {

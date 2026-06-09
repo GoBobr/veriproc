@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // ErrRetryIneligible is returned when a task cannot be retried because it is

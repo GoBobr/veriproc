@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/version"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/version"
 )
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

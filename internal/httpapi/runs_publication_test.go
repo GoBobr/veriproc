@@ -10,8 +10,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/publisher"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/publisher"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // TestAPI_RunArtifacts_PublicationStatus_5_5_6 — once a publication has

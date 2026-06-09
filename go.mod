@@ -1,4 +1,4 @@
-module github.com/eum/veriproc
+module github.com/GoBobr/veriproc
 
 go 1.25.0
 

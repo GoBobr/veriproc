@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // ErrCancellationUnsupported is returned by Cancel when the executor backing

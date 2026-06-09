@@ -13,8 +13,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/fileops"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/fileops"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // Service publishes pending publications into the configured archive base directory.

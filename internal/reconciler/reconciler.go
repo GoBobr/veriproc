@@ -21,8 +21,8 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // Service is the reconciliation worker.

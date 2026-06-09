@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/eum/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/config"
 	"github.com/rs/zerolog"
 )
 

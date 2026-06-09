@@ -10,11 +10,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
-	"github.com/eum/veriproc/internal/tasks"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/tasks"
 )
 
 // TestTaskHistory_RootTask_2_6_1 — a root task (no parent, no history) must

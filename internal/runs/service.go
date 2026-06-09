@@ -29,11 +29,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/canonjson"
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/policy"
-	"github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/canonjson"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/policy"
+	"github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
 )
 
 // Sentinel errors. Package-level so HTTP handlers can map them to API codes.

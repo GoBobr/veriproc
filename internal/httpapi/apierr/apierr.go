@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/eum/veriproc/internal/logging"
+	"github.com/gobobr/veriproc/internal/logging"
 )
 
 // Code is the stable, machine-readable error code clients should switch on.

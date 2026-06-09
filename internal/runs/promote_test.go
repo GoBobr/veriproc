@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eum/veriproc/internal/runs"
-	"github.com/eum/veriproc/internal/tasks"
+	"github.com/gobobr/veriproc/internal/runs"
+	"github.com/gobobr/veriproc/internal/tasks"
 )
 
 // finalizeTaskRun runs the standard happy-path lifecycle for the given task

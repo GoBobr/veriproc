@@ -5,8 +5,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/logging"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/logging"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 )

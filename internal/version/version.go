@@ -2,9 +2,9 @@
 //
 // Values are overridable via -ldflags at build time, e.g.:
 //
-//	go build -ldflags "-X github.com/eum/veriproc/internal/version.Version=v0.1.0 \
-//	                  -X github.com/eum/veriproc/internal/version.Commit=abcdef \
-//	                  -X github.com/eum/veriproc/internal/version.BuildDate=2026-05-05T00:00:00Z" \
+//	go build -ldflags "-X github.com/gobobr/veriproc/internal/version.Version=v0.1.0 \
+//	                  -X github.com/gobobr/veriproc/internal/version.Commit=abcdef \
+//	                  -X github.com/gobobr/veriproc/internal/version.BuildDate=2026-05-05T00:00:00Z" \
 //	  ./cmd/veriprocd
 package version
 

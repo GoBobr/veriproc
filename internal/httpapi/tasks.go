@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eum/veriproc/internal/httpapi/apierr"
-	"github.com/eum/veriproc/internal/policy"
-	"github.com/eum/veriproc/internal/store"
-	"github.com/eum/veriproc/internal/tasks"
+	"github.com/gobobr/veriproc/internal/httpapi/apierr"
+	"github.com/gobobr/veriproc/internal/policy"
+	"github.com/gobobr/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/tasks"
 )
 
 // taskHandler bundles the task service. It is mounted under /api/v1/tasks

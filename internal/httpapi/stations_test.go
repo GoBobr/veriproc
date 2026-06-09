@@ -13,15 +13,15 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/eum/veriproc/internal/auth"
-	"github.com/eum/veriproc/internal/config"
-	"github.com/eum/veriproc/internal/executor"
-	"github.com/eum/veriproc/internal/health"
-	"github.com/eum/veriproc/internal/httpapi"
-	runspkg "github.com/eum/veriproc/internal/runs"
-	stationssvc "github.com/eum/veriproc/internal/stations"
-	"github.com/eum/veriproc/internal/store"
-	"github.com/eum/veriproc/internal/tasks"
+	"github.com/gobobr/veriproc/internal/auth"
+	"github.com/gobobr/veriproc/internal/config"
+	"github.com/gobobr/veriproc/internal/executor"
+	"github.com/gobobr/veriproc/internal/health"
+	"github.com/gobobr/veriproc/internal/httpapi"
+	runspkg "github.com/gobobr/veriproc/internal/runs"
+	stationssvc "github.com/gobobr/veriproc/internal/stations"
+	"github.com/gobobr/veriproc/internal/store"
+	"github.com/gobobr/veriproc/internal/tasks"
 )
 
 type stationAPI struct {
