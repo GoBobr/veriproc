@@ -600,15 +600,20 @@ func (c *client) cmdTask(sub string, args []string) int {
 		fs.SetOutput(c.stderr)
 		force := fs.Bool("force", false, "skip the confirmation prompt")
 		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+		quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
 		if err := fs.Parse(args); err != nil {
 			return ExitUsage
 		}
 		rest := fs.Args()
 		if len(rest) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc task delete TASK_ID [--dry-run] [--force]")
+			fmt.Fprintln(c.stderr, "veriproc task delete [--dry-run] [--force] [--quiet] TASK_ID [TASK_ID...]")
 			return ExitUsage
 		}
-		return c.cmdDelete("task", "/api/v1/tasks/"+rest[0], rest[0], *dryRun, *force)
+		paths := make([]string, len(rest))
+		for i, id := range rest {
+			paths[i] = "/api/v1/tasks/" + id
+		}
+		return c.cmdDelete("task", paths, rest, *dryRun, *force, *quiet)
 	default:
 		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry|delete}")
 		return ExitUsage
@@ -707,19 +712,24 @@ func (c *client) cmdRun(sub string, args []string) int {
 		fs.SetOutput(c.stderr)
 		force := fs.Bool("force", false, "skip the confirmation prompt")
 		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+		quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
 		if err := fs.Parse(args); err != nil {
 			return ExitUsage
 		}
 		rest := fs.Args()
 		if len(rest) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc run delete TASK_ID/rN [--dry-run] [--force]")
+			fmt.Fprintln(c.stderr, "veriproc run delete [--dry-run] [--force] [--quiet] TASK_ID/rN [TASK_ID/rN...]")
 			return ExitUsage
 		}
-		runID, err := c.resolveRunID(rest[0])
-		if err != nil {
-			return c.reportErr(err)
+		paths := make([]string, 0, len(rest))
+		for _, ref := range rest {
+			runID, err := c.resolveRunID(ref)
+			if err != nil {
+				return c.reportErr(err)
+			}
+			paths = append(paths, "/api/v1/runs/"+runID)
 		}
-		return c.cmdDelete("run", "/api/v1/runs/"+runID, rest[0], *dryRun, *force)
+		return c.cmdDelete("run", paths, rest, *dryRun, *force, *quiet)
 	default:
 		fmt.Fprintln(c.stderr, "veriproc run {get|list|jobs|delete}")
 		return ExitUsage
@@ -750,7 +760,9 @@ var countOrder = []string{
 
 // renderCleanReport prints a human-readable summary of a cleanup report. In
 // json/yaml output mode it defers to the raw renderers instead.
-func (c *client) renderCleanReport(rep *cleanReport, raw []byte) {
+// When quiet is true only the counts table is printed; the per-ID and
+// working-root path listings are suppressed.
+func (c *client) renderCleanReport(rep *cleanReport, raw []byte, quiet bool) {
 	if c.out == "json" {
 		c.writeJSON(raw)
 		return
@@ -762,19 +774,63 @@ func (c *client) renderCleanReport(rep *cleanReport, raw []byte) {
 			return
 		}
 	}
+	// Counts table — always shown.
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	// tasks and runs are derived from the ID slices (always populated) so they
+	// appear even when the API omits them from the counts map.
+	if n := len(rep.TaskIDs); n > 0 {
+		fmt.Fprintf(tw, "tasks\t%d\n", n)
+	}
+	if n := len(rep.RunIDs); n > 0 {
+		fmt.Fprintf(tw, "runs\t%d\n", n)
+	}
 	for _, k := range countOrder {
+		if k == "tasks" || k == "runs" {
+			continue // already emitted above
+		}
 		if v, ok := rep.Counts[k]; ok && v > 0 {
 			fmt.Fprintf(tw, "%s\t%d\n", k, v)
 		}
 	}
-	tw.Flush()
-	fmt.Fprintf(c.stdout, "tasks selected: %d, runs selected: %d\n", len(rep.TaskIDs), len(rep.RunIDs))
+	// Working-root count — always shown as a summary line.
 	if len(rep.WorkingRoots) > 0 {
 		if rep.DryRun {
-			fmt.Fprintf(c.stdout, "working roots to remove: %d\n", len(rep.WorkingRoots))
+			fmt.Fprintf(tw, "working roots to remove\t%d\n", len(rep.WorkingRoots))
 		} else {
-			fmt.Fprintf(c.stdout, "working roots removed: %d/%d\n", rep.WorkingRootsRemoved, len(rep.WorkingRoots))
+			fmt.Fprintf(tw, "working roots removed\t%d/%d\n", rep.WorkingRootsRemoved, len(rep.WorkingRoots))
+		}
+	}
+	tw.Flush()
+	if quiet {
+		// Suppress per-ID listings in quiet mode.
+		for _, fe := range rep.FilesystemErrors {
+			fmt.Fprintln(c.stderr, "veriproc: filesystem error: "+fe)
+		}
+		return
+	}
+	// Task IDs.
+	if len(rep.TaskIDs) > 0 {
+		fmt.Fprintln(c.stdout, "\ntask ids:")
+		for _, id := range rep.TaskIDs {
+			fmt.Fprintf(c.stdout, "  %s\n", id)
+		}
+	}
+	// Run IDs.
+	if len(rep.RunIDs) > 0 {
+		fmt.Fprintln(c.stdout, "\nrun ids:")
+		for _, id := range rep.RunIDs {
+			fmt.Fprintf(c.stdout, "  %s\n", id)
+		}
+	}
+	// Working root paths.
+	if len(rep.WorkingRoots) > 0 {
+		if rep.DryRun {
+			fmt.Fprintf(c.stdout, "\nworking roots to remove (%d):\n", len(rep.WorkingRoots))
+		} else {
+			fmt.Fprintf(c.stdout, "\nworking roots removed (%d/%d):\n", rep.WorkingRootsRemoved, len(rep.WorkingRoots))
+		}
+		for _, wr := range rep.WorkingRoots {
+			fmt.Fprintf(c.stdout, "  %s\n", wr)
 		}
 	}
 	for _, fe := range rep.FilesystemErrors {
@@ -798,31 +854,81 @@ func (c *client) confirm(prompt string) bool {
 	return false
 }
 
-// cmdDelete performs a DELETE against path, with an optional dry-run preview
-// and confirmation prompt. label is "task" or "run"; ref is the operator-facing
-// identifier used in messages.
-func (c *client) cmdDelete(label, path, ref string, dryRun, force bool) int {
+// mergeReports combines multiple cleanReports into one by summing counts and
+// appending ID/path slices. DryRun is taken from the first report.
+func mergeReports(reports []*cleanReport) *cleanReport {
+	merged := &cleanReport{Counts: make(map[string]int)}
+	for i, rep := range reports {
+		if i == 0 {
+			merged.DryRun = rep.DryRun
+		}
+		for k, v := range rep.Counts {
+			merged.Counts[k] += v
+		}
+		merged.TaskIDs = append(merged.TaskIDs, rep.TaskIDs...)
+		merged.RunIDs = append(merged.RunIDs, rep.RunIDs...)
+		merged.WorkingRoots = append(merged.WorkingRoots, rep.WorkingRoots...)
+		merged.WorkingRootsRemoved += rep.WorkingRootsRemoved
+		merged.FilesystemErrors = append(merged.FilesystemErrors, rep.FilesystemErrors...)
+	}
+	return merged
+}
+
+// cmdDelete performs DELETE requests for one or more paths, with a combined
+// content listing, an optional confirmation prompt, and optional dry-run.
+// Always shows counts before prompting or deleting. Without --quiet the full
+// per-ID and working-root path listing is also shown.
+func (c *client) cmdDelete(label string, paths, refs []string, dryRun, force, quiet bool) int {
+	// collectReports issues a DELETE (dry-run or real) against every path and
+	// returns the merged report. It stops and returns an error on first failure.
+	collectReports := func(dry bool) (*cleanReport, error) {
+		reports := make([]*cleanReport, 0, len(paths))
+		for _, p := range paths {
+			rep, _, err := c.deleteCall(p, dry)
+			if err != nil {
+				return nil, err
+			}
+			reports = append(reports, rep)
+		}
+		return mergeReports(reports), nil
+	}
+
+	renderMerged := func(merged *cleanReport, dry bool) {
+		merged.DryRun = dry
+		raw, _ := json.Marshal(merged)
+		c.renderCleanReport(merged, raw, quiet)
+	}
+
 	if dryRun {
-		rep, raw, err := c.deleteCall(path, true)
+		merged, err := collectReports(true)
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderCleanReport(rep, raw)
+		renderMerged(merged, true)
 		return ExitOK
 	}
+
+	// Always show a pre-delete preview (counts always; full listing unless --quiet).
+	preview, err := collectReports(true)
+	if err != nil {
+		return c.reportErr(err)
+	}
+	renderMerged(preview, true)
+
 	if !force {
-		// Preview first so the operator sees the blast radius before confirming.
-		rep, raw, err := c.deleteCall(path, true)
-		if err != nil {
-			return c.reportErr(err)
+		var prompt string
+		if len(refs) == 1 {
+			prompt = fmt.Sprintf("Delete %s %s and all related artifacts? [y/N] ", label, refs[0])
+		} else {
+			prompt = fmt.Sprintf("Delete %d %ss and all related artifacts? [y/N] ", len(refs), label)
 		}
-		c.renderCleanReport(rep, raw)
-		if !c.confirm(fmt.Sprintf("Delete %s %s and all listed artifacts? [y/N] ", label, ref)) {
+		if !c.confirm(prompt) {
 			fmt.Fprintln(c.stderr, "veriproc: aborted")
 			return ExitOK
 		}
 	}
-	rep, raw, err := c.deleteCall(path, false)
+
+	result, err := collectReports(false)
 	if err != nil {
 		var ae *apiError
 		if !errors.As(err, &ae) {
@@ -831,7 +937,7 @@ func (c *client) cmdDelete(label, path, ref string, dryRun, force bool) int {
 		}
 		return c.reportErr(err)
 	}
-	c.renderCleanReport(rep, raw)
+	renderMerged(result, false)
 	return ExitOK
 }
 
@@ -851,7 +957,7 @@ func (c *client) deleteCall(path string, dryRun bool) (*cleanReport, []byte, err
 }
 
 // cmdClean implements `veriproc clean --before TS | --after TS [--dry-run]
-// [--force]`. With neither cutoff it prints the command help (Spec §6).
+// [--force] [--quiet]`. With neither cutoff it prints the command help (Spec §6).
 func (c *client) cmdClean(args []string) int {
 	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
@@ -860,6 +966,7 @@ func (c *client) cmdClean(args []string) int {
 	by := fs.String("by", "processing-time", "cutoff basis: processing-time (created_at) or processing-window (sensing window)")
 	force := fs.Bool("force", false, "skip the confirmation prompt")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
+	quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -896,19 +1003,20 @@ func (c *client) cmdClean(args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderCleanReport(rep, raw)
+		c.renderCleanReport(rep, raw, *quiet)
+		return ExitOK
+	}
+	// Always show a pre-delete preview (counts always; full listing unless --quiet).
+	previewRep, previewRaw, err := c.cleanCall(body, true)
+	if err != nil {
+		return c.reportErr(err)
+	}
+	c.renderCleanReport(previewRep, previewRaw, *quiet)
+	if len(previewRep.TaskIDs) == 0 {
+		fmt.Fprintln(c.stdout, "nothing to delete")
 		return ExitOK
 	}
 	if !*force {
-		rep, raw, err := c.cleanCall(body, true)
-		if err != nil {
-			return c.reportErr(err)
-		}
-		c.renderCleanReport(rep, raw)
-		if len(rep.TaskIDs) == 0 {
-			fmt.Fprintln(c.stdout, "nothing to delete")
-			return ExitOK
-		}
 		if !c.confirm("Delete the listed tasks, runs, and artifacts? [y/N] ") {
 			fmt.Fprintln(c.stderr, "veriproc: aborted")
 			return ExitOK
@@ -923,7 +1031,7 @@ func (c *client) cmdClean(args []string) int {
 		}
 		return c.reportErr(err)
 	}
-	c.renderCleanReport(rep, raw)
+	c.renderCleanReport(rep, raw, *quiet)
 	return ExitOK
 }
 
@@ -947,9 +1055,9 @@ func printCleanHelp(w io.Writer) {
 	fmt.Fprint(w, `veriproc clean — delete tasks, runs, and on-disk artifacts within a time range.
 
 Usage:
-  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force]
-  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force]
-  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force]
+  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet]
+  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet]
+  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force] [--quiet]
 
 Selection basis (--by, default processing-time):
   processing-time     compare against the task processing time (created_at)
@@ -967,9 +1075,13 @@ Options:
   --by BASIS   processing-time (default) or processing-window
   --dry-run    print what would be deleted, then exit without deleting
   --force      skip the interactive confirmation prompt
+  --quiet      suppress the pre-delete content listing (combine with --force
+               for fully non-interactive scripted deletion)
 
-Without --force, clean previews the affected tasks/runs/artifacts and prompts
-for confirmation before deleting database rows and run working roots.
+By default, clean always lists the affected tasks/runs/artifacts before
+prompting for confirmation or deleting anything. Use --quiet to suppress
+the listing (the interactive prompt and final result are still shown unless
+--force is also given).
 `)
 }
 
@@ -1697,11 +1809,11 @@ Commands:
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
   task retry    TASK_ID
-  task delete   TASK_ID [--dry-run] [--force]
+  task delete   [--dry-run] [--force] [--quiet] TASK_ID [TASK_ID...]
   run  get      TASK_ID/rN
   run  list     [--task TASK_ID] [--station STATION_ID] [--state S]
   run  jobs     TASK_ID/rN
-  run  delete   TASK_ID/rN [--dry-run] [--force]
+  run  delete   [--dry-run] [--force] [--quiet] TASK_ID/rN [TASK_ID/rN...]
   artifact list --run TASK_ID/rN [--type LOGICAL]
   logs          TASK_ID/rN
   cancel        --yes [--reason TEXT] TASK_ID/rN
@@ -1714,10 +1826,16 @@ Commands:
   station pause      STATION_ID
   station unpause    STATION_ID
   station topology   [--format block|mermaid] [--by-input]
-  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force]
+  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force] [--quiet]
   health
   readiness
   version       [--check-api]
+
+Delete/clean flags:
+  --dry-run   show what would be deleted, then exit without deleting
+  --force     skip the interactive confirmation prompt
+  --quiet     suppress the pre-delete content listing (use with --force for
+              fully non-interactive scripted deletion)
 
 Environment: VERIPROC_API_URL, VERIPROC_TOKEN, VERIPROC_OUTPUT, VERIPROC_TIMEOUT.
 Exit codes follow Spec §6.10 (0 ok, 2 usage, 3 validation, 4 not_found,

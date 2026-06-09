@@ -218,6 +218,16 @@ func runCLI(t *testing.T, baseURL string, args ...string) (int, string, string) 
 	return code, stdout.String(), stderr.String()
 }
 
+// runCLITable is like runCLI but uses the default table output format, which
+// is needed to test --quiet (quiet only suppresses per-ID listings in table mode).
+func runCLITable(t *testing.T, baseURL string, args ...string) (int, string, string) {
+	t.Helper()
+	full := append([]string{"--api-url", baseURL, "--output", "table"}, args...)
+	var stdout, stderr bytes.Buffer
+	code := run(full, &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
 // TestCLI_Submit — submit succeeds, prints task JSON, exits 0.
 func TestCLI_Submit(t *testing.T) {
 	api := newFakeAPI(t)

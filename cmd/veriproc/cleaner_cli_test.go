@@ -48,7 +48,7 @@ func newCleanerServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// TestCLI_TaskDelete_Force deletes without prompting.
+// TestCLI_TaskDelete_Force deletes without prompting and shows a preview first.
 func TestCLI_TaskDelete_Force(t *testing.T) {
 	srv := newCleanerServer(t)
 	code, out, errs := runCLI(t, srv.URL, "task", "delete", "t1", "--force")
@@ -57,6 +57,44 @@ func TestCLI_TaskDelete_Force(t *testing.T) {
 	}
 	if !strings.Contains(out, "t1") {
 		t.Errorf("stdout missing task id: %q", out)
+	}
+	// Without --quiet, a dry-run preview is shown before the actual delete.
+	if !strings.Contains(out, `"dry_run": true`) {
+		t.Errorf("stdout missing dry-run preview with --force: %q", out)
+	}
+}
+
+// TestCLI_TaskDelete_MultipleIDs deletes several tasks at once and verifies
+// the combined report contains all IDs.
+func TestCLI_TaskDelete_MultipleIDs(t *testing.T) {
+	srv := newCleanerServer(t)
+	code, out, errs := runCLI(t, srv.URL, "task", "delete", "--force", "t1", "t2")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	// Both task ids should appear in the merged output.
+	if !strings.Contains(out, "t1") || !strings.Contains(out, "t2") {
+		t.Errorf("stdout missing task ids: %q", out)
+	}
+}
+
+// TestCLI_TaskDelete_Force_Quiet deletes without prompting; in table mode
+// counts are shown but per-ID listing is suppressed.
+func TestCLI_TaskDelete_Force_Quiet(t *testing.T) {
+	srv := newCleanerServer(t)
+	// Flags must come before the positional task ID (Go flag package stops at
+	// the first non-flag argument). Use table output to test quiet suppression.
+	code, out, errs := runCLITable(t, srv.URL, "task", "delete", "--force", "--quiet", "t1")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	// Counts must still be present.
+	if !strings.Contains(out, "tasks") {
+		t.Errorf("stdout missing counts with --quiet: %q", out)
+	}
+	// Per-ID listing must be suppressed.
+	if strings.Contains(out, "task ids:") {
+		t.Errorf("stdout should not contain task id listing with --quiet: %q", out)
 	}
 }
 
@@ -72,12 +110,36 @@ func TestCLI_TaskDelete_DryRun(t *testing.T) {
 	}
 }
 
-// TestCLI_RunDelete_Force deletes a run by raw id.
+// TestCLI_RunDelete_Force deletes a run by raw id and shows a preview first.
 func TestCLI_RunDelete_Force(t *testing.T) {
 	srv := newCleanerServer(t)
-	code, _, errs := runCLI(t, srv.URL, "run", "delete", "run-internal-001", "--force")
+	code, out, errs := runCLI(t, srv.URL, "run", "delete", "run-internal-001", "--force")
 	if code != ExitOK {
 		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	// Without --quiet, a dry-run preview is shown before the actual delete.
+	if !strings.Contains(out, `"dry_run": true`) {
+		t.Errorf("stdout missing dry-run preview with --force: %q", out)
+	}
+}
+
+// TestCLI_RunDelete_Force_Quiet deletes a run; in table mode counts are shown
+// but per-ID listing is suppressed.
+func TestCLI_RunDelete_Force_Quiet(t *testing.T) {
+	srv := newCleanerServer(t)
+	// Flags must come before the positional run ID (Go flag package stops at
+	// the first non-flag argument). Use table output to test quiet suppression.
+	code, out, errs := runCLITable(t, srv.URL, "run", "delete", "--force", "--quiet", "run-internal-001")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	// Counts must still be present.
+	if !strings.Contains(out, "tasks") {
+		t.Errorf("stdout missing counts with --quiet: %q", out)
+	}
+	// Per-ID listing must be suppressed.
+	if strings.Contains(out, "run ids:") {
+		t.Errorf("stdout should not contain run id listing with --quiet: %q", out)
 	}
 }
 
@@ -93,7 +155,7 @@ func TestCLI_Clean_NoCutoff_PrintsHelp(t *testing.T) {
 	}
 }
 
-// TestCLI_Clean_Force runs the sweep without prompting.
+// TestCLI_Clean_Force runs the sweep without prompting and shows a preview first.
 func TestCLI_Clean_Force(t *testing.T) {
 	srv := newCleanerServer(t)
 	code, out, errs := runCLI(t, srv.URL, "clean", "--before", "2025-06-01T00:00:00Z", "--force")
@@ -102,6 +164,28 @@ func TestCLI_Clean_Force(t *testing.T) {
 	}
 	if !strings.Contains(out, "early") {
 		t.Errorf("stdout missing selected task: %q", out)
+	}
+	// Without --quiet, a dry-run preview is shown before the actual sweep.
+	if !strings.Contains(out, `"dry_run": true`) {
+		t.Errorf("stdout missing dry-run preview with --force: %q", out)
+	}
+}
+
+// TestCLI_Clean_Force_Quiet runs the sweep without prompting; in table mode
+// counts are shown but per-ID listing is suppressed.
+func TestCLI_Clean_Force_Quiet(t *testing.T) {
+	srv := newCleanerServer(t)
+	code, out, errs := runCLITable(t, srv.URL, "clean", "--before", "2025-06-01T00:00:00Z", "--force", "--quiet")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	// Counts must still be present.
+	if !strings.Contains(out, "tasks") {
+		t.Errorf("stdout missing counts with --quiet: %q", out)
+	}
+	// Per-ID listing must be suppressed.
+	if strings.Contains(out, "task ids:") {
+		t.Errorf("stdout should not contain task id listing with --quiet: %q", out)
 	}
 }
 

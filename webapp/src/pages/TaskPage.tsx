@@ -110,7 +110,7 @@ export function TaskPage({ instanceID, taskID, initialRetry }: Props) {
             <div>node<span>{executionNode || "—"}</span></div>
             <div>state<span>{selectedRunState || String(taskQ.data.state ?? "—")}</span></div>
             <div>window<span>{fmtTime(taskQ.data.start)} – {fmtTime(taskQ.data.end)}</span></div>
-            <div>created<span>{fmtTime(taskQ.data.created_at)}</span></div>
+            <div>created<span>{fmtTime(selectedRun?.created_at ?? taskQ.data.created_at)}</span></div>
             <div>elapsed<span>{elapsedTime || "—"}</span></div>
           </div>
         )}
