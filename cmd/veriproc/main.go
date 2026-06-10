@@ -601,19 +601,20 @@ func (c *client) cmdTask(sub string, args []string) int {
 		force := fs.Bool("force", false, "skip the confirmation prompt")
 		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
 		quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
+		cascade := fs.Bool("cascade", false, "also delete descendant tasks and upstream references (default: task + its runs only)")
 		if err := fs.Parse(args); err != nil {
 			return ExitUsage
 		}
 		rest := fs.Args()
 		if len(rest) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc task delete [--dry-run] [--force] [--quiet] TASK_ID [TASK_ID...]")
+			fmt.Fprintln(c.stderr, "veriproc task delete [--dry-run] [--force] [--cascade] [--quiet] TASK_ID [TASK_ID...]")
 			return ExitUsage
 		}
 		paths := make([]string, len(rest))
 		for i, id := range rest {
 			paths[i] = "/api/v1/tasks/" + id
 		}
-		return c.cmdDelete("task", paths, rest, *dryRun, *force, *quiet)
+		return c.cmdDelete("task", paths, rest, *dryRun, *force, *quiet, *cascade)
 	default:
 		fmt.Fprintln(c.stderr, "veriproc task {get|list|retry|delete}")
 		return ExitUsage
@@ -713,12 +714,13 @@ func (c *client) cmdRun(sub string, args []string) int {
 		force := fs.Bool("force", false, "skip the confirmation prompt")
 		dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
 		quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
+		cascade := fs.Bool("cascade", false, "also delete additional child rows (artifacts, publications, etc.)")
 		if err := fs.Parse(args); err != nil {
 			return ExitUsage
 		}
 		rest := fs.Args()
 		if len(rest) < 1 {
-			fmt.Fprintln(c.stderr, "veriproc run delete [--dry-run] [--force] [--quiet] TASK_ID/rN [TASK_ID/rN...]")
+			fmt.Fprintln(c.stderr, "veriproc run delete [--dry-run] [--force] [--cascade] [--quiet] TASK_ID/rN [TASK_ID/rN...]")
 			return ExitUsage
 		}
 		paths := make([]string, 0, len(rest))
@@ -729,7 +731,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 			}
 			paths = append(paths, "/api/v1/runs/"+runID)
 		}
-		return c.cmdDelete("run", paths, rest, *dryRun, *force, *quiet)
+		return c.cmdDelete("run", paths, rest, *dryRun, *force, *quiet, *cascade)
 	default:
 		fmt.Fprintln(c.stderr, "veriproc run {get|list|jobs|delete}")
 		return ExitUsage
@@ -876,15 +878,18 @@ func mergeReports(reports []*cleanReport) *cleanReport {
 
 // cmdDelete performs DELETE requests for one or more paths, with a combined
 // content listing, an optional confirmation prompt, and optional dry-run.
-// Always shows counts before prompting or deleting. Without --quiet the full
-// per-ID and working-root path listing is also shown.
-func (c *client) cmdDelete(label string, paths, refs []string, dryRun, force, quiet bool) int {
+// When cascade is true, the ?cascade=true parameter is appended so that
+// descendant tasks and working roots are also removed. When cascade is false
+// (default), only the target object and NOT NULL constrained rows are removed;
+// nullable FK references are set to NULL and working roots are preserved.
+// Without --quiet the full per-ID and working-root path listing is also shown.
+func (c *client) cmdDelete(label string, paths, refs []string, dryRun, force, quiet, cascade bool) int {
 	// collectReports issues a DELETE (dry-run or real) against every path and
 	// returns the merged report. It stops and returns an error on first failure.
 	collectReports := func(dry bool) (*cleanReport, error) {
 		reports := make([]*cleanReport, 0, len(paths))
 		for _, p := range paths {
-			rep, _, err := c.deleteCall(p, dry)
+			rep, _, err := c.deleteCall(p, dry, cascade)
 			if err != nil {
 				return nil, err
 			}
@@ -917,10 +922,18 @@ func (c *client) cmdDelete(label string, paths, refs []string, dryRun, force, qu
 
 	if !force {
 		var prompt string
-		if len(refs) == 1 {
-			prompt = fmt.Sprintf("Delete %s %s and all related artifacts? [y/N] ", label, refs[0])
+		if cascade {
+			if len(refs) == 1 {
+				prompt = fmt.Sprintf("Delete %s %s and all descendant tasks, runs, and artifacts? [y/N] ", label, refs[0])
+			} else {
+				prompt = fmt.Sprintf("Delete %d %ss and all descendant tasks, runs, and artifacts? [y/N] ", len(refs), label)
+			}
 		} else {
-			prompt = fmt.Sprintf("Delete %d %ss and all related artifacts? [y/N] ", len(refs), label)
+			if len(refs) == 1 {
+				prompt = fmt.Sprintf("Delete %s %s and its runs (descendants and working roots preserved)? [y/N] ", label, refs[0])
+			} else {
+				prompt = fmt.Sprintf("Delete %d %ss and their runs (descendants and working roots preserved)? [y/N] ", len(refs), label)
+			}
 		}
 		if !c.confirm(prompt) {
 			fmt.Fprintln(c.stderr, "veriproc: aborted")
@@ -941,11 +954,16 @@ func (c *client) cmdDelete(label string, paths, refs []string, dryRun, force, qu
 	return ExitOK
 }
 
-// deleteCall issues the DELETE request, appending ?dry_run=true when requested,
-// and decodes the cleanup report.
-func (c *client) deleteCall(path string, dryRun bool) (*cleanReport, []byte, error) {
+// deleteCall issues the DELETE request, appending ?dry_run=true and/or
+// ?cascade=true when requested, and decodes the cleanup report.
+func (c *client) deleteCall(path string, dryRun, cascade bool) (*cleanReport, []byte, error) {
 	if dryRun {
 		path += "?dry_run=true"
+		if cascade {
+			path += "&cascade=true"
+		}
+	} else if cascade {
+		path += "?cascade=true"
 	}
 	_, raw, err := c.do(http.MethodDelete, path, nil)
 	if err != nil {
@@ -957,7 +975,9 @@ func (c *client) deleteCall(path string, dryRun bool) (*cleanReport, []byte, err
 }
 
 // cmdClean implements `veriproc clean --before TS | --after TS [--dry-run]
-// [--force] [--quiet]`. With neither cutoff it prints the command help (Spec §6).
+// [--force] [--quiet] [--cascade]`. With neither cutoff it prints the command
+// help (Spec §6). The --cascade flag controls whether descendant tasks and
+// working roots are also removed.
 func (c *client) cmdClean(args []string) int {
 	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
@@ -967,6 +987,7 @@ func (c *client) cmdClean(args []string) int {
 	force := fs.Bool("force", false, "skip the confirmation prompt")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
 	quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
+	cascade := fs.Bool("cascade", false, "also delete descendant tasks and additional child rows")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -983,8 +1004,7 @@ func (c *client) cmdClean(args []string) int {
 
 	// Validate timestamps client-side for a friendly error before the round-trip.
 	body := map[string]any{"basis": *by}
-	if *before != "" {
-		if _, err := policy.ParseWindowTimestamp(*before); err != nil {
+	if *before != "" {		if _, err := policy.ParseWindowTimestamp(*before); err != nil {
 			fmt.Fprintln(c.stderr, "veriproc clean: invalid --before: "+err.Error())
 			return ExitValidation
 		}
@@ -999,7 +1019,7 @@ func (c *client) cmdClean(args []string) int {
 	}
 
 	if *dryRun {
-		rep, raw, err := c.cleanCall(body, true)
+		rep, raw, err := c.cleanCall(body, *cascade, true)
 		if err != nil {
 			return c.reportErr(err)
 		}
@@ -1007,7 +1027,7 @@ func (c *client) cmdClean(args []string) int {
 		return ExitOK
 	}
 	// Always show a pre-delete preview (counts always; full listing unless --quiet).
-	previewRep, previewRaw, err := c.cleanCall(body, true)
+	previewRep, previewRaw, err := c.cleanCall(body, *cascade, true)
 	if err != nil {
 		return c.reportErr(err)
 	}
@@ -1017,12 +1037,18 @@ func (c *client) cmdClean(args []string) int {
 		return ExitOK
 	}
 	if !*force {
-		if !c.confirm("Delete the listed tasks, runs, and artifacts? [y/N] ") {
+		var prompt string
+		if *cascade {
+			prompt = "Delete the listed tasks, runs, artifacts, and descendant tasks? [y/N] "
+		} else {
+			prompt = "Delete the listed tasks and their runs (descendants and working roots preserved)? [y/N] "
+		}
+		if !c.confirm(prompt) {
 			fmt.Fprintln(c.stderr, "veriproc: aborted")
 			return ExitOK
 		}
 	}
-	rep, raw, err := c.cleanCall(body, false)
+	rep, raw, err := c.cleanCall(body, *cascade, false)
 	if err != nil {
 		var ae *apiError
 		if !errors.As(err, &ae) {
@@ -1036,8 +1062,8 @@ func (c *client) cmdClean(args []string) int {
 }
 
 // cleanCall posts the clean request and decodes the cleanup report.
-func (c *client) cleanCall(body map[string]any, dryRun bool) (*cleanReport, []byte, error) {
-	payload := map[string]any{"dry_run": dryRun}
+func (c *client) cleanCall(body map[string]any, cascade, dryRun bool) (*cleanReport, []byte, error) {
+	payload := map[string]any{"dry_run": dryRun, "cascade": cascade}
 	for k, v := range body {
 		payload[k] = v
 	}
@@ -1055,9 +1081,9 @@ func printCleanHelp(w io.Writer) {
 	fmt.Fprint(w, `veriproc clean — delete tasks, runs, and on-disk artifacts within a time range.
 
 Usage:
-  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet]
-  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet]
-  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force] [--quiet]
+  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
+  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
+  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
 
 Selection basis (--by, default processing-time):
   processing-time     compare against the task processing time (created_at)
@@ -1076,7 +1102,10 @@ Options:
   --dry-run    print what would be deleted, then exit without deleting
   --force      skip the interactive confirmation prompt
   --quiet      suppress the pre-delete content listing (combine with --force
-               for fully non-interactive scripted deletion)
+                 for fully non-interactive scripted deletion)
+  --cascade    also delete descendant tasks and additional child rows
+                 (by default only matching tasks and their runs are removed,
+                 descendant tasks are orphaned, nullable FKs are nullified)
 
 By default, clean always lists the affected tasks/runs/artifacts before
 prompting for confirmation or deleting anything. Use --quiet to suppress
@@ -1809,11 +1838,11 @@ Commands:
   task get      TASK_ID
   task list     [--station ID] [--state S] [--split-group GID]
   task retry    TASK_ID
-  task delete   [--dry-run] [--force] [--quiet] TASK_ID [TASK_ID...]
+  task delete   [--dry-run] [--force] [--cascade] [--quiet] TASK_ID [TASK_ID...]
   run  get      TASK_ID/rN
   run  list     [--task TASK_ID] [--station STATION_ID] [--state S]
   run  jobs     TASK_ID/rN
-  run  delete   [--dry-run] [--force] [--quiet] TASK_ID/rN [TASK_ID/rN...]
+  run  delete   [--dry-run] [--force] [--cascade] [--quiet] TASK_ID/rN [TASK_ID/rN...]
   artifact list --run TASK_ID/rN [--type LOGICAL]
   logs          TASK_ID/rN
   cancel        --yes [--reason TEXT] TASK_ID/rN
@@ -1826,7 +1855,7 @@ Commands:
   station pause      STATION_ID
   station unpause    STATION_ID
   station topology   [--format block|mermaid] [--by-input]
-  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force] [--quiet]
+  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
   health
   readiness
   version       [--check-api]
@@ -1834,8 +1863,11 @@ Commands:
 Delete/clean flags:
   --dry-run   show what would be deleted, then exit without deleting
   --force     skip the interactive confirmation prompt
-  --quiet     suppress the pre-delete content listing (use with --force for
-              fully non-interactive scripted deletion)
+   --quiet     suppress the pre-delete content listing (use with --force for
+                fully non-interactive scripted deletion)
+   --cascade   also delete descendant tasks and additional child rows (default:
+                only delete targeted objects, nullify nullable references,
+                preserve descendant tasks and their working roots)
 
 Environment: VERIPROC_API_URL, VERIPROC_TOKEN, VERIPROC_OUTPUT, VERIPROC_TIMEOUT.
 Exit codes follow Spec §6.10 (0 ok, 2 usage, 3 validation, 4 not_found,

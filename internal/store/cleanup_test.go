@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func TestPurgeRun_CascadesDependents(t *testing.T) {
 	mkJob(t, s, "job-del", "run-del")
 	mkArtifact(t, s, "art-del", "run-del")
 
-	res, err := s.PurgeRun(ctx, "run-del")
+	res, err := s.PurgeRun(ctx, "run-del", true)
 	if err != nil {
 		t.Fatalf("PurgeRun: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestPurgeRun_CascadesDependents(t *testing.T) {
 // TestPurgeRun_NotFound verifies a missing run yields ErrNotFound.
 func TestPurgeRun_NotFound(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.PurgeRun(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.PurgeRun(context.Background(), "nope", true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -122,7 +123,7 @@ func TestPurgeTasks_ClosureAndCascade(t *testing.T) {
 	mkRun(t, s, revID, "run-child", "t-child", 0, "/wr/run-child")
 	mkArtifact(t, s, "art-parent", "run-parent")
 
-	res, err := s.PurgeTasks(ctx, []string{"t-parent"})
+	res, err := s.PurgeTasks(ctx, []string{"t-parent"}, true)
 	if err != nil {
 		t.Fatalf("PurgeTasks: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestPurgeTasks_ClosureAndCascade(t *testing.T) {
 // TestPurgeTasks_UnknownIgnored verifies unknown task IDs are silently dropped.
 func TestPurgeTasks_UnknownIgnored(t *testing.T) {
 	s := newTestStore(t)
-	res, err := s.PurgeTasks(context.Background(), []string{"ghost"})
+	res, err := s.PurgeTasks(context.Background(), []string{"ghost"}, true)
 	if err != nil {
 		t.Fatalf("PurgeTasks: %v", err)
 	}
@@ -295,5 +296,209 @@ func TestIDsForCleanup_ProcessingTimeSelection(t *testing.T) {
 	}
 	if len(rangeIDs) != 1 || rangeIDs[0] != "mid" {
 		t.Errorf("range selection = %v, want [mid]", rangeIDs)
+	}
+}
+
+// TestPurgeRun_NoCascade_OrphanArtifacts verifies non-cascade run deletion
+// nullifies nullable FK references instead of deleting them.
+func TestPurgeRun_NoCascade_OrphanArtifacts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "SCENE-L2")
+	if err := s.Tasks().Insert(ctx, mkTask("t-orphan")); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	mkRun(t, s, revID, "run-orphan", "t-orphan", 0, "/wr/run-orphan")
+	mkArtifact(t, s, "art-orphan", "run-orphan")
+	mkJob(t, s, "job-orphan", "run-orphan")
+
+	res, err := s.PurgeRun(ctx, "run-orphan", false)
+	if err != nil {
+		t.Fatalf("PurgeRun no-cascade: %v", err)
+	}
+	if res.Counts.Runs != 1 {
+		t.Errorf("runs deleted = %d, want 1", res.Counts.Runs)
+	}
+	if res.Counts.Jobs != 1 {
+		t.Errorf("jobs deleted = %d, want 1 (NOT NULL constraint)", res.Counts.Jobs)
+	}
+	if len(res.WorkingRoots) != 1 || res.WorkingRoots[0] != "/wr/run-orphan" {
+		t.Errorf("working roots should report orphan: %v", res.WorkingRoots)
+	}
+	// Run is gone.
+	if _, err := s.Runs().Get(ctx, "run-orphan"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("run should be deleted: %v", err)
+	}
+	// Job is gone (NOT NULL FK).
+	if _, err := s.Jobs().Get(ctx, "job-orphan"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("job should be deleted (NOT NULL constraint): %v", err)
+	}
+	// Artifact survives but producing_run_id is NULL.
+	art, err := s.Artifacts().Get(ctx, "art-orphan")
+	if err != nil {
+		t.Fatalf("artifact should survive: %v", err)
+	}
+	if art.ProducingRunID != "" {
+		t.Errorf("artifact producing_run_id should be NULL, got %q", art.ProducingRunID)
+	}
+}
+
+// TestPurgeTasks_NoCascade_PreservesDescendants verifies non-cascade task
+// deletion does not follow descendants and orphans them.
+func TestPurgeTasks_NoCascade_PreservesDescendants(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "SCENE-L2")
+
+	parent := mkTask("t-parent-nc")
+	if err := s.Tasks().Insert(ctx, parent); err != nil {
+		t.Fatalf("parent task: %v", err)
+	}
+	child := mkTask("t-child-nc")
+	child.ParentTaskID = "t-parent-nc"
+	if err := s.Tasks().Insert(ctx, child); err != nil {
+		t.Fatalf("child task: %v", err)
+	}
+	mkRun(t, s, revID, "run-parent-nc", "t-parent-nc", 0, "/wr/run-parent-nc")
+	mkRun(t, s, revID, "run-child-nc", "t-child-nc", 0, "/wr/run-child-nc")
+
+	res, err := s.PurgeTasks(ctx, []string{"t-parent-nc"}, false)
+	if err != nil {
+		t.Fatalf("PurgeTasks no-cascade: %v", err)
+	}
+	// Only the parent task is in the deletion set.
+	if len(res.TaskIDs) != 1 || res.TaskIDs[0] != "t-parent-nc" {
+		t.Errorf("task IDs = %v, want [t-parent-nc]", res.TaskIDs)
+	}
+	if res.Counts.Tasks != 1 {
+		t.Errorf("tasks deleted = %d, want 1", res.Counts.Tasks)
+	}
+	if res.Counts.Runs != 1 {
+		t.Errorf("runs deleted = %d, want 1 (only parent's run)", res.Counts.Runs)
+	}
+	if len(res.WorkingRoots) != 1 {
+		t.Errorf("working roots should report 1: %v", res.WorkingRoots)
+	}
+	// Parent task is gone.
+	if _, err := s.Tasks().Get(ctx, "t-parent-nc"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("parent task should be deleted: %v", err)
+	}
+	// Child task survives with parent_task_id = NULL.
+	childRec, err := s.Tasks().Get(ctx, "t-child-nc")
+	if err != nil {
+		t.Fatalf("child should survive: %v", err)
+	}
+	if childRec.ParentTaskID != "" {
+		t.Errorf("child parent_task_id should be NULL, got %q", childRec.ParentTaskID)
+	}
+	// Child run survives.
+	if _, err := s.Runs().Get(ctx, "run-child-nc"); err != nil {
+		t.Errorf("child run should survive: %v", err)
+	}
+}
+
+// TestPurgeTasks_NoCascade_KeepsProvenanceLinks verifies provenance links
+// are not deleted in non-cascade mode.
+func TestPurgeTasks_NoCascade_KeepsProvenanceLinks(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	tk := mkTask("t-prov-nc")
+	if err := s.Tasks().Insert(ctx, tk); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+
+	// Insert a provenance link manually (no helper for this).
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO provenance_links (link_id, source_type, source_id, target_type, target_id, relationship_type, created_at)
+		 VALUES (?, 'task', ?, 'task', ?, 'contributes_to', ?)`,
+		"prov-nc", "t-prov-nc", "t-other-ghost", time.Now().UTC()); err != nil {
+		t.Fatalf("provenance insert: %v", err)
+	}
+
+	res, err := s.PurgeTasks(ctx, []string{"t-prov-nc"}, false)
+	if err != nil {
+		t.Fatalf("PurgeTasks no-cascade: %v", err)
+	}
+	if res.Counts.ProvenanceLinks != 0 {
+		t.Errorf("provenance links deleted = %d, want 0", res.Counts.ProvenanceLinks)
+	}
+
+	// Provenance link survives (now referencing a ghost).
+	var linkID string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT link_id FROM provenance_links WHERE source_type = 'task' AND source_id = ?`,
+		"t-prov-nc").Scan(&linkID)
+	if err != nil {
+		t.Errorf("provenance link should survive as ghost ref: %v", err)
+	}
+}
+
+// TestPurgeRun_NoCascade_NullifiesPreviousRunID verifies that a canonicality_audit
+// row referencing the deleted run as previous_run_id has its column set to NULL
+// (not deleted), because previous_run_id is nullable in the non-cascade path.
+func TestPurgeRun_NoCascade_NullifiesPreviousRunID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "SCENE-L2")
+	if err := s.Tasks().Insert(ctx, mkTask("t-can")); err != nil {
+		t.Fatalf("task: %v", err)
+	}
+	mkRun(t, s, revID, "run-prev", "t-can", 0, "/wr/run-prev")
+	mkRun(t, s, revID, "run-new", "t-can", 1, "/wr/run-new")
+
+	// Insert processing_fingerprint (required by canonicality_audit FK).
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO processing_fingerprints (fingerprint_id, value, created_at) VALUES (?, 'fp-val', ?)`,
+		"fp-1", time.Now().UTC()); err != nil {
+		t.Fatalf("fingerprint insert: %v", err)
+	}
+
+	// audit-prev: references run-prev as previous_run_id (survives, column NULLed).
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO canonicality_audit (audit_id, fingerprint_id, previous_run_id, new_run_id, action, occurred_at)
+		 VALUES (?, ?, ?, ?, 'promoted', ?)`,
+		"audit-prev", "fp-1", "run-prev", "run-new", time.Now().UTC()); err != nil {
+		t.Fatalf("audit-prev insert: %v", err)
+	}
+	// audit-new: references run-prev as new_run_id (deleted, NOT NULL column).
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO canonicality_audit (audit_id, fingerprint_id, previous_run_id, new_run_id, action, occurred_at)
+		 VALUES (?, ?, NULL, ?, 'demoted', ?)`,
+		"audit-new", "fp-1", "run-prev", time.Now().UTC()); err != nil {
+		t.Fatalf("audit-new insert: %v", err)
+	}
+
+	res, err := s.PurgeRun(ctx, "run-prev", false)
+	if err != nil {
+		t.Fatalf("PurgeRun no-cascade: %v", err)
+	}
+	if res.Counts.Runs != 1 {
+		t.Errorf("runs deleted = %d, want 1", res.Counts.Runs)
+	}
+	if res.Counts.CanonicalityAudits != 1 {
+		t.Errorf("canonicality_audits deleted = %d, want 1 (only audit-new)", res.Counts.CanonicalityAudits)
+	}
+
+	// audit-prev survives with previous_run_id = NULL.
+	var prevID sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		`SELECT previous_run_id FROM canonicality_audit WHERE audit_id = 'audit-prev'`).Scan(&prevID)
+	if err != nil {
+		t.Fatalf("audit-prev should survive: %v", err)
+	}
+	if prevID.Valid {
+		t.Errorf("previous_run_id should be NULL, got %q", prevID.String)
+	}
+
+	// audit-new is gone (referenced run-prev as new_run_id).
+	var count int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM canonicality_audit WHERE audit_id = 'audit-new'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("query audit-new: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("audit-new should have been deleted, count = %d", count)
 	}
 }

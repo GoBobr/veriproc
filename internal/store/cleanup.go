@@ -54,14 +54,15 @@ type PurgeResult struct {
 	WorkingRoots []string       `json:"working_roots"`
 }
 
-// PurgeRun deletes a single run and every dependent control-plane row
-// (jobs, artifacts, publications, manifests, dedup/canonicality records and
-// split-group memberships). The owning task and any sibling runs are left
-// untouched. Returns ErrNotFound if the run does not exist.
-//
-// The returned WorkingRoots slice holds the run's on-disk working root; the
-// caller removes it from the filesystem after the transaction commits.
-func (s *Store) PurgeRun(ctx context.Context, runID string) (*PurgeResult, error) {
+// PurgeRun deletes a single run and every dependent control-plane row.
+// When cascade is true it removes all child rows (jobs, artifacts, etc.) and
+// returns the working roots for filesystem cleanup. When cascade is false it
+// nullifies nullable foreign keys, deletes rows with NOT NULL constraints so
+// the run row can be removed, and skips working-root reporting (the caller
+// should not touch the filesystem). The owning task and sibling runs are left
+// untouched. Provenance links are always left intact.
+// Returns ErrNotFound if the run does not exist.
+func (s *Store) PurgeRun(ctx context.Context, runID string, cascade bool) (*PurgeResult, error) {
 	run, err := s.Runs().Get(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -74,7 +75,10 @@ func (s *Store) PurgeRun(ctx context.Context, runID string) (*PurgeResult, error
 		if err := tx.deferForeignKeys(ctx); err != nil {
 			return err
 		}
-		return deleteRunRows(ctx, tx.tx, []string{run.RunID}, &res.Counts)
+		if cascade {
+			return deleteRunRows(ctx, tx.tx, []string{run.RunID}, &res.Counts)
+		}
+		return nullifyRunRows(ctx, tx.tx, []string{run.RunID}, &res.Counts)
 	})
 	if err != nil {
 		return nil, err
@@ -82,25 +86,53 @@ func (s *Store) PurgeRun(ctx context.Context, runID string) (*PurgeResult, error
 	return res, nil
 }
 
-// PurgeTasks deletes the given tasks together with every descendant task
-// (linked via parent_task_id), all of their runs, and all dependent rows.
-// Idempotency records owned by the deleted tasks are removed as well.
-//
-// The returned WorkingRoots slice holds the on-disk working roots of every
-// deleted run; the caller removes them from the filesystem after the
-// transaction commits. Unknown task IDs are silently ignored.
-func (s *Store) PurgeTasks(ctx context.Context, taskIDs []string) (*PurgeResult, error) {
+// PurgeTasks deletes the given tasks together with their runs and dependent
+// rows. When cascade is true it also expands to all descendant tasks (via
+// parent_task_id). Working roots of the deleted runs are always returned
+// regardless of cascade (the caller is responsible for removing them from disk).
+// Task-scoped row handling differs:
+//   - cascade=true: full delete of all rows per deleteTaskRows.
+//   - cascade=false: only the explicitly listed tasks are deleted; descendants
+//     are orphaned (parent_task_id NULL); nullable FK references are set to NULL;
+//     NOT NULL constrained rows are deleted.
+// Idempotency records are kept with task_id left as the original value (task no
+// longer references them). Unknown task IDs are silently ignored.
+func (s *Store) PurgeTasks(ctx context.Context, taskIDs []string, cascade bool) (*PurgeResult, error) {
 	res := &PurgeResult{}
 	if len(taskIDs) == 0 {
 		return res, nil
 	}
 
-	// Expand to the full closure of descendant tasks so we never leave a
-	// child referencing a deleted parent.
-	closure, err := s.CollectTaskClosure(ctx, taskIDs)
-	if err != nil {
-		return nil, err
+	// Validate which task IDs actually exist (unknown IDs are dropped).
+	var targetIDs []string
+	for _, id := range taskIDs {
+		var exists string
+		err := s.db.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, id).Scan(&exists)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		targetIDs = append(targetIDs, id)
 	}
+	if len(targetIDs) == 0 {
+		return res, nil
+	}
+
+	if cascade {
+		// Expand to the full closure of descendant tasks. collectTaskClosureInternal
+		// skips seed re-validation because PurgeTasks already verified existence above.
+		closure, err := s.collectTaskClosureInternal(ctx, targetIDs, true)
+		if err != nil {
+			return nil, err
+		}
+		return s.purgeTasksCascade(ctx, closure, res)
+	}
+	return s.purgeTasksNullify(ctx, targetIDs, res)
+}
+
+func (s *Store) purgeTasksCascade(ctx context.Context, closure []string, res *PurgeResult) (*PurgeResult, error) {
 	if len(closure) == 0 {
 		return res, nil
 	}
@@ -124,31 +156,117 @@ func (s *Store) PurgeTasks(ctx context.Context, taskIDs []string) (*PurgeResult,
 		}
 		return deleteTaskRows(ctx, tx.tx, closure, &res.Counts)
 	})
+	return res, err
+}
+
+func (s *Store) purgeTasksNullify(ctx context.Context, taskIDs []string, res *PurgeResult) (*PurgeResult, error) {
+	if len(taskIDs) == 0 {
+		return res, nil
+	}
+	res.TaskIDs = taskIDs
+
+	runIDs, workingRoots, err := s.RunIDsAndRootsForTasks(ctx, taskIDs)
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+	res.RunIDs = runIDs
+	res.WorkingRoots = workingRoots
+
+	err = s.InTx(ctx, func(tx *Tx) error {
+		if err := tx.deferForeignKeys(ctx); err != nil {
+			return err
+		}
+		// 1. Orphan child tasks.
+		ph, args := placeholders(taskIDs)
+		if _, err := tx.tx.ExecContext(ctx,
+			`UPDATE tasks SET parent_task_id = NULL WHERE parent_task_id IN (`+ph+`)`, args...); err != nil {
+			return err
+		}
+
+		// 2. For each run: delete NOT NULL constrained rows, nullify nullable FKs, delete run.
+		runIDsLocal := runIDs
+		if len(runIDsLocal) == 0 {
+			runIDsLocal = nil
+		}
+		if len(runIDsLocal) > 0 {
+			if err := deleteNotNullForRun(ctx, tx.tx, runIDsLocal, &res.Counts); err != nil {
+				return err
+			}
+			if err := nullifyRunFKs(ctx, tx.tx, runIDsLocal, &res.Counts); err != nil {
+				return err
+			}
+			// Delete the runs themselves (FK on task_id can't be nullified — NOT NULL).
+			rph, rargs := placeholders(runIDsLocal)
+			if n, err := execCount(ctx, tx.tx,
+				`DELETE FROM runs WHERE run_id IN (`+rph+`)`, rargs...); err != nil {
+				return err
+			} else {
+				res.Counts.Runs += n
+			}
+		}
+
+		// 3. Nullify task-scoped FKs.
+		if n, err := execCount(ctx, tx.tx,
+			`UPDATE task_history_entries SET task_id = NULL WHERE task_id IN (`+ph+`)`, args...); err != nil {
+			return err
+		} else {
+			res.Counts.TaskHistoryEntries += n
+		}
+		if n, err := execCount(ctx, tx.tx,
+			`DELETE FROM split_group_members WHERE task_id IN (`+ph+`)`, args...); err != nil {
+			return err
+		} else {
+			res.Counts.SplitGroupMembers += n
+		}
+
+		// 4. Nullify task's idempotency_record_id, then delete the task.
+		// The idempotency_records rows themselves are NOT deleted. They are
+		// kept deliberately so that the original submission keys remain
+		// recorded and cannot be re-used for a different (re-submitted) task —
+		// effectively replay-protection. The cascade path deletes them because
+		// the operator has explicitly asked for a complete teardown.
+		if _, err := tx.tx.ExecContext(ctx,
+			`UPDATE tasks SET idempotency_record_id = NULL WHERE task_id IN (`+ph+`)`, args...); err != nil {
+			return err
+		}
+		if n, err := execCount(ctx, tx.tx,
+			`DELETE FROM tasks WHERE task_id IN (`+ph+`)`, args...); err != nil {
+			return err
+		} else {
+			res.Counts.Tasks += n
+		}
+		return nil
+	})
+	return res, err
 }
 
 // CollectTaskClosure returns the supplied task IDs plus all transitive
 // descendants reachable through parent_task_id. Unknown IDs are dropped.
 func (s *Store) CollectTaskClosure(ctx context.Context, seeds []string) ([]string, error) {
+	return s.collectTaskClosureInternal(ctx, seeds, false)
+}
+
+// collectTaskClosureInternal behaves like CollectTaskClosure but when
+// skipValidateSeed is true it trusts the caller to have already verified that
+// each seed exists (avoids a second SELECT pass inside PurgeTasks).
+func (s *Store) collectTaskClosureInternal(ctx context.Context, seeds []string, skipValidateSeed bool) ([]string, error) {
 	seen := make(map[string]bool)
 	var ordered []string
 	queue := make([]string, 0, len(seeds))
 
-	// Only keep seeds that actually exist.
 	for _, id := range seeds {
 		if id == "" || seen[id] {
 			continue
 		}
-		var exists string
-		err := s.db.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, id).Scan(&exists)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
-			return nil, err
+		if !skipValidateSeed {
+			var exists string
+			err := s.db.QueryRowContext(ctx, `SELECT task_id FROM tasks WHERE task_id = ?`, id).Scan(&exists)
+			if err == sql.ErrNoRows {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 		seen[id] = true
 		ordered = append(ordered, id)
@@ -427,6 +545,120 @@ func deleteTaskRows(ctx context.Context, q querier, taskIDs []string, c *Deletio
 	} else {
 		c.Tasks += n
 	}
+	return nil
+}
+
+// nullifyRunRows is the non-cascade path for PurgeRun. It deletes NOT NULL
+// constrained rows, nullifies nullable FK references, and removes the run
+// rows. Provenance links are left intact.
+func nullifyRunRows(ctx context.Context, q querier, runIDs []string, c *DeletionCounts) error {
+	if len(runIDs) == 0 {
+		return nil
+	}
+	if err := deleteNotNullForRun(ctx, q, runIDs, c); err != nil {
+		return err
+	}
+	if err := nullifyRunFKs(ctx, q, runIDs, c); err != nil {
+		return err
+	}
+	ph, args := placeholders(runIDs)
+	if n, err := execCount(ctx, q,
+		`DELETE FROM runs WHERE run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	} else {
+		c.Runs += n
+	}
+	return nil
+}
+
+// deleteNotNullForRun deletes rows whose FK to runs is NOT NULL, so the run
+// can be removed cleanly. This is used by the non-cascade nullify path.
+func deleteNotNullForRun(ctx context.Context, q querier, runIDs []string, c *DeletionCounts) error {
+	ph, args := placeholders(runIDs)
+
+	// jobs (run_id NOT NULL).
+	if n, err := execCount(ctx, q,
+		`DELETE FROM jobs WHERE run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	} else {
+		c.Jobs += n
+	}
+
+	// resolved_input_entries then manifests (run_id NOT NULL UNIQUE).
+	if n, err := execCount(ctx, q,
+		`DELETE FROM resolved_input_entries WHERE manifest_id IN
+		 (SELECT manifest_id FROM resolved_input_manifests WHERE run_id IN (`+ph+`))`, args...); err != nil {
+		return err
+	} else {
+		c.ManifestEntries += n
+	}
+	if n, err := execCount(ctx, q,
+		`DELETE FROM resolved_input_manifests WHERE run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	} else {
+		c.Manifests += n
+	}
+
+	// split_group_members (run_id and task_id are NOT NULL primary key columns).
+	if n, err := execCount(ctx, q,
+		`DELETE FROM split_group_members WHERE run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	} else {
+		c.SplitGroupMembers += n
+	}
+
+	// deduplication_records (canonical_run_id NOT NULL). Delete rows where the
+	// run is the canonical run or the superseding run.
+	if n, err := execCount(ctx, q,
+		`DELETE FROM deduplication_records WHERE canonical_run_id IN (`+ph+`)
+		 OR superseded_by_run_id IN (`+ph+`)`, append(args, args...)...); err != nil {
+		return err
+	} else {
+		c.DeduplicationRecords += n
+	}
+
+	// canonicality_audit (new_run_id NOT NULL). Delete rows where the run is
+	// the new canonical run; nullify previous_run_id separately.
+	if n, err := execCount(ctx, q,
+		`DELETE FROM canonicality_audit WHERE new_run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	} else {
+		c.CanonicalityAudits += n
+	}
+
+	return nil
+}
+
+// nullifyRunFKs sets nullable FK columns to NULL for the given runs. It does
+// NOT touch provenance_links (per user request). Used by the non-cascade path.
+func nullifyRunFKs(ctx context.Context, q querier, runIDs []string, c *DeletionCounts) error {
+	ph, args := placeholders(runIDs)
+
+	// artifacts (producing_run_id is nullable).
+	if _, err := q.ExecContext(ctx,
+		`UPDATE artifacts SET producing_run_id = NULL WHERE producing_run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+
+	// rolling_archive_publications (producing_run_id is nullable; artifact FK is NOT NULL
+	// so we can't remove the publication — just nullify the run reference).
+	if _, err := q.ExecContext(ctx,
+		`UPDATE rolling_archive_publications SET producing_run_id = NULL WHERE producing_run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+
+	// Nullify previous_run_id in canonicality_audit (nullable).
+	if _, err := q.ExecContext(ctx,
+		`UPDATE canonicality_audit SET previous_run_id = NULL WHERE previous_run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+
+	// processing_fingerprints (canonical_run_id is nullable).
+	if _, err := q.ExecContext(ctx,
+		`UPDATE processing_fingerprints SET canonical_run_id = NULL WHERE canonical_run_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+
 	return nil
 }
 

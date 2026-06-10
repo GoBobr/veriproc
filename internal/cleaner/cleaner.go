@@ -84,9 +84,14 @@ type CleanFilter struct {
 }
 
 // DeleteRun removes a single run, its dependent control-plane rows, and its
-// on-disk working root. When dryRun is true nothing is deleted and the report
-// describes what would be removed.
-func (s *Service) DeleteRun(ctx context.Context, runID string, dryRun bool) (*Report, error) {
+// on-disk working root. The working root is always removed from disk regardless
+// of the cascade flag. When cascade is true, all child rows (jobs, artifacts,
+// publications, manifests, etc.) are also deleted. When cascade is false
+// (default), NOT NULL constrained rows are deleted, nullable FK references are
+// set to NULL, and provenance links are left intact.
+// When dryRun is true nothing is deleted and the report describes what would
+// be removed.
+func (s *Service) DeleteRun(ctx context.Context, runID string, dryRun, cascade bool) (*Report, error) {
 	run, err := s.store.Runs().Get(ctx, runID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -101,7 +106,7 @@ func (s *Service) DeleteRun(ctx context.Context, runID string, dryRun bool) (*Re
 		}
 		return rep, nil
 	}
-	res, err := s.store.PurgeRun(ctx, runID)
+	res, err := s.store.PurgeRun(ctx, runID, cascade)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrRunNotFound
@@ -112,25 +117,31 @@ func (s *Service) DeleteRun(ctx context.Context, runID string, dryRun bool) (*Re
 	s.removeWorkingRoots(res.WorkingRoots, rep)
 	s.logger.Info().
 		Str("run_id", runID).
+		Bool("cascade", cascade).
 		Int("working_roots_removed", rep.WorkingRootsRemoved).
 		Msg("cleaner: run deleted")
 	return rep, nil
 }
 
-// DeleteTask removes a task, all of its descendant tasks, all of their runs,
-// every dependent control-plane row, and all associated on-disk working roots.
+// DeleteTask removes a task and its runs. When cascade is true it also removes
+// all descendant tasks (via parent_task_id), every dependent control-plane row,
+// and all associated on-disk working roots. When cascade is false (default)
+// it only removes the explicitly listed task (not descendants), nullifies
+// nullable FK references, deletes NOT NULL constrained rows, and removes the
+// working roots of the runs that were deleted. Provenance links are always left intact.
 // When dryRun is true nothing is deleted and the report describes what would
 // be removed.
-func (s *Service) DeleteTask(ctx context.Context, taskID string, dryRun bool) (*Report, error) {
+func (s *Service) DeleteTask(ctx context.Context, taskID string, dryRun, cascade bool) (*Report, error) {
 	if _, err := s.store.Tasks().Get(ctx, taskID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrTaskNotFound
 		}
 		return nil, err
 	}
-	return s.purgeTasks(ctx, []string{taskID}, dryRun, func(rep *Report) {
+	return s.purgeTasks(ctx, []string{taskID}, dryRun, cascade, func(rep *Report) {
 		s.logger.Info().
 			Str("task_id", taskID).
+			Bool("cascade", cascade).
 			Int("tasks", rep.Counts.Tasks).
 			Int("runs", rep.Counts.Runs).
 			Int("working_roots_removed", rep.WorkingRootsRemoved).
@@ -139,11 +150,16 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, dryRun bool) (*
 }
 
 // Clean removes every task whose timestamps match the filter, along with
-// descendant tasks, runs, dependent rows and on-disk working roots. Selection
-// is by processing time (created_at) by default, or by the data sensing window
-// when the filter requests it. When dryRun is true nothing is deleted and the
-// report describes what would be removed.
-func (s *Service) Clean(ctx context.Context, f CleanFilter, dryRun bool) (*Report, error) {
+// their runs and dependent rows. When cascade is true it also removes
+// descendant tasks (via parent_task_id). When cascade is false (default)
+// it only removes the explicitly matching tasks (not descendants), nullifies
+// nullable FK references, and deletes NOT NULL constrained rows. Working
+// roots of the deleted runs are always removed regardless of cascade.
+// Selection is by processing time (created_at) by default, or by the data
+// sensing window when the filter requests it.
+// When dryRun is true nothing is deleted and the report describes what would
+// be removed.
+func (s *Service) Clean(ctx context.Context, f CleanFilter, dryRun, cascade bool) (*Report, error) {
 	if f.Before.IsZero() && f.After.IsZero() {
 		return nil, ErrNoCutoff
 	}
@@ -154,10 +170,11 @@ func (s *Service) Clean(ctx context.Context, f CleanFilter, dryRun bool) (*Repor
 	if len(taskIDs) == 0 {
 		return &Report{DryRun: dryRun}, nil
 	}
-	return s.purgeTasks(ctx, taskIDs, dryRun, func(rep *Report) {
+	return s.purgeTasks(ctx, taskIDs, dryRun, cascade, func(rep *Report) {
 		s.logger.Info().
 			Time("before", f.Before).
 			Time("after", f.After).
+			Bool("cascade", cascade).
 			Int("tasks", rep.Counts.Tasks).
 			Int("runs", rep.Counts.Runs).
 			Int("working_roots_removed", rep.WorkingRootsRemoved).
@@ -165,12 +182,17 @@ func (s *Service) Clean(ctx context.Context, f CleanFilter, dryRun bool) (*Repor
 	})
 }
 
-// purgeTasks is the shared deletion path for DeleteTask and Clean.
-func (s *Service) purgeTasks(ctx context.Context, taskIDs []string, dryRun bool, onDone func(*Report)) (*Report, error) {
+// purgeTasks is the shared deletion path for DeleteTask and Clean. When
+// cascade is true it uses the full PurgeTasks (BFS descendants + full purge).
+// When cascade is false it nullifies FK references and deletes NOT NULL
+// constrained rows. Working roots of deleted runs are always removed
+// regardless of cascade because the run rows no longer exist and the disk
+// space is orphaned.
+func (s *Service) purgeTasks(ctx context.Context, taskIDs []string, dryRun, cascade bool, onDone func(*Report)) (*Report, error) {
 	if dryRun {
-		return s.projectTasks(ctx, taskIDs)
+		return s.projectTasks(ctx, taskIDs, cascade)
 	}
-	res, err := s.store.PurgeTasks(ctx, taskIDs)
+	res, err := s.store.PurgeTasks(ctx, taskIDs, cascade)
 	if err != nil {
 		return nil, err
 	}
@@ -183,17 +205,37 @@ func (s *Service) purgeTasks(ctx context.Context, taskIDs []string, dryRun bool,
 }
 
 // projectTasks computes a dry-run report describing what purgeTasks would
-// delete without mutating any state.
-func (s *Service) projectTasks(ctx context.Context, taskIDs []string) (*Report, error) {
-	closure, err := s.store.CollectTaskClosure(ctx, taskIDs)
-	if err != nil {
-		return nil, err
+// delete without mutating any state. When cascade is true it includes
+// descendant tasks (BFS); when cascade is false it only includes the
+// explicitly listed tasks.
+func (s *Service) projectTasks(ctx context.Context, taskIDs []string, cascade bool) (*Report, error) {
+	var closure []string
+	if cascade {
+		var err error
+		closure, err = s.store.CollectTaskClosure(ctx, taskIDs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Only keep IDs that actually exist (without expanding descendants).
+		for _, id := range taskIDs {
+			_, err := s.store.Tasks().Get(ctx, id)
+			if err != nil {
+				continue
+			}
+			closure = append(closure, id)
+		}
 	}
 	runIDs, workingRoots, err := s.store.RunIDsAndRootsForTasks(ctx, closure)
 	if err != nil {
 		return nil, err
 	}
-	rep := &Report{DryRun: true, TaskIDs: closure, RunIDs: runIDs, WorkingRoots: workingRoots}
+	rep := &Report{
+		DryRun:       true,
+		TaskIDs:      closure,
+		RunIDs:       runIDs,
+		WorkingRoots: workingRoots,
+	}
 	rep.Counts.Tasks = len(closure)
 	rep.Counts.Runs = len(runIDs)
 	return rep, nil

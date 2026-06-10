@@ -116,12 +116,12 @@ func TestCleanerAPI_DeleteTaskDryRun(t *testing.T) {
 	}
 }
 
-// TestCleanerAPI_DeleteTask deletes for real.
+// TestCleanerAPI_DeleteTask deletes for real (cascade=true removes working roots).
 func TestCleanerAPI_DeleteTask(t *testing.T) {
 	a := newCleanAPI(t)
 	dir := a.seedTaskRun(t, "t1", "run-1", ts(7, 3), ts(7, 4))
 
-	req, _ := http.NewRequest(http.MethodDelete, a.base+"/api/v1/tasks/t1", nil)
+	req, _ := http.NewRequest(http.MethodDelete, a.base+"/api/v1/tasks/t1?cascade=true", nil)
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +135,30 @@ func TestCleanerAPI_DeleteTask(t *testing.T) {
 	}
 	if _, err := a.st.Tasks().Get(context.Background(), "t1"); !isNotFound(err) {
 		t.Errorf("task not deleted: %v", err)
+	}
+}
+
+// TestCleanerAPI_DeleteTaskNoCascade deletes task+runs (non-cascade preserves
+// descendants, working roots are always removed from disk).
+func TestCleanerAPI_DeleteTaskNoCascade(t *testing.T) {
+	a := newCleanAPI(t)
+	dir := a.seedTaskRun(t, "t1", "run-1", ts(7, 3), ts(7, 4))
+
+	req, _ := http.NewRequest(http.MethodDelete, a.base+"/api/v1/tasks/t1", nil)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", r.StatusCode)
+	}
+	// Working root should still be removed (deleted tasks' working roots are always cleaned).
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("working root should be removed: %v", err)
+	}
+	if _, err := a.st.Tasks().Get(context.Background(), "t1"); !isNotFound(err) {
+		t.Errorf("task should be deleted: %v", err)
 	}
 }
 

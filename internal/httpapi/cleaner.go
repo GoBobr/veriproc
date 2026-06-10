@@ -26,16 +26,18 @@ type cleanerHandler struct {
 // Basis selects which task timestamps the cutoffs are compared against:
 // "processing-time" (default) uses created_at; "processing-window" uses the
 // data sensing window (window_start / window_end).
+// Cascade controls whether descendant tasks and working roots are also removed.
 type cleanRequest struct {
-	Before string `json:"before,omitempty"`
-	After  string `json:"after,omitempty"`
-	Basis  string `json:"basis,omitempty"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	Before  string `json:"before,omitempty"`
+	After   string `json:"after,omitempty"`
+	Basis   string `json:"basis,omitempty"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+	Cascade bool   `json:"cascade,omitempty"`
 }
 
 func (h *cleanerHandler) deleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
-	rep, err := h.svc.DeleteTask(r.Context(), taskID, dryRunRequested(r))
+	rep, err := h.svc.DeleteTask(r.Context(), taskID, dryRunRequested(r), cascadeRequested(r))
 	if err != nil {
 		writeCleanerErr(w, r, err)
 		return
@@ -45,7 +47,7 @@ func (h *cleanerHandler) deleteTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *cleanerHandler) deleteRun(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("run_id")
-	rep, err := h.svc.DeleteRun(r.Context(), runID, dryRunRequested(r))
+	rep, err := h.svc.DeleteRun(r.Context(), runID, dryRunRequested(r), cascadeRequested(r))
 	if err != nil {
 		writeCleanerErr(w, r, err)
 		return
@@ -90,7 +92,7 @@ func (h *cleanerHandler) clean(w http.ResponseWriter, r *http.Request) {
 		f.After = t
 	}
 
-	rep, err := h.svc.Clean(r.Context(), f, req.DryRun)
+	rep, err := h.svc.Clean(r.Context(), f, req.DryRun, req.Cascade)
 	if err != nil {
 		writeCleanerErr(w, r, err)
 		return
@@ -114,6 +116,15 @@ func parseCleanupBasis(s string) (store.CleanupBasis, error) {
 // dryRunRequested reports whether the request carries ?dry_run=true.
 func dryRunRequested(r *http.Request) bool {
 	switch r.URL.Query().Get("dry_run") {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// cascadeRequested reports whether the request carries ?cascade=true.
+func cascadeRequested(r *http.Request) bool {
+	switch r.URL.Query().Get("cascade") {
 	case "1", "true", "yes":
 		return true
 	}
