@@ -16,3 +16,9 @@ webapp/dist/
 
 # Python venv (existing)
 venv/
+
+# Workspace
+*.code-workspace
+
+# Sandbox data
+sandbox*/data/
