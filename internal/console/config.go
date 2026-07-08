@@ -85,6 +85,8 @@ type UIConfig struct {
 	DefaultStatsSince      time.Duration `yaml:"default_stats_since"`
 	UpstreamSummaryTimeout time.Duration `yaml:"upstream_summary_timeout"`
 	PreviewMaxBytes        int64         `yaml:"preview_max_bytes"`
+	CardMinWidth           int           `yaml:"card_min_width_px"`
+	CardMaxWidth           int           `yaml:"card_max_width_px"`
 }
 
 // DBConfig is the console-local persistence handle.
@@ -182,6 +184,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.UI.PreviewMaxBytes == 0 {
 		c.UI.PreviewMaxBytes = 1 << 20
+	}
+	if c.UI.CardMinWidth == 0 {
+		c.UI.CardMinWidth = 380
+	}
+	if c.UI.CardMaxWidth == 0 {
+		c.UI.CardMaxWidth = 520
 	}
 }
 

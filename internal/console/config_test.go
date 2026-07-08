@@ -36,6 +36,12 @@ instances:
 	if cfg.UI.PreviewMaxBytes != 1<<20 {
 		t.Errorf("preview_max_bytes default = %d", cfg.UI.PreviewMaxBytes)
 	}
+	if cfg.UI.CardMinWidth != 380 {
+		t.Errorf("card_min_width_px default = %d, want 380", cfg.UI.CardMinWidth)
+	}
+	if cfg.UI.CardMaxWidth != 520 {
+		t.Errorf("card_max_width_px default = %d, want 520", cfg.UI.CardMaxWidth)
+	}
 	if len(cfg.Instances[0].AllowedRoots) != 1 {
 		t.Errorf("allowed_roots should default from working_root_base")
 	}

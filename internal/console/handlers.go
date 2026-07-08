@@ -54,6 +54,8 @@ func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
 			"completed_visibility_ms": g.cfg.UI.CompletedVisibility.D.Milliseconds(),
 			"default_stats_since_ms":  g.cfg.UI.DefaultStatsSince.Milliseconds(),
 			"preview_max_bytes":       g.cfg.UI.PreviewMaxBytes,
+			"card_min_width_px":       g.cfg.UI.CardMinWidth,
+			"card_max_width_px":       g.cfg.UI.CardMaxWidth,
 		},
 	})
 }

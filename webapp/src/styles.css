@@ -117,7 +117,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  /* auto-fill (not auto-fit) keeps empty tracks, so blocks don't stretch
+     to fill the row when there are fewer instances than columns.
+     The column count is driven by --card-min-width: cards squeeze down to
+     the min before any card wraps to the next row.  The max growth of each
+     track is capped at 1fr (fills available space), and --card-max-width
+     is enforced on the item itself via max-width so a lone card on a wide
+     row doesn't stretch beyond the configured maximum. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min-width, 380px), 1fr));
   gap: 14px;
   padding: 14px;
 }
@@ -126,6 +133,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
+  max-width: var(--card-max-width, 520px);
+  justify-self: center;
 }
 .instance-block.degraded { border-color: var(--danger); }
 .instance-header {
@@ -176,8 +185,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 .station-row {
-  display: grid;
-  grid-template-columns: 120px 1fr 110px;
+  display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
@@ -192,6 +200,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 .station-row[data-paused="true"]:hover { background: var(--paused-row-bg); }
 .station-label {
+  flex: 0 0 120px;
   font-size: 12px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   white-space: nowrap;
@@ -208,9 +217,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-radius: 3px;
 }
 .slot-strip {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   gap: 3px;
   align-items: center;
+  justify-content: flex-end;
 }
 .slot {
   width: 16px;
@@ -228,7 +240,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .slot[data-kind="empty"] { cursor: default; }
 .slot-overflow { font-size: 10px; color: var(--muted); margin-left: 4px; }
 
-.counters { font-size: 11px; color: var(--muted); text-align: right; }
+.counters { flex: 0 0 auto; font-size: 11px; color: var(--muted); text-align: right; white-space: nowrap; }
 .counters .succ { color: var(--slot-completed); }
 .counters .fail { color: var(--danger); }
 
@@ -431,3 +443,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   align-items: center;
 }
 .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.legend-separator { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+.instance-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.instance-toggle input { margin: 0; cursor: pointer; }

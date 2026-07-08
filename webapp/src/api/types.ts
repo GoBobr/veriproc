@@ -16,6 +16,8 @@ export interface InstancesResponse {
     completed_visibility_ms: number;
     default_stats_since_ms: number;
     preview_max_bytes: number;
+    card_min_width_px: number;
+    card_max_width_px: number;
   };
 }
 
