@@ -61,11 +61,11 @@ type DashboardInstance struct {
 // hidden-run set into the UI-oriented row representation expected by the
 // frontend. The expansion is pure: same inputs → same output.
 //
-// Ordering rule (Spec §8.4.2):
-//   1. running, oldest first
-//   2. completed (within visibility timeout), newest first
-//   3. queued, oldest first
-//   4. failed/cancelled (not hidden), newest first
+// Ordering rule:
+//   1. running, alphabetical by task ID
+//   2. completed (within visibility timeout), alphabetical by task ID
+//   3. queued, alphabetical by task ID
+//   4. failed/cancelled (not hidden), alphabetical by task ID
 //   5. empty slots padding to visibleSlotCount
 //
 // completedVisibility prunes completed slots whose terminal time is older
@@ -125,17 +125,12 @@ func ExpandStationRow(
 		}
 	}
 
-	// Sort each pool deterministically. Without a created_at field we order
-	// by retry index (running/queued: oldest first → lower index first) and
-	// by terminal time (completed/failed: newest first).
-	sort.SliceStable(running, func(i, j int) bool { return running[i].RetryIndex < running[j].RetryIndex })
-	sort.SliceStable(queued, func(i, j int) bool { return queued[i].RetryIndex < queued[j].RetryIndex })
-	sort.SliceStable(completed, func(i, j int) bool {
-		return slotTime(completed[i]).After(slotTime(completed[j]))
-	})
-	sort.SliceStable(failed, func(i, j int) bool {
-		return slotTime(failed[i]).After(slotTime(failed[j]))
-	})
+	// Sort each pool alphabetically by TaskID for a stable, predictable
+	// display order.
+	sort.SliceStable(running, func(i, j int) bool { return running[i].TaskID < running[j].TaskID })
+	sort.SliceStable(queued, func(i, j int) bool { return queued[i].TaskID < queued[j].TaskID })
+	sort.SliceStable(completed, func(i, j int) bool { return completed[i].TaskID < completed[j].TaskID })
+	sort.SliceStable(failed, func(i, j int) bool { return failed[i].TaskID < failed[j].TaskID })
 
 	ordered := make([]DashboardSlot, 0, visibleSlotCount)
 	ordered = append(ordered, running...)
@@ -154,13 +149,6 @@ func ExpandStationRow(
 	}
 	row.Slots = ordered
 	return row
-}
-
-func slotTime(s DashboardSlot) time.Time {
-	if s.TerminalAt != nil {
-		return *s.TerminalAt
-	}
-	return time.Time{}
 }
 
 // BuildInstanceDashboard fetches the upstream station summary and produces

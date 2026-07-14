@@ -96,11 +96,15 @@ docker-build-console:
 
 docker-build: docker-build-daemon docker-build-console
 
-docker-push-daemon: docker-build-daemon
+docker-push-daemon:
+	@$(DOCKER) image inspect $(IMAGE_DAEMON):$(DOCKER_TAG) >/dev/null 2>&1 || \
+		{ echo "ERROR: $(IMAGE_DAEMON):$(DOCKER_TAG) not found. Run 'make docker-build-daemon' first."; exit 1; }
 	$(DOCKER) push $(IMAGE_DAEMON):$(DOCKER_TAG)
 	$(DOCKER) push $(IMAGE_DAEMON):latest
 
-docker-push-console: docker-build-console
+docker-push-console:
+	@$(DOCKER) image inspect $(IMAGE_CONSOLE):$(DOCKER_TAG) >/dev/null 2>&1 || \
+		{ echo "ERROR: $(IMAGE_CONSOLE):$(DOCKER_TAG) not found. Run 'make docker-build-console' first."; exit 1; }
 	$(DOCKER) push $(IMAGE_CONSOLE):$(DOCKER_TAG)
 	$(DOCKER) push $(IMAGE_CONSOLE):latest
 

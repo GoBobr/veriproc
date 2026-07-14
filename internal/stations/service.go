@@ -287,32 +287,12 @@ func (s *Service) summaryForStation(ctx context.Context, base StationView, since
 		}
 	}
 
-	sort.Slice(running, func(i, j int) bool {
-		left := running[i].CreatedAt
-		if running[i].StartedAt.Valid {
-			left = running[i].StartedAt.Time.UTC()
-		}
-		right := running[j].CreatedAt
-		if running[j].StartedAt.Valid {
-			right = running[j].StartedAt.Time.UTC()
-		}
-		return left.Before(right)
-	})
-	sort.Slice(queued, func(i, j int) bool { return queued[i].CreatedAt.Before(queued[j].CreatedAt) })
-	sort.Slice(completed, func(i, j int) bool {
-		return completed[i].TerminalAt.Time.UTC().After(completed[j].TerminalAt.Time.UTC())
-	})
-	sort.Slice(failed, func(i, j int) bool {
-		left := failed[i].CreatedAt
-		if failed[i].TerminalAt.Valid {
-			left = failed[i].TerminalAt.Time.UTC()
-		}
-		right := failed[j].CreatedAt
-		if failed[j].TerminalAt.Valid {
-			right = failed[j].TerminalAt.Time.UTC()
-		}
-		return left.After(right)
-	})
+	// Sort each pool alphabetically by TaskID so the dashboard presents a
+	// stable, predictable order regardless of creation or terminal times.
+	sort.SliceStable(running, func(i, j int) bool { return running[i].TaskID < running[j].TaskID })
+	sort.SliceStable(queued, func(i, j int) bool { return queued[i].TaskID < queued[j].TaskID })
+	sort.SliceStable(completed, func(i, j int) bool { return completed[i].TaskID < completed[j].TaskID })
+	sort.SliceStable(failed, func(i, j int) bool { return failed[i].TaskID < failed[j].TaskID })
 
 	base.RunningCount = len(running)
 	base.QueuedCount = queuedAcceptedNoRun + len(queued)
