@@ -360,7 +360,10 @@ const (
 //
 // When both are supplied they are combined with AND. At least one cutoff must
 // be non-zero.
-func (r *TaskRepo) IDsForCleanup(ctx context.Context, before, after time.Time, basis CleanupBasis) ([]string, error) {
+//
+// When stationID is non-empty, results are further restricted to tasks whose
+// destination_station_id matches.
+func (r *TaskRepo) IDsForCleanup(ctx context.Context, before, after time.Time, basis CleanupBasis, stationID string) ([]string, error) {
 	beforeCol, afterCol, orderCol := "created_at", "created_at", "created_at"
 	if basis == BasisProcessingWindow {
 		beforeCol, afterCol, orderCol = "window_end", "window_start", "window_start"
@@ -377,6 +380,10 @@ func (r *TaskRepo) IDsForCleanup(ctx context.Context, before, after time.Time, b
 	}
 	if len(conds) == 0 {
 		return nil, fmt.Errorf("store: IDsForCleanup requires a before or after cutoff")
+	}
+	if stationID != "" {
+		conds = append(conds, "destination_station_id = ?")
+		args = append(args, stationID)
 	}
 	rows, err := r.q.QueryContext(ctx,
 		`SELECT task_id FROM tasks WHERE `+strings.Join(conds, " AND ")+` ORDER BY `+orderCol, args...)

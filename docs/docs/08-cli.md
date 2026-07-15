@@ -57,8 +57,8 @@ Create a task.
 | Flag | Required | Meaning |
 |------|----------|---------|
 | `--station <id>` | yes | Destination station. |
-| `--start <RFC3339>` | yes | Window start (e.g. `2025-07-03T11:00:00Z`). |
-| `--end <RFC3339>` | yes | Window end. |
+| `--start <ts>` | yes | Window start (see [timestamp formats](#814-timestamp-formats)). |
+| `--end <ts>` | yes | Window end (see [timestamp formats](#814-timestamp-formats)). |
 | `--force` | no | Force a (non-canonical) replay run. |
 | `--priority <p>` | no | Priority hint. |
 | `--idempotency-key <k>` | no | Idempotency-Key; equal key + content returns the same task. |
@@ -151,12 +151,17 @@ Bulk deletion by time cutoff.
 | `--before <ts>` | — | Delete tasks at or before this timestamp. |
 | `--after <ts>` | — | Delete tasks at or after this timestamp. |
 | `--by <basis>` | `processing-time` | Cutoff basis: `processing-time` (created_at) or `processing-window` (sensing window). |
+| `--station <id>` | — | Restrict cleanup to this destination station id. |
 | `--dry-run` | false | Report what would be deleted without deleting. |
 | `--force` | false | Skip the confirmation prompt. |
 
 ```bash
 veriproc clean --before 2025-07-01T00:00:00Z --by processing-window --dry-run
+veriproc clean --before 2025-07-01T00:00:00Z --by processing-window --station SCENE-L2 --force
+veriproc clean --after 20260709 --before 20260715T000000 --station SCENE-L2 --force
 ```
+
+Timestamps accept the formats listed in [§8.14 Timestamp formats](#814-timestamp-formats).
 
 Canonical runs are protected by the daemon's cleaning rules; see
 [Operations §11.5](11-operations.md).
@@ -193,3 +198,18 @@ Use `json`/`yaml` for scripting; `table` for interactive use.
 
 These map onto the HTTP status codes returned by the daemon (see
 [REST API](09-rest-api.md)).
+
+## 8.14 Timestamp formats
+
+The `--start`, `--end` (submit), `--before`, and `--after` (clean) flags accept
+the following timestamp formats. All results are normalized to UTC; forms without
+an explicit timezone are interpreted as UTC.
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| RFC 3339 with timezone | `2026-07-09T07:46:19.651Z` | Fractional seconds optional. Offset form (`+01:00`) also accepted. |
+| RFC 3339 without timezone | `2026-07-09T07:46:19` | Interpreted as UTC. Fractional seconds optional. |
+| Compact UTC seconds | `20260709T074619` | 15 chars: `YYYYMMDDTHHmmSS`. |
+| Compact UTC milliseconds | `20260709T074619651` | 18 chars: `YYYYMMDDTHHmmSSmmm`. |
+| ISO 8601 date | `2026-07-09` | Midnight UTC. |
+| Compact date | `20260709` | Midnight UTC. |

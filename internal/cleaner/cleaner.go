@@ -77,10 +77,14 @@ type Report struct {
 //   - BasisProcessingWindow: the data sensing window
 //     - Before: tasks whose window_end <= Before (entirely before the cutoff)
 //     - After:  tasks whose window_start >= After (entirely after the cutoff)
+//
+// When StationID is non-empty, only tasks whose destination_station_id matches
+// are selected.
 type CleanFilter struct {
-	Before time.Time
-	After  time.Time
-	Basis  store.CleanupBasis
+	Before    time.Time
+	After     time.Time
+	Basis     store.CleanupBasis
+	StationID string
 }
 
 // DeleteRun removes a single run, its dependent control-plane rows, and its
@@ -163,7 +167,7 @@ func (s *Service) Clean(ctx context.Context, f CleanFilter, dryRun, cascade bool
 	if f.Before.IsZero() && f.After.IsZero() {
 		return nil, ErrNoCutoff
 	}
-	taskIDs, err := s.store.Tasks().IDsForCleanup(ctx, f.Before, f.After, f.Basis)
+	taskIDs, err := s.store.Tasks().IDsForCleanup(ctx, f.Before, f.After, f.Basis, f.StationID)
 	if err != nil {
 		return nil, err
 	}

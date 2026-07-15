@@ -27,12 +27,14 @@ type cleanerHandler struct {
 // "processing-time" (default) uses created_at; "processing-window" uses the
 // data sensing window (window_start / window_end).
 // Cascade controls whether descendant tasks and working roots are also removed.
+// StationID, when non-empty, restricts the cleanup to a single station.
 type cleanRequest struct {
-	Before  string `json:"before,omitempty"`
-	After   string `json:"after,omitempty"`
-	Basis   string `json:"basis,omitempty"`
-	DryRun  bool   `json:"dry_run,omitempty"`
-	Cascade bool   `json:"cascade,omitempty"`
+	Before    string `json:"before,omitempty"`
+	After     string `json:"after,omitempty"`
+	Basis     string `json:"basis,omitempty"`
+	StationID string `json:"station_id,omitempty"`
+	DryRun    bool   `json:"dry_run,omitempty"`
+	Cascade   bool   `json:"cascade,omitempty"`
 }
 
 func (h *cleanerHandler) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +77,7 @@ func (h *cleanerHandler) clean(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Basis = basis
+	f.StationID = req.StationID
 	if req.Before != "" {
 		t, err := policy.ParseWindowTimestamp(req.Before)
 		if err != nil {

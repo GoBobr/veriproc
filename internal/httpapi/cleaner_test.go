@@ -214,6 +214,48 @@ func TestCleanerAPI_Clean(t *testing.T) {
 	}
 }
 
+// TestCleanerAPI_CleanStationFilter deletes only tasks matching station_id.
+func TestCleanerAPI_CleanStationFilter(t *testing.T) {
+	a := newCleanAPI(t)
+	// Both tasks are in the same time window; only the station differs.
+	a.seedTaskRun(t, "scene-early", "run-scene", ts(5, 1), ts(5, 2))
+	// seedTaskRun always uses SCENE-L2, so insert a MAP-L1C task manually.
+	ctx := context.Background()
+	if err := a.st.Stations().Insert(ctx, &store.StationRevisionRecord{
+		RevisionID: "rev-MAP-L1C", StationID: "MAP-L1C", StationName: "MAP_1C",
+		ContentHash: "sha256:map", SchemaVersion: "veriproc.station/v1",
+	}); err != nil && !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("station: %v", err)
+	}
+	if err := a.st.Tasks().Insert(ctx, &store.TaskRecord{
+		TaskID: "map-early", SchemaVersion: "veriproc.task-submission/v1",
+		DestinationStationID: "MAP-L1C", WindowStart: ts(5, 1), WindowEnd: ts(5, 2),
+		ClientMetadata:     json.RawMessage(`{}`),
+		RoutingContent:     json.RawMessage(`{"destination":{"station_id":"MAP-L1C"}}`),
+		RoutingContentHash: "sha256:routing-map-early", SubmissionOrigin: "client", State: "accepted",
+	}); err != nil {
+		t.Fatalf("task insert: %v", err)
+	}
+
+	r, err := http.Post(a.base+"/api/v1/maintenance/clean", "application/json",
+		strings.NewReader(`{"before":"2025-06-01T00:00:00Z","basis":"processing-window","station_id":"SCENE-L2","dry_run":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", r.StatusCode)
+	}
+	m := decodeReport(t, r.Body)
+	ids, _ := m["task_ids"].([]any)
+	if len(ids) != 1 || ids[0] != "scene-early" {
+		t.Errorf("task_ids = %v, want [scene-early]", ids)
+	}
+	if _, err := a.st.Tasks().Get(ctx, "map-early"); err != nil {
+		t.Errorf("map-early task should survive: %v", err)
+	}
+}
+
 func isNotFound(err error) bool {
 	return errors.Is(err, store.ErrNotFound)
 }

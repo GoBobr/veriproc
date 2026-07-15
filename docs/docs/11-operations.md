@@ -85,7 +85,7 @@ Three levels of deletion are available:
 |-------|-----|-----|
 | One run | `veriproc run delete <run_ref>` | `DELETE /api/v1/runs/{run_id}` |
 | One task (all runs) | `veriproc task delete <task_id>` | `DELETE /api/v1/tasks/{task_id}` |
-| Bulk by cutoff | `veriproc clean --before … --by …` | `POST /api/v1/maintenance/clean` |
+| Bulk by cutoff | `veriproc clean --before … --by … [--station …]` | `POST /api/v1/maintenance/clean` |
 
 Behavior:
 

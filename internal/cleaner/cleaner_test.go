@@ -309,6 +309,56 @@ func TestClean_EmptyMatch(t *testing.T) {
 	}
 }
 
+// TestClean_StationFilter deletes only tasks matching the station filter.
+func TestClean_StationFilter(t *testing.T) {
+	st := newStore(t)
+	svc := New(st, zerolog.Nop())
+	ctx := context.Background()
+	mkStation(t, st, "MAP-L1C")
+	revScene := mkStation(t, st, "SCENE-L2")
+
+	mkTaskStation := func(id, stationID string, start, end time.Time) {
+		t.Helper()
+		tk := &store.TaskRecord{
+			TaskID:               id,
+			SchemaVersion:        "veriproc.task-submission/v1",
+			DestinationStationID: stationID,
+			WindowStart:          start,
+			WindowEnd:            end,
+			ClientMetadata:       json.RawMessage(`{"mission":"CO2M"}`),
+			RoutingContent:       json.RawMessage(`{"destination":{"station_id":"` + stationID + `"}}`),
+			RoutingContentHash:   "sha256:routing-" + id,
+			SubmissionOrigin:     "client",
+			State:                "accepted",
+		}
+		if err := st.Tasks().Insert(ctx, tk); err != nil {
+			t.Fatalf("task insert %s: %v", id, err)
+		}
+	}
+	// Both tasks are in the same time window but different stations.
+	mkTaskStation("scene-early", "SCENE-L2", ts(5, 1), ts(5, 2))
+	mkTaskStation("map-early", "MAP-L1C", ts(5, 1), ts(5, 2))
+	mkRunDir(t, st, revScene, "run-scene", "scene-early", 0)
+
+	rep, err := svc.Clean(ctx, CleanFilter{
+		Before:    ts(6, 1),
+		Basis:     store.BasisProcessingWindow,
+		StationID: "SCENE-L2",
+	}, false, true)
+	if err != nil {
+		t.Fatalf("Clean station: %v", err)
+	}
+	if rep.Counts.Tasks != 1 || len(rep.TaskIDs) != 1 || rep.TaskIDs[0] != "scene-early" {
+		t.Errorf("clean selected %+v, want only scene-early", rep.TaskIDs)
+	}
+	if _, err := st.Tasks().Get(ctx, "scene-early"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("scene-early task should be gone: %v", err)
+	}
+	if _, err := st.Tasks().Get(ctx, "map-early"); err != nil {
+		t.Errorf("map-early task should survive: %v", err)
+	}
+}
+
 // TestDeleteRun_NoCascade_RemovesWorkingRoot verifies non-cascade run
 // deletion still removes the working root from disk.
 func TestDeleteRun_NoCascade_RemovesWorkingRoot(t *testing.T) {

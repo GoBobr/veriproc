@@ -157,17 +157,34 @@ func ParseFilename(name, pattern string, components map[string]ComponentRule) (m
 }
 
 // ParseWindowTimestamp parses a task processing-window timestamp in any of
-// the four accepted forms (Spec §5.3.1):
+// the accepted forms (Spec §5.3.1):
 //
 //   - RFC 3339 whole-second UTC, e.g. "2025-07-03T11:12:39Z"
-//   - RFC 3339 with at least millisecond precision, e.g. "2025-07-03T11:12:39.000Z"
+//   - RFC 3339 with fractional seconds, e.g. "2025-07-03T11:12:39.000Z"
+//   - RFC 3339 without timezone, e.g. "2025-07-03T11:12:39" (interpreted as UTC)
 //   - Compact UTC seconds (15 chars):    YYYYMMDDTHHmmSS, e.g. "20260513T131429"
 //   - Compact UTC milliseconds (18 chars): YYYYMMDDTHHmmSSmmm, e.g. "20260513T131429000"
+//   - Date only (ISO 8601):              YYYY-MM-DD, e.g. "2026-07-09" (midnight UTC)
+//   - Date only (compact):               YYYYMMDD, e.g. "20260709" (midnight UTC)
 //
-// The result is always normalized to UTC. Compact forms have no explicit
-// timezone and are always interpreted as UTC.
+// The result is always normalized to UTC. Forms without an explicit timezone
+// are always interpreted as UTC.
 func ParseWindowTimestamp(s string) (time.Time, error) {
 	switch len(s) {
+	case 8:
+		// Compact date only: YYYYMMDD (midnight UTC).
+		t, err := time.Parse("20060102", s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("timestamp %q: invalid compact date YYYYMMDD: %w", s, err)
+		}
+		return t.UTC(), nil
+	case 10:
+		// ISO 8601 date only: YYYY-MM-DD (midnight UTC).
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("timestamp %q: invalid date YYYY-MM-DD: %w", s, err)
+		}
+		return t.UTC(), nil
 	case 15:
 		// Compact UTC seconds: YYYYMMDDTHHmmSS
 		t, err := time.Parse("20060102T150405", s)
@@ -194,7 +211,14 @@ func ParseWindowTimestamp(s string) (time.Time, error) {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
 			return t.UTC(), nil
 		}
-		return time.Time{}, fmt.Errorf("timestamp %q: unsupported format (want RFC 3339 or compact UTC YYYYMMDDTHHmmSS[mmm])", s)
+		// RFC 3339 without timezone (e.g. "2025-07-03T11:12:39" or "2025-07-03T11:12:39.123").
+		if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+			return t.UTC(), nil
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05.999999999", s); err == nil {
+			return t.UTC(), nil
+		}
+		return time.Time{}, fmt.Errorf("timestamp %q: unsupported format (want RFC 3339, compact UTC YYYYMMDDTHHmmSS[mmm], or date YYYY-MM-DD / YYYYMMDD)", s)
 	}
 }
 

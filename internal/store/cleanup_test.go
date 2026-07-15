@@ -215,7 +215,7 @@ func TestIDsForCleanup_WindowSelection(t *testing.T) {
 	before := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	after := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
 
-	beforeIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow)
+	beforeIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup before: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestIDsForCleanup_WindowSelection(t *testing.T) {
 		t.Errorf("before selection = %v, want [early]", beforeIDs)
 	}
 
-	afterIDs, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, after, BasisProcessingWindow)
+	afterIDs, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, after, BasisProcessingWindow, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup after: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestIDsForCleanup_WindowSelection(t *testing.T) {
 	// Combined window [after-bound, before-bound] selecting mid.
 	rangeIDs, err := s.Tasks().IDsForCleanup(ctx,
 		time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC),
-		time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), BasisProcessingWindow)
+		time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), BasisProcessingWindow, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup range: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestIDsForCleanup_WindowSelection(t *testing.T) {
 	}
 
 	// No cutoff is an error.
-	if _, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, time.Time{}, BasisProcessingWindow); err == nil {
+	if _, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, time.Time{}, BasisProcessingWindow, ""); err == nil {
 		t.Error("expected error when no cutoff supplied")
 	}
 }
@@ -271,7 +271,7 @@ func TestIDsForCleanup_ProcessingTimeSelection(t *testing.T) {
 	before := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	after := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
 
-	beforeIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingTime)
+	beforeIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingTime, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup before: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestIDsForCleanup_ProcessingTimeSelection(t *testing.T) {
 		t.Errorf("before selection = %v, want [early]", beforeIDs)
 	}
 
-	afterIDs, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, after, BasisProcessingTime)
+	afterIDs, err := s.Tasks().IDsForCleanup(ctx, time.Time{}, after, BasisProcessingTime, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup after: %v", err)
 	}
@@ -290,12 +290,70 @@ func TestIDsForCleanup_ProcessingTimeSelection(t *testing.T) {
 	// Range [after, before] selecting mid.
 	rangeIDs, err := s.Tasks().IDsForCleanup(ctx,
 		time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC),
-		time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), BasisProcessingTime)
+		time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), BasisProcessingTime, "")
 	if err != nil {
 		t.Fatalf("IDsForCleanup range: %v", err)
 	}
 	if len(rangeIDs) != 1 || rangeIDs[0] != "mid" {
 		t.Errorf("range selection = %v, want [mid]", rangeIDs)
+	}
+}
+
+// TestIDsForCleanup_StationFilter verifies the station_id filter restricts
+// results to tasks whose destination_station_id matches.
+func TestIDsForCleanup_StationFilter(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	mk := func(id, stationID string, start, end time.Time) {
+		tk := mkTask(id)
+		tk.DestinationStationID = stationID
+		tk.WindowStart = start
+		tk.WindowEnd = end
+		if err := s.Tasks().Insert(ctx, tk); err != nil {
+			t.Fatalf("task %s: %v", id, err)
+		}
+	}
+	// Two tasks in the same time window but different stations.
+	mk("scene-early", "SCENE-L2", time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 5, 1, 1, 0, 0, 0, time.UTC))
+	mk("map-early", "MAP-L1C", time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC), time.Date(2025, 5, 1, 1, 0, 0, 0, time.UTC))
+
+	before := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// No station filter → both tasks returned.
+	allIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow, "")
+	if err != nil {
+		t.Fatalf("IDsForCleanup all: %v", err)
+	}
+	if len(allIDs) != 2 {
+		t.Errorf("no-station selection = %v, want 2 ids", allIDs)
+	}
+
+	// Station filter SCENE-L2 → only scene-early.
+	sceneIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow, "SCENE-L2")
+	if err != nil {
+		t.Fatalf("IDsForCleanup scene: %v", err)
+	}
+	if len(sceneIDs) != 1 || sceneIDs[0] != "scene-early" {
+		t.Errorf("scene selection = %v, want [scene-early]", sceneIDs)
+	}
+
+	// Station filter MAP-L1C → only map-early.
+	mapIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow, "MAP-L1C")
+	if err != nil {
+		t.Fatalf("IDsForCleanup map: %v", err)
+	}
+	if len(mapIDs) != 1 || mapIDs[0] != "map-early" {
+		t.Errorf("map selection = %v, want [map-early]", mapIDs)
+	}
+
+	// Station filter with no matching tasks → empty.
+	noneIDs, err := s.Tasks().IDsForCleanup(ctx, before, time.Time{}, BasisProcessingWindow, "NO2-L2")
+	if err != nil {
+		t.Fatalf("IDsForCleanup none: %v", err)
+	}
+	if len(noneIDs) != 0 {
+		t.Errorf("none selection = %v, want []", noneIDs)
 	}
 }
 

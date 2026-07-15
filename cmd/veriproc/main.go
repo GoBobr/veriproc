@@ -975,15 +975,17 @@ func (c *client) deleteCall(path string, dryRun, cascade bool) (*cleanReport, []
 }
 
 // cmdClean implements `veriproc clean --before TS | --after TS [--dry-run]
-// [--force] [--quiet] [--cascade]`. With neither cutoff it prints the command
-// help (Spec §6). The --cascade flag controls whether descendant tasks and
-// working roots are also removed.
+// [--force] [--quiet] [--cascade] [--station STATION_ID]`. With neither cutoff
+// it prints the command help (Spec §6). The --cascade flag controls whether
+// descendant tasks and working roots are also removed. The --station flag
+// restricts the cleanup to tasks for a single station.
 func (c *client) cmdClean(args []string) int {
 	fs := flag.NewFlagSet("clean", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	before := fs.String("before", "", "delete tasks at or before this timestamp")
 	after := fs.String("after", "", "delete tasks at or after this timestamp")
 	by := fs.String("by", "processing-time", "cutoff basis: processing-time (created_at) or processing-window (sensing window)")
+	station := fs.String("station", "", "restrict cleanup to this destination station id")
 	force := fs.Bool("force", false, "skip the confirmation prompt")
 	dryRun := fs.Bool("dry-run", false, "report what would be deleted without deleting")
 	quiet := fs.Bool("quiet", false, "suppress the pre-delete content listing")
@@ -1004,6 +1006,9 @@ func (c *client) cmdClean(args []string) int {
 
 	// Validate timestamps client-side for a friendly error before the round-trip.
 	body := map[string]any{"basis": *by}
+	if *station != "" {
+		body["station_id"] = *station
+	}
 	if *before != "" {		if _, err := policy.ParseWindowTimestamp(*before); err != nil {
 			fmt.Fprintln(c.stderr, "veriproc clean: invalid --before: "+err.Error())
 			return ExitValidation
@@ -1081,9 +1086,9 @@ func printCleanHelp(w io.Writer) {
 	fmt.Fprint(w, `veriproc clean — delete tasks, runs, and on-disk artifacts within a time range.
 
 Usage:
-  veriproc clean --before TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
-  veriproc clean --after  TIMESTAMP [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
-  veriproc clean --after  T1 --before T2 [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
+  veriproc clean --before TIMESTAMP [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
+  veriproc clean --after  TIMESTAMP [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
+  veriproc clean --after  T1 --before T2 [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
 
 Selection basis (--by, default processing-time):
   processing-time     compare against the task processing time (created_at)
@@ -1094,18 +1099,20 @@ Selection basis (--by, default processing-time):
     --after  T   delete tasks whose sensing window starts at or after T
   combining both selects tasks within [after, before]
 
-Timestamps accept RFC 3339 (2025-05-29T10:00:00Z) or compact UTC
-(20250529T100000) forms.
+Timestamps accept RFC 3339 (2025-05-29T10:00:00Z or 2025-05-29T10:00:00),
+compact UTC (20250529T100000), or date-only (2025-05-29 or 20250529) forms.
+Forms without a timezone are interpreted as UTC; date-only forms are midnight UTC.
 
 Options:
-  --by BASIS   processing-time (default) or processing-window
-  --dry-run    print what would be deleted, then exit without deleting
-  --force      skip the interactive confirmation prompt
-  --quiet      suppress the pre-delete content listing (combine with --force
-                 for fully non-interactive scripted deletion)
-  --cascade    also delete descendant tasks and additional child rows
-                 (by default only matching tasks and their runs are removed,
-                 descendant tasks are orphaned, nullable FKs are nullified)
+  --by BASIS        processing-time (default) or processing-window
+  --station ID      restrict cleanup to this destination station id
+  --dry-run         print what would be deleted, then exit without deleting
+  --force           skip the interactive confirmation prompt
+  --quiet           suppress the pre-delete content listing (combine with --force
+                      for fully non-interactive scripted deletion)
+  --cascade         also delete descendant tasks and additional child rows
+                      (by default only matching tasks and their runs are removed,
+                      descendant tasks are orphaned, nullable FKs are nullified)
 
 By default, clean always lists the affected tasks/runs/artifacts before
 prompting for confirmation or deleting anything. Use --quiet to suppress
@@ -1855,7 +1862,7 @@ Commands:
   station pause      STATION_ID
   station unpause    STATION_ID
   station topology   [--format block|mermaid] [--by-input]
-  clean         (--before TS | --after TS) [--by BASIS] [--dry-run] [--force] [--quiet] [--cascade]
+  clean         (--before TS | --after TS) [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
   health
   readiness
   version       [--check-api]

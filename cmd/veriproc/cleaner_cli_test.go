@@ -13,39 +13,61 @@ import (
 func newCleanerServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	report := func(dryRun bool, taskIDs []string) map[string]any {
-		ids := make([]any, len(taskIDs))
-		for i, id := range taskIDs {
-			ids[i] = id
-		}
-		return map[string]any{
-			"dry_run": dryRun,
-			"counts": map[string]any{
-				"tasks": len(taskIDs), "runs": len(taskIDs), "artifacts": 0,
-			},
-			"task_ids":              ids,
-			"run_ids":               []any{},
-			"working_roots":         []any{},
-			"working_roots_removed": 0,
-		}
-	}
 	mux.HandleFunc("DELETE /api/v1/tasks/{task_id}", func(w http.ResponseWriter, r *http.Request) {
 		dry := r.URL.Query().Get("dry_run") == "true"
-		writeJSON(w, 200, report(dry, []string{r.PathValue("task_id")}))
+		writeJSON(w, 200, cleanReportBody(dry, []string{r.PathValue("task_id")}))
 	})
 	mux.HandleFunc("DELETE /api/v1/runs/{run_id}", func(w http.ResponseWriter, r *http.Request) {
 		dry := r.URL.Query().Get("dry_run") == "true"
-		writeJSON(w, 200, report(dry, []string{r.PathValue("run_id")}))
+		writeJSON(w, 200, cleanReportBody(dry, []string{r.PathValue("run_id")}))
 	})
 	mux.HandleFunc("POST /api/v1/maintenance/clean", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = decodeBody(r, &body)
 		dry, _ := body["dry_run"].(bool)
-		writeJSON(w, 200, report(dry, []string{"early"}))
+		writeJSON(w, 200, cleanReportBody(dry, []string{"early"}))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// cleanReportBody builds a canned cleaner report response for the test server.
+func cleanReportBody(dryRun bool, taskIDs []string) map[string]any {
+	ids := make([]any, len(taskIDs))
+	for i, id := range taskIDs {
+		ids[i] = id
+	}
+	return map[string]any{
+		"dry_run": dryRun,
+		"counts": map[string]any{
+			"tasks": len(taskIDs), "runs": len(taskIDs), "artifacts": 0,
+		},
+		"task_ids":              ids,
+		"run_ids":               []any{},
+		"working_roots":         []any{},
+		"working_roots_removed": 0,
+	}
+}
+
+// newCleanerServerCapturing is like newCleanerServer but records the last clean
+// request body so tests can verify CLI flags are forwarded correctly.
+func newCleanerServerCapturing(t *testing.T) (*httptest.Server, *map[string]any) {
+	t.Helper()
+	captured := map[string]any{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/maintenance/clean", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = decodeBody(r, &body)
+		for k, v := range body {
+			captured[k] = v
+		}
+		dry, _ := body["dry_run"].(bool)
+		writeJSON(w, 200, cleanReportBody(dry, []string{"early"}))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &captured
 }
 
 // TestCLI_TaskDelete_Force deletes without prompting and shows a preview first.
@@ -219,6 +241,31 @@ func TestCLI_Clean_ProcessingWindowBasis(t *testing.T) {
 	}
 	if !strings.Contains(out, "early") {
 		t.Errorf("stdout missing selected task: %q", out)
+	}
+}
+
+// TestCLI_Clean_StationFilter forwards the --station flag to the server as
+// station_id in the clean request body.
+func TestCLI_Clean_StationFilter(t *testing.T) {
+	srv, captured := newCleanerServerCapturing(t)
+	code, _, errs := runCLI(t, srv.URL, "clean", "--before", "2025-06-01T00:00:00Z", "--station", "SCENE-L2", "--force")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if (*captured)["station_id"] != "SCENE-L2" {
+		t.Errorf("server received station_id = %v, want SCENE-L2", (*captured)["station_id"])
+	}
+}
+
+// TestCLI_Clean_NoStation omits station_id when --station is not given.
+func TestCLI_Clean_NoStation(t *testing.T) {
+	srv, captured := newCleanerServerCapturing(t)
+	code, _, errs := runCLI(t, srv.URL, "clean", "--before", "2025-06-01T00:00:00Z", "--force")
+	if code != ExitOK {
+		t.Fatalf("exit = %d (stderr=%s)", code, errs)
+	}
+	if _, ok := (*captured)["station_id"]; ok {
+		t.Errorf("server should not receive station_id, got %v", (*captured)["station_id"])
 	}
 }
 

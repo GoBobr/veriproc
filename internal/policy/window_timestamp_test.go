@@ -35,6 +35,15 @@ func TestParseWindowTimestamp(t *testing.T) {
 		{"compact_ms_999", "20260513T131429999",
 			time.Date(2026, 5, 13, 13, 14, 29, 999_000_000, time.UTC), false},
 
+		// RFC 3339 without timezone (interpreted as UTC).
+		{"rfc3339_no_tz", "2026-05-13T13:14:29", wantSec, false},
+		// RFC 3339 without timezone, with fractional seconds.
+		{"rfc3339_no_tz_ms", "2026-05-13T13:14:29.100", wantMs, false},
+		// ISO 8601 date only (midnight UTC).
+		{"date_iso", "2026-05-13", time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC), false},
+		// Compact date only (midnight UTC).
+		{"date_compact", "20260513", time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC), false},
+
 		// Error cases.
 		{"empty", "", time.Time{}, true},
 		{"garbage", "not-a-timestamp", time.Time{}, true},
@@ -44,7 +53,8 @@ func TestParseWindowTimestamp(t *testing.T) {
 		{"compact_ms_over_999", "20260513T1314291000", time.Time{}, true},
 		{"compact_invalid_date", "20261332T131429", time.Time{}, true},
 		{"compact_invalid_time", "20260513T256100", time.Time{}, true},
-		{"rfc3339_no_tz", "2026-05-13T13:14:29", time.Time{}, true},
+		{"date_compact_invalid", "20261332", time.Time{}, true},
+		{"date_iso_invalid", "2026-13-32", time.Time{}, true},
 	}
 
 	for _, tc := range cases {
