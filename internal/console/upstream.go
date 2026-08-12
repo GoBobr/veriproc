@@ -32,6 +32,10 @@ type UpstreamClient interface {
 	// ListTasks fetches tasks matching the supplied filter query params
 	// (station_id, state, limit). Returns the items array.
 	ListTasks(ctx context.Context, query url.Values) ([]map[string]any, error)
+	// ListRuns fetches runs matching the supplied filter query params
+	// (station_id, state, limit, cursor, sort, order). Returns the full
+	// paginated response including the next_cursor.
+	ListRuns(ctx context.Context, query url.Values) (RunsListResponse, error)
 	ListTaskRuns(ctx context.Context, taskID string) ([]map[string]any, error)
 	GetRun(ctx context.Context, runID string) (map[string]any, error)
 	ListRunJobs(ctx context.Context, runID string) (map[string]any, error)
@@ -266,6 +270,25 @@ func (c *HTTPUpstreamClient) ListTasks(ctx context.Context, query url.Values) ([
 		return nil, err
 	}
 	return resp.Items, nil
+}
+
+// RunsListResponse mirrors the upstream GET /api/v1/runs response shape.
+// It includes pagination metadata (next_cursor) so the console gateway can
+// pass it through to the frontend.
+type RunsListResponse struct {
+	Items      []map[string]any `json:"items"`
+	PageSize   int              `json:"page_size"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+	Ordering   string           `json:"ordering"`
+	Filters    map[string]string `json:"filters"`
+}
+
+func (c *HTTPUpstreamClient) ListRuns(ctx context.Context, query url.Values) (RunsListResponse, error) {
+	var resp RunsListResponse
+	if err := c.do(ctx, "GET", "/api/v1/runs", query, nil, &resp); err != nil {
+		return RunsListResponse{}, err
+	}
+	return resp, nil
 }
 
 func (c *HTTPUpstreamClient) RetryTask(ctx context.Context, taskID string, body map[string]any) (map[string]any, error) {

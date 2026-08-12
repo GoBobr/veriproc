@@ -22,6 +22,7 @@ func (g *Gateway) Router(webapp fs.FS) http.Handler {
 	api.HandleFunc("GET /api/console/instances", g.handleListInstances)
 	api.HandleFunc("GET /api/console/info", g.handleSystemInfo)
 	api.HandleFunc("GET /api/console/instances/{instance_id}/dashboard", g.handleDashboard)
+	api.HandleFunc("GET /api/console/instances/{instance_id}/stations/{station_id}/runs", g.handleListStationRuns)
 	api.HandleFunc("POST /api/console/instances/{instance_id}/stations/{station_id}/pause", g.handlePauseStation)
 	api.HandleFunc("POST /api/console/instances/{instance_id}/stations/{station_id}/unpause", g.handleUnpauseStation)
 	api.HandleFunc("POST /api/console/instances/{instance_id}/stations/{station_id}/hide-failed", g.handleHideStationFailures)

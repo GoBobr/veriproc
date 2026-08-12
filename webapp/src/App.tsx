@@ -4,6 +4,7 @@ import { useRoute } from "./state/router";
 import { Login } from "./pages/Login";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TaskPage } from "./pages/TaskPage";
+import { StationPage } from "./pages/StationPage";
 import { InfoDialog } from "./components/InfoDialog";
 
 type Theme = "dark" | "light";
@@ -61,6 +62,9 @@ export function App() {
       <main>
         {!session && <Login />}
         {session && route.page === "dashboard" && <DashboardPage />}
+        {session && route.page === "station" && route.instanceID && route.stationID && (
+          <StationPage instanceID={route.instanceID} stationID={route.stationID} />
+        )}
         {session && route.page === "task" && route.instanceID && route.taskID && (
           <TaskPage
             instanceID={route.instanceID}

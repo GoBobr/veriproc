@@ -52,6 +52,7 @@ ui:
   default_stats_since: 24h        # default stats window
   upstream_summary_timeout: 30s   # timeout fetching an instance summary
   preview_max_bytes: 1048576      # max bytes served by file preview
+  station_runs_page_size: 50      # default page size for station activity view
 
 db:
   dsn: file:sandbox-console/console.db   # console-scoped SQLite (schema auto-created)
@@ -88,6 +89,7 @@ instances:
 | `ui` | `default_stats_since` | Default statistics lookback window. |
 | `ui` | `upstream_summary_timeout` | Per-instance summary fetch timeout. |
 | `ui` | `preview_max_bytes` | Maximum file-preview size. |
+| `ui` | `station_runs_page_size` | Default page size for the station activity view's run table (default: 50). |
 | `db` | `dsn` | Console SQLite location (`file:<path>`). |
 | `auth.tokens[]` | `subject` / `role` / `token` | Console login identities. Roles: `viewer`, `operator`. |
 | `webapp_dir` | — | Directory of the built frontend bundle. |
@@ -116,3 +118,62 @@ instance listing, and per-instance proxy endpoints) under `/api/console`. The br
 consumes these; you normally do not call them directly. Upstream calls honor each
 instance's `upstream_timeout_ms`, so a slow or down instance degrades gracefully rather
 than blocking the whole dashboard.
+
+### Station activity endpoint
+
+```
+GET /api/console/instances/{instance_id}/stations/{station_id}/runs
+```
+
+Returns a paginated list of runs for the specified station, proxied from the upstream
+`GET /api/v1/runs` endpoint. Supports the following query parameters:
+
+| Param | Meaning |
+|-------|---------|
+| `limit` | Page size (1–200, default: 50). |
+| `cursor` | Opaque pagination cursor from a previous response's `next_cursor`. |
+| `state` | Filter by run state (e.g. `running`, `failed`, `complete`). |
+| `sort` | Sort column: `run_id` (default), `created_at`, or `task_id`. |
+| `order` | Sort direction: `ASC` or `DESC` (default: `DESC`). |
+
+The response includes `items`, `page_size`, `next_cursor`, `ordering`, and `filters`.
+
+## 10.6 Station Activity View
+
+Clicking a station label on the dashboard opens a **station activity page** in a new
+browser tab. The page displays a scrollable, sortable, paginated table of all runs for
+that station.
+
+### Table columns
+
+| Column | Description |
+|--------|-------------|
+| **Task ID** | The task identifier, linked to the task detail page. Adjacent runs from the same task are visually grouped via rowspan. |
+| **Run** | Retry index badge (`r0`, `r1`, …), coloured by state. |
+| **Created** | Run creation timestamp. |
+| **Working Root** | The run's working root directory path. |
+| **Status** | Coloured status button. Clicking opens the task detail page in a new tab. |
+
+### Sorting
+
+Clicking a column header toggles the sort direction (ascending/descending). Sorting is
+server-side and applies across all pages. Available sort columns: `run_id` (default),
+`created_at`, and `task_id`.
+
+### Pagination
+
+The table uses cursor-based pagination with a configurable page size (default: 50,
+configurable via `ui.station_runs_page_size`). A page-size selector offers 10, 25, 50,
+or 100 runs per page. Prev/Next buttons navigate between pages.
+
+### Status colours
+
+Status buttons and run badges reuse the same colour scheme as the dashboard slots:
+
+| State | Colour |
+|-------|--------|
+| running | blue |
+| queued / pending | gray |
+| complete | green |
+| failed | red |
+| cancelled | orange |

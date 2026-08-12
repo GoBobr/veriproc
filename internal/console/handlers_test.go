@@ -111,6 +111,21 @@ func (f *fakeUpstream) RetryTask(_ context.Context, taskID string, _ map[string]
 func (f *fakeUpstream) ListTasks(_ context.Context, _ url.Values) ([]map[string]any, error) {
 	return nil, nil
 }
+func (f *fakeUpstream) ListRuns(_ context.Context, query url.Values) (RunsListResponse, error) {
+	stationID := query.Get("station_id")
+	var items []map[string]any
+	for _, r := range f.runs {
+		if sid, _ := r["station_id"].(string); sid == stationID || stationID == "" {
+			items = append(items, r)
+		}
+	}
+	return RunsListResponse{
+		Items:    items,
+		PageSize: 50,
+		Ordering: "run_id DESC, run_id DESC",
+		Filters:  map[string]string{"station_id": stationID},
+	}, nil
+}
 func (f *fakeUpstream) ListTaskRuns(_ context.Context, taskID string) ([]map[string]any, error) {
 	return f.taskRuns[taskID], nil
 }
@@ -154,6 +169,7 @@ func newTestGateway(t *testing.T, fake *fakeUpstream) (*Gateway, *DB) {
 			DefaultStatsSince:      time.Hour,
 			UpstreamSummaryTimeout: 30 * time.Second,
 			PreviewMaxBytes:        1024,
+			StationRunsPageSize:    50,
 		},
 		Instances: []InstanceConfig{{
 			ID: "vp1", Title: "VP1", BaseURL: "http://upstream",
@@ -419,6 +435,106 @@ func TestRouter_TreeAndPreview(t *testing.T) {
 	}
 }
 
+func TestRouter_ListStationRuns(t *testing.T) {
+	fake := &fakeUpstream{
+		runs: map[string]map[string]any{
+			"run-1": {
+				"run_id":       "run-1",
+				"task_id":      "TASK-A",
+				"station_id":   "StationA",
+				"state":        "complete",
+				"retry_index":  float64(0),
+				"working_root": "/wr/run-1",
+				"created_at":   "2026-05-28T10:00:00Z",
+			},
+			"run-2": {
+				"run_id":       "run-2",
+				"task_id":      "TASK-B",
+				"station_id":   "StationA",
+				"state":        "running",
+				"retry_index":  float64(0),
+				"working_root": "/wr/run-2",
+				"created_at":   "2026-05-28T11:00:00Z",
+			},
+			"run-3": {
+				"run_id":       "run-3",
+				"task_id":      "TASK-C",
+				"station_id":   "StationB",
+				"state":        "failed",
+				"retry_index":  float64(1),
+				"working_root": "/wr/run-3",
+				"created_at":   "2026-05-28T12:00:00Z",
+			},
+		},
+	}
+	gw, _ := newTestGateway(t, fake)
+	rt := gw.Router(nil)
+
+	// Query runs for StationA — should return run-1 and run-2, not run-3.
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/stations/StationA/runs?sort=run_id&order=DESC&limit=10", "viewertok", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("listStationRuns = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp RunsListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 runs for StationA, got %d", len(resp.Items))
+	}
+	for _, item := range resp.Items {
+		sid, _ := item["station_id"].(string)
+		if sid != "StationA" {
+			t.Errorf("expected station_id=StationA, got %q", sid)
+		}
+	}
+	if resp.Ordering == "" {
+		t.Error("expected non-empty ordering")
+	}
+}
+
+func TestRouter_ListStationRuns_UnknownInstance(t *testing.T) {
+	gw, _ := newTestGateway(t, &fakeUpstream{})
+	rt := gw.Router(nil)
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/nope/stations/StationA/runs", "viewertok", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown instance, got %d", rr.Code)
+	}
+}
+
+func TestRouter_ListStationRuns_Unauth(t *testing.T) {
+	gw, _ := newTestGateway(t, &fakeUpstream{})
+	rt := gw.Router(nil)
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/stations/StationA/runs", "", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", rr.Code)
+	}
+}
+
+func TestRouter_StationRunsPageSizeInUIConfig(t *testing.T) {
+	gw, _ := newTestGateway(t, &fakeUpstream{})
+	rt := gw.Router(nil)
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances", "viewertok", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("instances = %d", rr.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	ui, ok := resp["ui"].(map[string]any)
+	if !ok {
+		t.Fatal("missing ui in response")
+	}
+	if ps, _ := ui["station_runs_page_size"].(float64); ps != 50 {
+		t.Errorf("expected station_runs_page_size=50, got %v", ui["station_runs_page_size"])
+	}
+}
+
 type fakeFailingUpstream struct{ err error }
 
 func (f *fakeFailingUpstream) Health(_ context.Context) error { return f.err }
@@ -451,6 +567,9 @@ func (f *fakeFailingUpstream) RetryTask(_ context.Context, _ string, _ map[strin
 }
 func (f *fakeFailingUpstream) ListTasks(_ context.Context, _ url.Values) ([]map[string]any, error) {
 	return nil, f.err
+}
+func (f *fakeFailingUpstream) ListRuns(_ context.Context, _ url.Values) (RunsListResponse, error) {
+	return RunsListResponse{}, f.err
 }
 func (f *fakeFailingUpstream) ListTaskRuns(_ context.Context, _ string) ([]map[string]any, error) {
 	return nil, f.err

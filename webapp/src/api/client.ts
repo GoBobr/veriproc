@@ -2,6 +2,7 @@ import type {
   DashboardInstance,
   InstancesResponse,
   PreviewResponse,
+  StationRunsResponse,
   SystemInfo,
   TreeResponse,
 } from "./types";
@@ -47,6 +48,24 @@ export class ConsoleClient {
   dashboard = (instanceID: string, since?: Date): Promise<DashboardInstance> => {
     const q = since ? `?since=${encodeURIComponent(since.toISOString())}` : "";
     return this.send("GET", `/api/console/instances/${encodeURIComponent(instanceID)}/dashboard${q}`);
+  };
+
+  listStationRuns = (
+    instanceID: string,
+    stationID: string,
+    opts?: { limit?: number; cursor?: string; state?: string; sort?: string; order?: string }
+  ): Promise<StationRunsResponse> => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    if (opts?.cursor) params.set("cursor", opts.cursor);
+    if (opts?.state) params.set("state", opts.state);
+    if (opts?.sort) params.set("sort", opts.sort);
+    if (opts?.order) params.set("order", opts.order);
+    const qs = params.toString();
+    return this.send(
+      "GET",
+      `/api/console/instances/${enc(instanceID)}/stations/${enc(stationID)}/runs${qs ? "?" + qs : ""}`
+    );
   };
 
   pauseStation = (instanceID: string, stationID: string) =>

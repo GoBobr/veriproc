@@ -229,13 +229,16 @@ func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.Run
 		f.CreatedBefore = t
 	}
 	if v := q.Get("cursor"); v != "" {
-		ts, id, err := decodeCursor(v)
+		ts, id, taskID, err := decodeRunCursor(v)
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid cursor", errInvalidRunListRequest)
 		}
 		f.CursorCreatedAt = ts
 		f.CursorRunID = id
+		f.CursorTaskID = taskID
 	}
+	f.SortBy = q.Get("sort")
+	f.SortDir = q.Get("order")
 	for _, fn := range mutate {
 		fn(&f)
 	}
@@ -243,9 +246,11 @@ func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.Run
 	if err != nil {
 		return nil, err
 	}
+	sortBy := store.NormaliseRunSortBy(f.SortBy)
+	sortDir := store.NormaliseRunSortDir(f.SortDir)
 	resp := runListResponse{
 		PageSize: f.Limit,
-		Ordering: "created_at DESC, run_id DESC",
+		Ordering: sortBy + " " + sortDir + ", run_id " + sortDir,
 		Filters:  echoFilters(q),
 		Items:    make([]runWire, 0, len(page.Items)),
 	}
@@ -264,7 +269,7 @@ func (h *runHandler) listRunsResponse(r *http.Request, mutate ...func(*store.Run
 		resp.Items = append(resp.Items, rw)
 	}
 	if page.HasMore {
-		resp.NextCursor = encodeCursor(page.NextCreatedAt, page.NextRunID)
+		resp.NextCursor = encodeRunCursor(page.NextCreatedAt, page.NextRunID, page.NextTaskID)
 	}
 	return &resp, nil
 }
@@ -612,3 +617,34 @@ func echoFilters(q map[string][]string) map[string]string {
 // guard against unused-import in some build configurations
 var _ = base64.StdEncoding
 var _ = strings.ToLower
+
+// encodeRunCursor encodes a pagination cursor that carries the created_at,
+// run_id, and task_id of the last row on the current page. The task_id is
+// needed when sorting by task_id so the cursor can filter on the correct
+// column.
+func encodeRunCursor(ts time.Time, runID, taskID string) string {
+	raw := ts.UTC().Format(time.RFC3339Nano) + "|" + runID + "|" + taskID
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeRunCursor reverses encodeRunCursor. The task_id may be empty for
+// cursors created by older clients that only encoded created_at|run_id.
+func decodeRunCursor(s string) (time.Time, string, string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, "", "", err
+	}
+	parts := strings.SplitN(string(raw), "|", 3)
+	if len(parts) < 2 {
+		return time.Time{}, "", "", errors.New("malformed cursor")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return time.Time{}, "", "", err
+	}
+	taskID := ""
+	if len(parts) >= 3 {
+		taskID = parts[2]
+	}
+	return ts, parts[1], taskID, nil
+}

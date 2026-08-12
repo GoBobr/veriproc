@@ -221,6 +221,42 @@ type RunListFilter struct {
 	Limit             int
 	CursorCreatedAt   time.Time
 	CursorRunID       string
+	// CursorTaskID carries the task_id of the last row on the previous
+	// page. Used when sorting by task_id.
+	CursorTaskID string
+
+	// SortBy controls the primary sort column. Allowed values are
+	// "run_id", "created_at", and "task_id". An empty value defaults
+	// to "run_id".
+	SortBy string
+	// SortDir controls sort direction: "ASC" or "DESC". An empty or
+	// invalid value defaults to "DESC".
+	SortDir string
+}
+
+// validRunSortColumns is the whitelist of columns that may appear in the
+// ORDER BY clause. This prevents SQL injection through the sort parameter.
+var validRunSortColumns = map[string]string{
+	"run_id":     "run_id",
+	"created_at": "created_at",
+	"task_id":    "task_id",
+}
+
+// NormaliseRunSortBy returns a safe column name for ORDER BY, defaulting
+// to "run_id" when the input is empty or not whitelisted.
+func NormaliseRunSortBy(s string) string {
+	if col, ok := validRunSortColumns[s]; ok {
+		return col
+	}
+	return "run_id"
+}
+
+// NormaliseRunSortDir returns "ASC" or "DESC", defaulting to "DESC".
+func NormaliseRunSortDir(s string) string {
+	if strings.EqualFold(s, "ASC") {
+		return "ASC"
+	}
+	return "DESC"
 }
 
 // RunListPage mirrors ListPage for runs.
@@ -228,14 +264,19 @@ type RunListPage struct {
 	Items         []*RunRecord
 	NextCreatedAt time.Time
 	NextRunID     string
+	NextTaskID    string
 	HasMore       bool
 }
 
-// List returns one page of runs ordered by (created_at DESC, run_id DESC).
+// List returns one page of runs ordered by the configured sort column
+// (default: run_id DESC). The secondary sort is always run_id in the same
+// direction for stable ordering.
 func (r *RunRepo) List(ctx context.Context, f RunListFilter) (*RunListPage, error) {
 	if f.Limit <= 0 || f.Limit > 200 {
 		f.Limit = 50
 	}
+	sortBy := NormaliseRunSortBy(f.SortBy)
+	sortDir := NormaliseRunSortDir(f.SortDir)
 	var (
 		conds []string
 		args  []any
@@ -281,17 +322,41 @@ func (r *RunRepo) List(ctx context.Context, f RunListFilter) (*RunListPage, erro
 		conds = append(conds, "created_at <= ?")
 		args = append(args, f.CreatedBefore.UTC())
 	}
-	if !f.CursorCreatedAt.IsZero() && f.CursorRunID != "" {
-		conds = append(conds, "(created_at < ? OR (created_at = ? AND run_id < ?))")
-		args = append(args, f.CursorCreatedAt.UTC(), f.CursorCreatedAt.UTC(), f.CursorRunID)
+	if f.CursorRunID != "" {
+		switch sortBy {
+		case "created_at":
+			if !f.CursorCreatedAt.IsZero() {
+				if sortDir == "ASC" {
+					conds = append(conds, "(created_at > ? OR (created_at = ? AND run_id > ?))")
+				} else {
+					conds = append(conds, "(created_at < ? OR (created_at = ? AND run_id < ?))")
+				}
+				args = append(args, f.CursorCreatedAt.UTC(), f.CursorCreatedAt.UTC(), f.CursorRunID)
+			}
+		case "task_id":
+			if sortDir == "ASC" {
+				conds = append(conds, "(task_id > ? OR (task_id = ? AND run_id > ?))")
+				} else {
+				conds = append(conds, "(task_id < ? OR (task_id = ? AND run_id < ?))")
+				}
+			args = append(args, f.CursorTaskID, f.CursorTaskID, f.CursorRunID)
+		default: // run_id
+			if sortDir == "ASC" {
+				conds = append(conds, "run_id > ?")
+			} else {
+				conds = append(conds, "run_id < ?")
+			}
+			args = append(args, f.CursorRunID)
+		}
 	}
 	where := ""
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	args = append(args, f.Limit+1)
+	orderBy := sortBy + " " + sortDir + ", run_id " + sortDir
 	rows, err := r.q.QueryContext(ctx,
-		`SELECT `+runScanCols+` FROM runs`+where+` ORDER BY created_at DESC, run_id DESC LIMIT ?`,
+		`SELECT `+runScanCols+` FROM runs`+where+` ORDER BY `+orderBy+` LIMIT ?`,
 		args...)
 	if err != nil {
 		return nil, err
@@ -313,6 +378,7 @@ func (r *RunRepo) List(ctx context.Context, f RunListFilter) (*RunListPage, erro
 		last := page.Items[f.Limit-1]
 		page.NextCreatedAt = last.CreatedAt
 		page.NextRunID = last.RunID
+		page.NextTaskID = last.TaskID
 		page.Items = page.Items[:f.Limit]
 	}
 	return page, nil

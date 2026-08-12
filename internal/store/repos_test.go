@@ -200,6 +200,297 @@ func TestStations_DuplicateContentHash(t *testing.T) {
 	}
 }
 
+// TestRuns_ListSorting — verifies that SortBy and SortDir are honoured.
+func TestRuns_ListSorting(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "SORT-ST")
+
+	// Insert tasks and runs with known ordering.
+	tasks := []string{"task-C", "task-A", "task-B"}
+	for _, tid := range tasks {
+		tk := mkTask(tid)
+		tk.DestinationStationID = "SORT-ST"
+		if err := s.Tasks().Insert(ctx, tk); err != nil {
+			t.Fatalf("insert task %s: %v", tid, err)
+		}
+	}
+
+	runs := []struct {
+		runID     string
+		taskID    string
+		createdAt time.Time
+	}{
+		{"run-3", "task-C", time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)},
+		{"run-1", "task-A", time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)},
+		{"run-2", "task-B", time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC)},
+	}
+	for _, r := range runs {
+		rec := &RunRecord{
+			RunID:             r.runID,
+			TaskID:            r.taskID,
+			StationRevisionID: revID,
+			RetryIndex:        0,
+			WorkingRoot:       "/wr/" + r.runID,
+			State:             "pending",
+			Canonicality:      "pending",
+			CreatedAt:         r.createdAt,
+		}
+		if err := s.Runs().Insert(ctx, rec); err != nil {
+			t.Fatalf("insert run %s: %v", r.runID, err)
+		}
+	}
+
+	tests := []struct {
+		name    string
+		sortBy  string
+		sortDir string
+		want    []string // run_ids in expected order
+	}{
+		{"run_id DESC (default)", "", "", []string{"run-3", "run-2", "run-1"}},
+		{"run_id ASC", "run_id", "ASC", []string{"run-1", "run-2", "run-3"}},
+		{"created_at DESC", "created_at", "DESC", []string{"run-3", "run-2", "run-1"}},
+		{"created_at ASC", "created_at", "ASC", []string{"run-1", "run-2", "run-3"}},
+		{"task_id ASC", "task_id", "ASC", []string{"run-1", "run-2", "run-3"}},
+		{"task_id DESC", "task_id", "DESC", []string{"run-3", "run-2", "run-1"}},
+		{"invalid sort falls back", "'; DROP TABLE", "", []string{"run-3", "run-2", "run-1"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := s.Runs().List(ctx, RunListFilter{
+				StationID: "SORT-ST",
+				Limit:     50,
+				SortBy:    tc.sortBy,
+				SortDir:   tc.sortDir,
+			})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(page.Items) != len(tc.want) {
+				t.Fatalf("got %d runs, want %d", len(page.Items), len(tc.want))
+			}
+			for i, r := range page.Items {
+				if r.RunID != tc.want[i] {
+					t.Errorf("position %d: got %s, want %s", i, r.RunID, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestNormaliseRunSortBy — whitelist validation.
+func TestNormaliseRunSortBy(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"run_id", "run_id"},
+		{"created_at", "created_at"},
+		{"task_id", "task_id"},
+		{"", "run_id"},
+		{"malicious", "run_id"},
+		{"'; DROP TABLE runs;--", "run_id"},
+	}
+	for _, tc := range tests {
+		if got := NormaliseRunSortBy(tc.input); got != tc.want {
+			t.Errorf("NormaliseRunSortBy(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestNormaliseRunSortDir — ASC/DESC normalisation.
+func TestNormaliseRunSortDir(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"ASC", "ASC"},
+		{"DESC", "DESC"},
+		{"asc", "ASC"},
+		{"desc", "DESC"},
+		{"", "DESC"},
+		{"random", "DESC"},
+	}
+	for _, tc := range tests {
+		if got := NormaliseRunSortDir(tc.input); got != tc.want {
+			t.Errorf("NormaliseRunSortDir(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestRuns_ListCursorWithSortByTaskID — verifies that cursor pagination
+// works correctly when sorting by task_id. The cursor must filter on
+// task_id, not created_at, otherwise rows are incorrectly dropped.
+func TestRuns_ListCursorWithSortByTaskID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "CUR-ST")
+
+	// Insert 5 runs across 3 tasks with interleaved created_at values so
+	// that a created_at-based cursor would give wrong results.
+	runs := []struct {
+		runID     string
+		taskID    string
+		retryIdx  int
+		createdAt time.Time
+	}{
+		{"r-1", "task-A", 0, time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)},
+		{"r-2", "task-B", 0, time.Date(2026, 5, 28, 9, 0, 0, 0, time.UTC)},  // earlier created_at but later task_id
+		{"r-3", "task-A", 1, time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC)},
+		{"r-4", "task-C", 0, time.Date(2026, 5, 28, 8, 0, 0, 0, time.UTC)},
+		{"r-5", "task-B", 1, time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)},
+	}
+	for _, r := range runs {
+		tk := mkTask(r.taskID)
+		tk.DestinationStationID = "CUR-ST"
+		// Avoid duplicate task_id conflict — only insert if not already present.
+		_ = s.Tasks().Insert(ctx, tk)
+		rec := &RunRecord{
+			RunID:             r.runID,
+			TaskID:            r.taskID,
+			StationRevisionID: revID,
+			RetryIndex:        r.retryIdx,
+			WorkingRoot:       "/wr/" + r.runID,
+			State:             "pending",
+			Canonicality:      "pending",
+			CreatedAt:         r.createdAt,
+		}
+		if err := s.Runs().Insert(ctx, rec); err != nil {
+			t.Fatalf("insert run %s: %v", r.runID, err)
+		}
+	}
+
+	// Sort by task_id ASC, page size 2.
+	// Expected order: task-A/r-1, task-A/r-3, task-B/r-2, task-B/r-5, task-C/r-4
+	page1, err := s.Runs().List(ctx, RunListFilter{
+		StationID: "CUR-ST",
+		Limit:     2,
+		SortBy:    "task_id",
+		SortDir:   "ASC",
+	})
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1.Items) != 2 {
+		t.Fatalf("page1: got %d items, want 2", len(page1.Items))
+	}
+	if page1.Items[0].RunID != "r-1" || page1.Items[1].RunID != "r-3" {
+		t.Fatalf("page1 order: got %s,%s want r-1,r-3", page1.Items[0].RunID, page1.Items[1].RunID)
+	}
+	if !page1.HasMore {
+		t.Fatal("page1: expected HasMore=true")
+	}
+
+	// Page 2: use cursor from page1.
+	page2, err := s.Runs().List(ctx, RunListFilter{
+		StationID:    "CUR-ST",
+		Limit:        2,
+		SortBy:       "task_id",
+		SortDir:      "ASC",
+		CursorRunID:  page1.NextRunID,
+		CursorTaskID: page1.NextTaskID,
+	})
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2.Items) != 2 {
+		t.Fatalf("page2: got %d items, want 2", len(page2.Items))
+	}
+	// Should get task-B/r-2, task-B/r-5
+	if page2.Items[0].RunID != "r-2" || page2.Items[1].RunID != "r-5" {
+		t.Fatalf("page2 order: got %s,%s want r-2,r-5", page2.Items[0].RunID, page2.Items[1].RunID)
+	}
+
+	// Page 3: should get the last item task-C/r-4
+	page3, err := s.Runs().List(ctx, RunListFilter{
+		StationID:    "CUR-ST",
+		Limit:        2,
+		SortBy:       "task_id",
+		SortDir:      "ASC",
+		CursorRunID:  page2.NextRunID,
+		CursorTaskID: page2.NextTaskID,
+	})
+	if err != nil {
+		t.Fatalf("page3: %v", err)
+	}
+	if len(page3.Items) != 1 {
+		t.Fatalf("page3: got %d items, want 1", len(page3.Items))
+	}
+	if page3.Items[0].RunID != "r-4" {
+		t.Fatalf("page3: got %s, want r-4", page3.Items[0].RunID)
+	}
+	if page3.HasMore {
+		t.Fatal("page3: expected HasMore=false")
+	}
+}
+
+// TestRuns_ListCursorWithSortByRunID — cursor pagination when sorting by
+// run_id (the default). The cursor should filter on run_id only.
+func TestRuns_ListCursorWithSortByRunID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	revID := mkStation(t, s, "RID-ST")
+
+	for _, r := range []struct {
+		runID    string
+		taskID   string
+		retryIdx int
+	}{
+		{"run-5", "task-A", 0},
+		{"run-3", "task-A", 1},
+		{"run-1", "task-B", 0},
+		{"run-4", "task-B", 1},
+		{"run-2", "task-C", 0},
+	} {
+		tk := mkTask(r.taskID)
+		tk.DestinationStationID = "RID-ST"
+		_ = s.Tasks().Insert(ctx, tk)
+		rec := &RunRecord{
+			RunID: r.runID, TaskID: r.taskID, StationRevisionID: revID,
+			RetryIndex: r.retryIdx, WorkingRoot: "/wr/" + r.runID, State: "pending", Canonicality: "pending",
+		}
+		if err := s.Runs().Insert(ctx, rec); err != nil {
+			t.Fatalf("insert %s: %v", r.runID, err)
+		}
+	}
+
+	// Sort by run_id DESC, page size 3.
+	// Expected order: run-5, run-4, run-3, run-2, run-1
+	page1, err := s.Runs().List(ctx, RunListFilter{
+		StationID: "RID-ST",
+		Limit:     3,
+		SortBy:    "run_id",
+		SortDir:   "DESC",
+	})
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if len(page1.Items) != 3 {
+		t.Fatalf("page1: got %d, want 3", len(page1.Items))
+	}
+	if page1.Items[0].RunID != "run-5" || page1.Items[1].RunID != "run-4" || page1.Items[2].RunID != "run-3" {
+		t.Fatalf("page1: got %s,%s,%s want run-5,run-4,run-3",
+			page1.Items[0].RunID, page1.Items[1].RunID, page1.Items[2].RunID)
+	}
+
+	page2, err := s.Runs().List(ctx, RunListFilter{
+		StationID:   "RID-ST",
+		Limit:       3,
+		SortBy:      "run_id",
+		SortDir:     "DESC",
+		CursorRunID: page1.NextRunID,
+	})
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if len(page2.Items) != 2 {
+		t.Fatalf("page2: got %d, want 2", len(page2.Items))
+	}
+	if page2.Items[0].RunID != "run-2" || page2.Items[1].RunID != "run-1" {
+		t.Fatalf("page2: got %s,%s want run-2,run-1", page2.Items[0].RunID, page2.Items[1].RunID)
+	}
+}
+
 // TestIdempotency_InsertAndGet — basic round-trip with (scope, key) uniqueness.
 func TestIdempotency_InsertAndGet(t *testing.T) {
 	s := newTestStore(t)

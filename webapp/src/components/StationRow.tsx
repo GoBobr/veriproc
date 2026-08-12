@@ -3,7 +3,7 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { SubmitDialog } from "./SubmitDialog";
 import { PushDownstreamDialog } from "./PushDownstreamDialog";
 import { useAuth } from "../state/auth";
-import { taskHref } from "../state/router";
+import { taskHref, stationHref } from "../state/router";
 import type { DashboardSlot, DashboardStationRow } from "../api/types";
 
 interface Props {
@@ -137,7 +137,8 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
       <div
         class="station-label"
         onContextMenu={onLabelContext}
-        title={row.station_name || row.station_id}
+        onClick={() => window.open(stationHref(instanceID, row.station_id), "_blank")}
+        title={`${row.station_name || row.station_id} — click to open station view`}
       >
         {row.station_name || row.station_id}
         {row.paused && <span class="paused-badge">PAUSED</span>}

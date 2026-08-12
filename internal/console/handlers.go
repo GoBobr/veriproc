@@ -56,6 +56,7 @@ func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
 			"preview_max_bytes":       g.cfg.UI.PreviewMaxBytes,
 			"card_min_width_px":       g.cfg.UI.CardMinWidth,
 			"card_max_width_px":       g.cfg.UI.CardMaxWidth,
+			"station_runs_page_size":  g.cfg.UI.StationRunsPageSize,
 		},
 	})
 }
@@ -336,6 +337,27 @@ func (g *Gateway) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := inst.client.GetTask(r.Context(), taskID)
+	if err != nil {
+		writeErr(w, httpStatusFromUpstream(err), "upstream_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleListStationRuns proxies a run-list query to the upstream instance,
+// scoped to a specific station. It passes through pagination, sorting, and
+// state filter query params and returns the upstream response as-is.
+func (g *Gateway) handleListStationRuns(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("instance_id")
+	stationID := r.PathValue("station_id")
+	inst, ok := g.instance(instanceID)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown_instance", "instance not configured")
+		return
+	}
+	q := r.URL.Query()
+	q.Set("station_id", stationID)
+	out, err := inst.client.ListRuns(r.Context(), q)
 	if err != nil {
 		writeErr(w, httpStatusFromUpstream(err), "upstream_failed", err.Error())
 		return

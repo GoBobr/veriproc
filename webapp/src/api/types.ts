@@ -18,6 +18,7 @@ export interface InstancesResponse {
     preview_max_bytes: number;
     card_min_width_px: number;
     card_max_width_px: number;
+    station_runs_page_size: number;
   };
 }
 
@@ -103,4 +104,33 @@ export interface PreviewResponse {
   bytes_returned: number;
   content?: string;
   reason?: string;
+}
+
+// --- Station activity view types ---
+
+export interface StationRun {
+  run_id: string;
+  run_ref: string;
+  task_id: string;
+  station_id?: string;
+  state: string;
+  internal_state?: string;
+  canonicality?: string;
+  retry_index: number;
+  working_root?: string;
+  failure_reason?: string;
+  failure_summary?: string;
+  created_at: string;
+  terminal_at?: string;
+  executor_type?: string;
+  execution_node?: string;
+  elapsed_time?: string;
+}
+
+export interface StationRunsResponse {
+  items: StationRun[];
+  page_size: number;
+  next_cursor?: string;
+  ordering: string;
+  filters: Record<string, string>;
 }

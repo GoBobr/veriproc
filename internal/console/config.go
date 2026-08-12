@@ -87,6 +87,9 @@ type UIConfig struct {
 	PreviewMaxBytes        int64         `yaml:"preview_max_bytes"`
 	CardMinWidth           int           `yaml:"card_min_width_px"`
 	CardMaxWidth           int           `yaml:"card_max_width_px"`
+	// StationRunsPageSize is the default page size for the station activity
+	// view's run table. Defaults to 50 when not configured.
+	StationRunsPageSize int `yaml:"station_runs_page_size"`
 }
 
 // DBConfig is the console-local persistence handle.
@@ -190,6 +193,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.UI.CardMaxWidth == 0 {
 		c.UI.CardMaxWidth = 520
+	}
+	if c.UI.StationRunsPageSize == 0 {
+		c.UI.StationRunsPageSize = 50
 	}
 }
 

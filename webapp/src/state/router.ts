@@ -2,14 +2,16 @@ import { useEffect, useState } from "preact/hooks";
 
 // Hash-based router suitable for an SPA served from a single index.html.
 // Routes:
-//   #/                                 → dashboard
-//   #/instances/{id}/tasks/{taskId}    → task detail
+//   #/                                              → dashboard
+//   #/instances/{id}/tasks/{taskId}                 → task detail
+//   #/instances/{id}/stations/{stationId}           → station activity view
 // Path segments are returned through useRoute().
 export interface Route {
-  page: "dashboard" | "task" | "login";
+  page: "dashboard" | "task" | "station" | "login";
   instanceID?: string;
   taskID?: string;
   retryIndex?: number;
+  stationID?: string;
 }
 
 function parseHash(): Route {
@@ -22,6 +24,13 @@ function parseHash(): Route {
       instanceID: decodeURIComponent(parts[1]),
       taskID: decodeURIComponent(parts[3] || ""),
       retryIndex: parts[5] !== undefined ? Number(parts[5]) : undefined,
+    };
+  }
+  if (parts[0] === "instances" && parts[2] === "stations") {
+    return {
+      page: "station",
+      instanceID: decodeURIComponent(parts[1]),
+      stationID: decodeURIComponent(parts[3] || ""),
     };
   }
   return { page: "dashboard" };
@@ -41,4 +50,8 @@ export function taskHref(instanceID: string, taskID: string, retryIndex?: number
   let h = `#/instances/${encodeURIComponent(instanceID)}/tasks/${encodeURIComponent(taskID)}`;
   if (retryIndex !== undefined) h += `/runs/${retryIndex}`;
   return h;
+}
+
+export function stationHref(instanceID: string, stationID: string): string {
+  return `#/instances/${encodeURIComponent(instanceID)}/stations/${encodeURIComponent(stationID)}`;
 }
