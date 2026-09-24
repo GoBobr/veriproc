@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -144,6 +145,38 @@ func (r *StationRevisionRepo) ExistsStationID(ctx context.Context, stationID str
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// StationIDsForRevisions resolves a batch of revision IDs to their station
+// IDs. Unknown revision IDs are silently omitted. Callers that need station
+// identity for many revisions (e.g. the dispatcher's dispatch phase) should
+// use this once per pass instead of one Get query per revision.
+func (r *StationRevisionRepo) StationIDsForRevisions(ctx context.Context, revisionIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(revisionIDs))
+	if len(revisionIDs) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(revisionIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(revisionIDs))
+	for _, id := range revisionIDs {
+		args = append(args, id)
+	}
+	rows, err := r.q.QueryContext(ctx,
+		`SELECT revision_id, station_id FROM station_revisions WHERE revision_id IN (`+placeholders+`)`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var revID, stationID string
+		if err := rows.Scan(&revID, &stationID); err != nil {
+			return nil, err
+		}
+		out[revID] = stationID
+	}
+	return out, rows.Err()
 }
 
 // ListCurrent returns one current operator-facing record per station_id.

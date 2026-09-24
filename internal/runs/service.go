@@ -202,18 +202,11 @@ func (s *Service) PrepareRun(ctx context.Context, taskID string) (*store.RunReco
 		return nil, fmt.Errorf("%w: %v", ErrUnknownStation, err)
 	}
 
-	existing, err := s.store.Runs().ListByStates(ctx,
-		"pending", "preparing", "ready", "dispatched", "running",
-		"finalizing", "complete", "failed", "cancelled")
+	maxRetry, err := s.store.Runs().MaxRetryIndex(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
-	retryIndex := 0
-	for _, r := range existing {
-		if r.TaskID == taskID && r.RetryIndex >= retryIndex {
-			retryIndex = r.RetryIndex + 1
-		}
-	}
+	retryIndex := maxRetry + 1
 
 	runID := s.idFactory()
 	now := s.clock().UTC()

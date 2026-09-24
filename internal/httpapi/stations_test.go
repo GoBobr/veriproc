@@ -104,7 +104,7 @@ func (a *stationAPI) submitOne(t *testing.T) string {
 func (a *stationAPI) tickN(t *testing.T, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := a.dispatch.Tick(context.Background()); err != nil {
+		if _, err := a.dispatch.Tick(context.Background()); err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
 	}

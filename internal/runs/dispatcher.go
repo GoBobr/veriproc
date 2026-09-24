@@ -19,60 +19,103 @@ import (
 //
 // One Dispatcher is intended per process; it serializes work using the
 // service's per-row conditional UPDATEs as the concurrency control.
+//
+// The tick interval is adaptive: when a tick finds no work to do the next
+// interval grows exponentially (250ms → 500ms → 1s → ... capped at
+// maxInterval, default 5s). Any tick that performs work resets the interval
+// to the base value. This keeps dispatch latency at the base interval under
+// load while reducing idle CPU consumption to near zero (the dispatcher
+// otherwise issues unconditional store queries every tick, which is
+// expensive against SQLite on network filesystems).
 type Dispatcher struct {
-	svc      *Service
-	interval time.Duration
-	logger   zerolog.Logger
+	svc         *Service
+	interval    time.Duration
+	maxInterval time.Duration
+	logger      zerolog.Logger
 }
 
 // NewDispatcher constructs a Dispatcher that ticks at the supplied interval.
-// An interval of 0 defaults to 250ms.
+// An interval of 0 defaults to 250ms. The idle backoff ceiling defaults to
+// 5s (20× the base interval).
 func NewDispatcher(svc *Service, interval time.Duration, logger zerolog.Logger) *Dispatcher {
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
-	return &Dispatcher{svc: svc, interval: interval, logger: logger}
+	return &Dispatcher{svc: svc, interval: interval, maxInterval: 20 * interval, logger: logger}
 }
 
-// Run blocks, ticking the dispatcher until ctx is cancelled.
+// Run blocks, ticking the dispatcher until ctx is cancelled. After each idle
+// tick the interval doubles (up to maxInterval); after any tick that did work
+// it snaps back to the base interval.
 func (d *Dispatcher) Run(ctx context.Context) error {
 	t := time.NewTicker(d.interval)
 	defer t.Stop()
+	current := d.interval
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			if err := d.Tick(ctx); err != nil {
+			busy, err := d.Tick(ctx)
+			if err != nil {
 				d.logger.Warn().Err(err).Msg("dispatcher tick error")
 			}
+			// Adaptive cadence: back off when idle, snap back when busy.
+			if busy {
+				current = d.interval
+			} else {
+				current *= 2
+				if current > d.maxInterval {
+					current = d.maxInterval
+				}
+			}
+			t.Reset(current)
 		}
 	}
 }
 
 // Tick runs one pass of the dispatcher: admit new tasks, dispatch ready runs,
-// poll active runs, finalize completed runs. Exposed publicly so tests can
-// drive the lifecycle without spinning up a goroutine.
-func (d *Dispatcher) Tick(ctx context.Context) error {
-	if err := d.admitNewTasks(ctx); err != nil {
-		return err
+// poll active runs, finalize completed runs. It returns true if any phase
+// found work to do. Exposed publicly so tests can drive the lifecycle
+// without spinning up a goroutine.
+func (d *Dispatcher) Tick(ctx context.Context) (bool, error) {
+	busy := false
+	did, err := d.admitNewTasks(ctx)
+	if err != nil {
+		return busy, err
 	}
-	if err := d.dispatchReady(ctx); err != nil {
-		return err
+	busy = busy || did
+	did, err = d.dispatchReady(ctx)
+	if err != nil {
+		return busy, err
 	}
-	if err := d.pollActive(ctx); err != nil {
-		return err
+	busy = busy || did
+	did, err = d.pollActive(ctx)
+	if err != nil {
+		return busy, err
 	}
-	return d.finalizeReady(ctx)
+	busy = busy || did
+	did, err = d.finalizeReady(ctx)
+	if err != nil {
+		return busy, err
+	}
+	return busy || did, nil
 }
 
 // admitNewTasks prepares a run for each task in state "accepted" that has no
 // latest_run_id yet. This bridges the tasks service (which only persists the
 // task row) and the run lifecycle.
-func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
-	page, err := d.svc.store.Tasks().List(ctx, store.ListFilter{State: "accepted", Limit: 100})
+//
+// The candidate query filters in SQL on latest_retry_index IS NULL so tasks
+// that already have a run are not fetched (with their routing_content JSON
+// blobs) and re-scanned on every tick.
+func (d *Dispatcher) admitNewTasks(ctx context.Context) (bool, error) {
+	page, err := d.svc.store.Tasks().List(ctx, store.ListFilter{State: "accepted", UnpreparedOnly: true, Limit: 100})
 	if err != nil {
-		return err
+		return false, err
+	}
+	if len(page.Items) == 0 {
+		return false, nil
 	}
 	for _, t := range page.Items {
 		if t.LatestRetryIndex.Valid {
@@ -102,21 +145,33 @@ func (d *Dispatcher) admitNewTasks(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
-func (d *Dispatcher) dispatchReady(ctx context.Context) error {
+func (d *Dispatcher) dispatchReady(ctx context.Context) (bool, error) {
 	ready, err := d.svc.store.Runs().ListByStates(ctx, "ready")
 	if err != nil {
-		return err
+		return false, err
+	}
+	if len(ready) == 0 {
+		return false, nil
+	}
+	// Resolve pause state for all candidate stations in two batched queries
+	// instead of two queries per run.
+	revIDs := make([]string, 0, len(ready))
+	for _, r := range ready {
+		revIDs = append(revIDs, r.StationRevisionID)
+	}
+	revToStation, err := d.svc.store.Stations().StationIDsForRevisions(ctx, revIDs)
+	if err != nil {
+		return false, err
+	}
+	pausedStations, err := d.svc.store.StationControls().ListPaused(ctx)
+	if err != nil {
+		return false, err
 	}
 	for _, r := range ready {
-		paused, err := d.svc.IsStationPausedForRun(ctx, r.StationRevisionID)
-		if err != nil {
-			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("could not resolve station pause state")
-			continue
-		}
-		if paused {
+		if pausedStations[revToStation[r.StationRevisionID]] {
 			continue
 		}
 		if _, err := d.svc.Dispatch(ctx, r.RunID); err != nil {
@@ -134,13 +189,16 @@ func (d *Dispatcher) dispatchReady(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
-func (d *Dispatcher) pollActive(ctx context.Context) error {
+func (d *Dispatcher) pollActive(ctx context.Context) (bool, error) {
 	active, err := d.svc.store.Runs().ListByStates(ctx, "dispatched", "running")
 	if err != nil {
-		return err
+		return false, err
+	}
+	if len(active) == 0 {
+		return false, nil
 	}
 	for _, r := range active {
 		if _, err := d.svc.Poll(ctx, r.RunID); err != nil &&
@@ -148,18 +206,21 @@ func (d *Dispatcher) pollActive(ctx context.Context) error {
 			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("poll failed")
 		}
 	}
-	return nil
+	return true, nil
 }
 
-func (d *Dispatcher) finalizeReady(ctx context.Context) error {
+func (d *Dispatcher) finalizeReady(ctx context.Context) (bool, error) {
 	finalizing, err := d.svc.store.Runs().ListByStates(ctx, "finalizing")
 	if err != nil {
-		return err
+		return false, err
+	}
+	if len(finalizing) == 0 {
+		return false, nil
 	}
 	for _, r := range finalizing {
 		if _, err := d.svc.Finalize(ctx, r.RunID); err != nil {
 			d.logger.Warn().Str("run_id", r.RunID).Err(err).Msg("finalize failed")
 		}
 	}
-	return nil
+	return true, nil
 }

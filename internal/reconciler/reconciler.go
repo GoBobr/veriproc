@@ -107,12 +107,19 @@ func (s *Service) findStale(ctx context.Context, cutoff time.Time) ([]string, er
 	// A reconciliation lock older than 5× the stale threshold is considered
 	// orphaned and the run is eligible for re-reconciliation.
 	lockTimeout := cutoff.Add(-4 * s.staleThreshold)
+	// The jobs aggregation is restricted to runs in dispatched/running so the
+	// GROUP BY does not re-scan the entire jobs table (which grows without
+	// bound over the instance's lifetime) on every pass.
 	const q = `
 		SELECT r.run_id
 		FROM runs r
 		LEFT JOIN (
-			SELECT run_id, MAX(COALESCE(last_observed_at, submitted_at)) AS observed_at
-			FROM jobs GROUP BY run_id
+			SELECT j.run_id, MAX(COALESCE(j.last_observed_at, j.submitted_at)) AS observed_at
+			FROM jobs j
+			WHERE j.run_id IN (
+				SELECT run_id FROM runs WHERE state IN ('dispatched','running')
+			)
+			GROUP BY j.run_id
 		) j ON j.run_id = r.run_id
 		WHERE r.state IN ('dispatched','running')
 		  AND (r.reconciliation_started_at IS NULL OR r.reconciliation_started_at < ?)

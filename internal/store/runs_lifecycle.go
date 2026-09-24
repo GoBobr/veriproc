@@ -37,6 +37,21 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+// MaxRetryIndex returns the highest retry_index among runs for the supplied
+// task, or -1 when the task has no runs. Used by PrepareRun to assign the
+// next retry index without loading every run in the table.
+func (r *RunRepo) MaxRetryIndex(ctx context.Context, taskID string) (int, error) {
+	var max sql.NullInt64
+	if err := r.q.QueryRowContext(ctx,
+		`SELECT MAX(retry_index) FROM runs WHERE task_id = ?`, taskID).Scan(&max); err != nil {
+		return 0, err
+	}
+	if !max.Valid {
+		return -1, nil
+	}
+	return int(max.Int64), nil
+}
+
 // MarkPrepared sets the run's processing_fingerprint and prepared_at and
 // transitions to "ready". The transition is conditional on current state to
 // keep it idempotent under concurrent dispatcher ticks.

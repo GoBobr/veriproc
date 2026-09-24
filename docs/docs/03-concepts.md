@@ -71,15 +71,23 @@ into the same machine (see [Operations](11-operations.md)).
 
 ## 3.5 The dispatcher loop
 
-`veriprocd` runs a dispatcher that ticks at a fixed interval (≈250 ms) and performs four
+`veriprocd` runs a dispatcher with a base tick interval of ≈250 ms that performs four
 phases each tick:
 
-1. **Admit** — turn `accepted` tasks into runs in `preparing`.
-2. **Dispatch** — submit `ready` runs to their executor.
+1. **Admit** — turn `accepted` tasks that have no run yet into runs in `preparing`.
+2. **Dispatch** — submit `ready` runs to their executor (station pause state is
+   resolved with one batched query per tick, not per run).
 3. **Poll** — query executor status for active jobs.
 4. **Finalize** — complete runs whose jobs have reached a terminal state.
 
 Each phase is idempotent and guarded so concurrent ticks and restarts are safe.
+
+The tick interval is **adaptive**: when a tick finds no work in any phase, the next
+interval doubles (up to a ceiling of 20× the base interval, i.e. 5 s at the default
+250 ms base). Any tick that performs work resets the interval to the base value. This
+keeps dispatch latency at the base interval under load while reducing idle CPU
+consumption to near zero — important when the state store is SQLite on a network
+filesystem, where even read-only queries are comparatively expensive.
 
 ## 3.6 From task to job order
 

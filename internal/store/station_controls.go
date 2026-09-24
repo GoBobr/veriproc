@@ -68,6 +68,28 @@ func (r *StationControlRepo) IsPaused(ctx context.Context, stationID string) (bo
 	return rec.Paused, nil
 }
 
+// ListPaused returns the set of station IDs that are currently paused.
+// Callers that need pause state for many stations (e.g. the dispatcher's
+// dispatch phase) should use this once per pass instead of one IsPaused
+// query per station.
+func (r *StationControlRepo) ListPaused(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.q.QueryContext(ctx,
+		`SELECT station_id FROM station_controls WHERE paused = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	paused := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		paused[id] = true
+	}
+	return paused, rows.Err()
+}
+
 func boolToInt(v bool) int {
 	if v {
 		return 1

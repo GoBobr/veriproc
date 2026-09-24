@@ -114,6 +114,10 @@ past a threshold. It reads the exit-code marker written by the executor/wrapper,
 job has actually finished, moves the run into `finalizing` so it can complete. This recovers
 from lost scheduler tracking (e.g. an executor restart) without manual intervention.
 
+The reconciler's stale-detection query only aggregates job observations for runs that are
+currently in `dispatched`/`running`, so its cost stays proportional to the number of active
+runs rather than the total number of jobs accumulated over the instance's lifetime.
+
 ## 11.7 Station pause/unpause
 
 Pausing a station stops admission of new work for it without affecting in-flight runs:

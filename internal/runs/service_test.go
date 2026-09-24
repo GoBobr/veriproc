@@ -436,7 +436,7 @@ func waitForTaskState(t *testing.T, ctx context.Context, st *store.Store, disp *
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := disp.Tick(ctx); err != nil {
+		if _, err := disp.Tick(ctx); err != nil {
 			t.Fatalf("dispatcher tick: %v", err)
 		}
 		task, err := st.Tasks().Get(ctx, taskID)
@@ -456,7 +456,7 @@ func waitForTaskCount(t *testing.T, ctx context.Context, st *store.Store, disp *
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := disp.Tick(ctx); err != nil {
+		if _, err := disp.Tick(ctx); err != nil {
 			t.Fatalf("dispatcher tick: %v", err)
 		}
 		page, err := st.Tasks().List(ctx, store.ListFilter{Limit: 100})
@@ -562,7 +562,7 @@ func TestRuns_FullLifecycle_5_6_7_5(t *testing.T) {
 
 	// Several ticks drive the lifecycle forward.
 	for i := 0; i < 6; i++ {
-		if err := f.dispatch.Tick(ctx); err != nil {
+		if _, err := f.dispatch.Tick(ctx); err != nil {
 			t.Fatalf("tick %d: %v", i, err)
 		}
 	}
@@ -605,7 +605,7 @@ func TestRuns_FailedJob_3_9(t *testing.T) {
 		t.Fatalf("SetOutcome: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		_ = f.dispatch.Tick(ctx)
+		_, _ = f.dispatch.Tick(ctx)
 	}
 	got, _ := f.st.Runs().Get(ctx, r.RunID)
 	if got.State != "failed" {
@@ -640,7 +640,7 @@ func TestRuns_DuplicateFingerprintMarkedDuplicate_3_10(t *testing.T) {
 	taskA := submitTask(t, f)
 	taskB := submitTask(t, f)
 	for i := 0; i < 8; i++ {
-		_ = f.dispatch.Tick(ctx)
+		_, _ = f.dispatch.Tick(ctx)
 	}
 	tkA, _ := f.st.Tasks().Get(ctx, taskA)
 	tkB, _ := f.st.Tasks().Get(ctx, taskB)

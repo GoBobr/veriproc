@@ -230,6 +230,11 @@ type ListFilter struct {
 	CursorCreatedAt time.Time
 	CursorTaskID    string
 
+	// UnpreparedOnly restricts results to tasks that have no run yet
+	// (latest_retry_index IS NULL). Used by the dispatcher's admit phase to
+	// avoid re-fetching tasks that already have runs on every tick.
+	UnpreparedOnly bool
+
 	// Limit must be 1..200; the caller is expected to clamp.
 	Limit int
 }
@@ -268,6 +273,9 @@ func (r *TaskRepo) List(ctx context.Context, f ListFilter) (*ListPage, error) {
 	if f.SplitGroupID != "" {
 		conds = append(conds, "split_group_id = ?")
 		args = append(args, f.SplitGroupID)
+	}
+	if f.UnpreparedOnly {
+		conds = append(conds, "latest_retry_index IS NULL")
 	}
 	if f.Force != nil {
 		conds = append(conds, "force = ?")

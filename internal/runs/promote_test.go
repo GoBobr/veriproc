@@ -23,7 +23,7 @@ func finalizeTaskRun(t *testing.T, f *fixture, taskID string) string {
 		t.Fatalf("dispatch: %v", err)
 	}
 	for i := 0; i < 8; i++ {
-		if err := f.dispatch.Tick(ctx); err != nil {
+		if _, err := f.dispatch.Tick(ctx); err != nil {
 			t.Fatalf("tick: %v", err)
 		}
 		got, err := f.st.Runs().Get(ctx, r.RunID)
@@ -121,7 +121,7 @@ func TestRuns_PromoteCanonical(t *testing.T) {
 
 	// Drive both runs to completion via the dispatcher.
 	for i := 0; i < 8; i++ {
-		_ = f.dispatch.Tick(ctx)
+		_, _ = f.dispatch.Tick(ctx)
 	}
 
 	canonRun, err := f.st.Runs().Get(ctx, run1.RunID)
