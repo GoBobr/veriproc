@@ -42,15 +42,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gobobr/veriproc/internal/policy"
 	"github.com/gobobr/veriproc/internal/version"
+	"golang.org/x/term"
 )
 
 // Spec §6.10 exit codes.
@@ -90,13 +93,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	cmd, sub, tail := dispatch(rest)
 	c := &client{
-		baseURL: cfg.APIURL,
-		token:   cfg.Token,
-		http:    &http.Client{Timeout: cfg.Timeout},
-		out:     cfg.Output,
-		stdout:  stdout,
-		stderr:  stderr,
-		stdin:   os.Stdin,
+		baseURL:   cfg.APIURL,
+		token:     cfg.Token,
+		http:      &http.Client{Timeout: cfg.Timeout},
+		out:       cfg.Output,
+		stdout:    stdout,
+		stderr:    stderr,
+		stdin:     os.Stdin,
+		followAll: !isTerminalWriter(stdout),
 	}
 
 	switch cmd {
@@ -238,6 +242,12 @@ type client struct {
 	stdout  io.Writer
 	stderr  io.Writer
 	stdin   io.Reader
+	// listPath is the API path of the most recent list request, used by
+	// renderList to fetch subsequent pages. Empty disables auto-paging.
+	listPath string
+	// followAll forces renderList to fetch every page without prompting
+	// (used when stdout is not a terminal, e.g. piped into `less`).
+	followAll bool
 }
 
 type apiError struct {
@@ -398,17 +408,47 @@ func scalar(v any) string {
 }
 
 // renderTable writes a tab-aligned table for a list of map[string]any items.
-func (c *client) renderTable(cols []string, items []map[string]any) {
-	tw := tabwriter.NewWriter(c.stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(headers(cols), "\t"))
+// When showHeader is false the header row is omitted (used for continuation
+// pages so a multi-page listing reads as one continuous table). widths carries
+// the minimum column widths from previously rendered pages so continuation
+// pages never shrink the columns; the updated widths are returned.
+func (c *client) renderTable(cols []string, items []map[string]any, showHeader bool, widths []int) []int {
+	rows := make([][]string, 0, len(items)+1)
+	if showHeader {
+		rows = append(rows, headers(cols))
+	}
 	for _, it := range items {
 		row := make([]string, len(cols))
 		for i, c := range cols {
 			row[i] = formatCell(it[c])
 		}
-		fmt.Fprintln(tw, strings.Join(row, "\t"))
+		rows = append(rows, row)
 	}
-	tw.Flush()
+	if len(widths) < len(cols) {
+		widths = append(widths, make([]int, len(cols)-len(widths))...)
+	}
+	// Column width = max over the header (if shown), every row of this page,
+	// and any width carried over from previous pages. Computing the page
+	// maximum before printing keeps rows within a page aligned, and carrying
+	// widths across pages keeps multi-page output from shrinking columns.
+	for _, row := range rows {
+		for i, cell := range row {
+			if n := utf8.RuneCountInString(cell); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+	for _, row := range rows {
+		var b strings.Builder
+		for i, cell := range row {
+			b.WriteString(cell)
+			if i < len(row)-1 {
+				b.WriteString(strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell)+2))
+			}
+		}
+		fmt.Fprintln(c.stdout, b.String())
+	}
+	return widths
 }
 
 // columnAliases overrides the auto-derived header for specific fields.
@@ -473,13 +513,33 @@ func (c *client) renderResource(raw []byte, m map[string]any, tableCols []string
 	}
 }
 
+// renderList renders a list response. In table mode it supports interactive
+// paging: on an interactive terminal the operator is asked to press SPACE for
+// the next page or Q to stop; when stdout is not a terminal (e.g. piped into
+// `less`) all pages are fetched and rendered so the downstream consumer sees
+// the complete result set. JSON/YAML output is a single-page passthrough with
+// the pagination envelope preserved.
 func (c *client) renderList(raw []byte, m map[string]any, tableCols []string) {
 	switch c.out {
 	case "json":
 		c.writeJSON(raw)
+		c.printCursorHint(m)
+		return
 	case "yaml":
 		c.writeYAML(m)
-	default:
+		c.printCursorHint(m)
+		return
+	}
+
+	// Table mode: page through results. The header is printed on the first
+	// page and, for interactive continuation, re-rendered on the line where
+	// the SPACE/Q prompt was (the prompt is erased first). Piped follow-all
+	// output prints the header only once so the result reads as one table.
+	// Column widths carry across pages so they never shrink mid-listing.
+	path := c.listPath // set by the caller via withListPath
+	showHeader := true
+	var widths []int
+	for {
 		items, _ := m["items"].([]any)
 		mapped := make([]map[string]any, 0, len(items))
 		for _, it := range items {
@@ -487,11 +547,113 @@ func (c *client) renderList(raw []byte, m map[string]any, tableCols []string) {
 				mapped = append(mapped, mp)
 			}
 		}
-		c.renderTable(tableCols, mapped)
-		if next, _ := m["next_cursor"].(string); next != "" {
+		widths = c.renderTable(tableCols, mapped, showHeader, widths)
+		showHeader = false
+
+		next, _ := m["next_cursor"].(string)
+		if next == "" {
+			return
+		}
+
+		switch {
+		case c.interactive():
+			// Ask the operator whether to continue.
+			more, err := c.promptNextPage()
+			if err != nil || !more {
+				fmt.Fprintf(c.stderr, "(stopped; more results: --cursor %s)\n", next)
+				return
+			}
+			// The prompt line was erased; the next page's header takes
+			// its place so the hint appears to disappear.
+			showHeader = true
+		case c.followAll:
+			// Non-interactive stdout (piped): fetch everything, no header.
+		default:
 			fmt.Fprintf(c.stderr, "(more results: --cursor %s)\n", next)
+			return
+		}
+
+		if path == "" {
+			// No known request path (should not happen); fall back to hint.
+			fmt.Fprintf(c.stderr, "(more results: --cursor %s)\n", next)
+			return
+		}
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		var err error
+		m, raw, err = c.do(http.MethodGet, path+sep+"cursor="+url.QueryEscape(next), nil)
+		if err != nil {
+			c.reportErr(err)
+			return
 		}
 	}
+}
+
+// printCursorHint prints the resume hint for machine-readable output modes.
+func (c *client) printCursorHint(m map[string]any) {
+	if next, _ := m["next_cursor"].(string); next != "" {
+		fmt.Fprintf(c.stderr, "(more results: --cursor %s)\n", next)
+	}
+}
+
+// interactive reports whether both stdin and stdout are terminals, i.e. the
+// CLI is being driven by a human rather than a pipe or script.
+func (c *client) interactive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// isTerminalWriter reports whether w is an interactive terminal. It returns
+// false for anything that is not *os.File (e.g. bytes.Buffer in tests), so
+// paging prompts never fire in tests or non-file writers.
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// promptNextPage asks the operator to press SPACE to continue or Q to stop.
+// It reads a single keypress in raw mode when possible, falling back to a
+// line read. Any key other than q/Q/EOF continues. When the operator
+// continues, the prompt line is erased (carriage return + ANSI clear line)
+// so the next page's header can take its place.
+func (c *client) promptNextPage() (bool, error) {
+	fmt.Fprint(c.stderr, "-- SPACE: next page, Q: stop --")
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		old, err := term.MakeRaw(fd)
+		if err == nil {
+			defer term.Restore(fd, old)
+			buf := make([]byte, 1)
+			n, rerr := os.Stdin.Read(buf)
+			if rerr != nil || n == 0 {
+				fmt.Fprintln(c.stderr)
+				return false, rerr
+			}
+			more := buf[0] != 'q' && buf[0] != 'Q'
+			if more {
+				// Erase the prompt line: CR + clear-line + CR.
+				fmt.Fprint(c.stderr, "\r\033[2K\r")
+			} else {
+				fmt.Fprintln(c.stderr)
+			}
+			return more, nil
+		}
+		// Raw mode unavailable: fall through to line-based read.
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return false, err
+	}
+	line = strings.TrimSpace(line)
+	more := line != "q" && line != "Q"
+	if more {
+		fmt.Fprint(c.stderr, "\r\033[2K\r")
+	}
+	return more, nil
 }
 
 // --- subcommand: submit -----------------------------------------------------
@@ -582,6 +744,7 @@ func (c *client) cmdTask(sub string, args []string) int {
 	case "list":
 		q := buildQuery(args, []string{"station_id", "state", "split_group_id", "parent_task_id", "limit", "cursor"},
 			map[string]string{"station": "station_id", "split_group": "split_group_id"})
+		c.listPath = "/api/v1/tasks" + stripCursor(q)
 		m, raw, err := c.do(http.MethodGet, "/api/v1/tasks"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
@@ -696,6 +859,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 	case "list":
 		q := buildQuery(args, []string{"task_id", "state", "canonicality", "station_id", "limit", "cursor"},
 			map[string]string{"task": "task_id", "station": "station_id"})
+		c.listPath = "/api/v1/runs" + stripCursor(q)
 		m, raw, err := c.do(http.MethodGet, "/api/v1/runs"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
@@ -1264,6 +1428,7 @@ func (c *client) cmdGroup(sub string, args []string) int {
 	switch sub {
 	case "list":
 		q := buildQuery(args, []string{"state", "limit"})
+		c.listPath = "/api/v1/groups" + stripCursor(q)
 		m, raw, err := c.do(http.MethodGet, "/api/v1/groups"+q, nil)
 		if err != nil {
 			return c.reportErr(err)
@@ -1844,6 +2009,25 @@ func buildQuery(args, allowed []string, aliases ...map[string]string) string {
 		return ""
 	}
 	return "?" + strings.Join(parts, "&")
+}
+
+// stripCursor removes any cursor parameter from a query string so that
+// renderList can append the server-provided next_cursor itself.
+func stripCursor(q string) string {
+	if q == "" {
+		return ""
+	}
+	params := strings.Split(strings.TrimPrefix(q, "?"), "&")
+	kept := params[:0]
+	for _, p := range params {
+		if !strings.HasPrefix(p, "cursor=") {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return "?" + strings.Join(kept, "&")
 }
 
 func printUsage(w io.Writer) {

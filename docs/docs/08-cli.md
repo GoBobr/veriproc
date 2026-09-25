@@ -102,6 +102,33 @@ Table columns: `RUN REF`, `EXECUTOR TYPE`, `EXECUTION NODE`, `WORKING ROOT`,
 scheduler-reported wall-clock runtime of the run's most recent job (e.g.
 `00:04:12`); it is `-` when no job has reported an elapsed time yet.
 
+### Interactive paging
+
+In table mode, list commands (`run list`, `task list`, `group list`) page
+through results automatically:
+
+- **Interactive terminal** (stdin and stdout both a TTY): after each page that
+  has more results, the CLI prompts `-- SPACE: next page, Q: stop --`.
+  Pressing SPACE fetches and renders the next page; pressing Q stops and
+  prints the `--cursor` value to resume later. When the operator continues,
+  the prompt line is erased and the next page's column header is rendered in
+  its place, so the hint appears to disappear and the listing reads as one
+  continuous table.
+- **Piped or redirected stdout** (e.g. `veriproc run list | less`): no
+  prompting; the CLI fetches and renders **all pages** so the downstream
+  consumer receives the complete result set. Multiple API requests may be
+  made; server ordering is preserved.
+- **Column headers are printed only on the first page**; continuation pages
+  fetched automatically (piped mode) append rows directly so multi-page
+  output reads as one continuous table. In interactive mode the prompt line
+  is erased on continue and the next page's header takes its place.
+- **JSON/YAML output**: single-page passthrough with the pagination envelope
+  preserved; the `--cursor` resume hint is printed to stderr when more pages
+  exist.
+
+Paging only applies to table output; machine-readable modes are never
+interactive (Spec §6.9).
+
 ## 8.6 `artifact` and `logs`
 
 ```bash
