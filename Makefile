@@ -20,7 +20,7 @@ GIT_TAG          := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE       := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 VERSION          := $(if $(GIT_TAG),$(GIT_TAG),$(MAKEFILE_VERSION))
-MODULE           := github.com/eum/veriproc
+MODULE           := github.com/gobobr/veriproc
 LDFLAGS          := -X $(MODULE)/internal/version.Version=$(VERSION) \
                     -X $(MODULE)/internal/version.Commit=$(GIT_COMMIT) \
                     -X $(MODULE)/internal/version.BuildDate=$(BUILD_DATE)

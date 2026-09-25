@@ -411,9 +411,18 @@ func (c *client) renderTable(cols []string, items []map[string]any) {
 	tw.Flush()
 }
 
+// columnAliases overrides the auto-derived header for specific fields.
+var columnAliases = map[string]string{
+	"elapsed_time": "ELAPSED",
+}
+
 func headers(cols []string) []string {
 	out := make([]string, len(cols))
 	for i, c := range cols {
+		if alias, ok := columnAliases[c]; ok {
+			out[i] = alias
+			continue
+		}
 		out[i] = strings.ToUpper(strings.ReplaceAll(c, "_", " "))
 	}
 	return out
@@ -691,7 +700,7 @@ func (c *client) cmdRun(sub string, args []string) int {
 		if err != nil {
 			return c.reportErr(err)
 		}
-		c.renderList(raw, m, []string{"run_ref", "executor_type", "execution_node", "working_root", "state", "failure_reason", "created_at"})
+		c.renderList(raw, m, []string{"run_ref", "executor_type", "execution_node", "working_root", "state", "elapsed_time", "failure_reason", "created_at"})
 		return ExitOK
 	case "jobs":
 		if len(args) < 1 {

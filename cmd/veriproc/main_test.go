@@ -78,6 +78,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 			"state":          "failed",
 			"canonicality":   "canonical",
 			"failure_reason": "executor reported failure",
+			"elapsed_time":   "00:04:12",
 			"working_root":   "/data/work/STATION-A/task-1/r0",
 			"created_at":     "2025-07-03T11:00:00Z",
 		}
@@ -460,6 +461,14 @@ func TestCLI_RunList_ShowsRunRef(t *testing.T) {
 	}
 	if !strings.Contains(out, "FAILURE REASON") || !strings.Contains(out, "executor reported failure") {
 		t.Errorf("run list table should show run failure reason; got:\n%s", out)
+	}
+	// ELAPSED column must appear after STATE, showing the scheduler-reported
+	// elapsed time from the run's last job.
+	if !strings.Contains(out, "ELAPSED") || !strings.Contains(out, "00:04:12") {
+		t.Errorf("run list table should show ELAPSED column with elapsed_time value; got:\n%s", out)
+	}
+	if strings.Index(out, "STATE") > strings.Index(out, "ELAPSED") {
+		t.Errorf("ELAPSED column must come after STATE; got:\n%s", out)
 	}
 }
 

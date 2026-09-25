@@ -97,6 +97,11 @@ veriproc run delete <run_ref> [--dry-run] [--force]
 `run list` filters: `task_id`, `state`, `canonicality` (`canonical`/`duplicate`/`forced`),
 `station_id`, with `limit`/`cursor`.
 
+Table columns: `RUN REF`, `EXECUTOR TYPE`, `EXECUTION NODE`, `WORKING ROOT`,
+`STATE`, `ELAPSED`, `FAILURE REASON`, `CREATED AT`. `ELAPSED` shows the
+scheduler-reported wall-clock runtime of the run's most recent job (e.g.
+`00:04:12`); it is `-` when no job has reported an elapsed time yet.
+
 ## 8.6 `artifact` and `logs`
 
 ```bash
