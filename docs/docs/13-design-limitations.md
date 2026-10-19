@@ -94,7 +94,7 @@ writing one file.
 
 This documentation describes the system *as implemented* in this version. The normative
 design baseline — including requirements marked Must/Should/May and extension points not
-yet realized — lives in [`docs/specs/`](../specs/). When in doubt about intended future
+yet realized — lives in [`openspec/specs/`](../../openspec/specs/). When in doubt about intended future
 behavior, read the spec; when in doubt about current behavior, trust this guide and the
 code.
 

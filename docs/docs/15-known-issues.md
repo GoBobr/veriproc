@@ -1,7 +1,7 @@
 # Known Issues and Development Backlog
 
 This document tracks spec-vs-implementation deviations and identified risks. The
-specification chapters in `docs/specs/` reference these entries as "Known Issues".
+normative capability specs in `openspec/specs/` reference these entries as "Known Issues".
 The current code is treated as the baseline; each entry below is a proposal for a
 future development iteration.
 
