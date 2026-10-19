@@ -78,7 +78,6 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ fromJSON(steps.meta-daemon.outputs.labels).org.opencontainers.image.created }}
           tags: ${{ steps.meta-daemon.outputs.tags }}
           labels: ${{ steps.meta-daemon.outputs.labels }}
           cache-from: type=gha
@@ -103,7 +102,6 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ fromJSON(steps.meta-console.outputs.labels).org.opencontainers.image.created }}
           tags: ${{ steps.meta-console.outputs.tags }}
           labels: ${{ steps.meta-console.outputs.labels }}
           cache-from: type=gha
