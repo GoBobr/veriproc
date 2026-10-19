@@ -109,6 +109,6 @@ further.
 ## 1.6 Status of this documentation
 
 This documentation reflects the implemented feature set in the current development version
-(`0.5-dev` line). Capabilities are grouped in the source by milestone (M0–M7); this guide
+(`0.6-dev` line). Capabilities are grouped in the source by milestone (M0–M7); this guide
 describes them as a single shipped system rather than per milestone. For the design
 rationale and normative requirements, cross-reference [`openspec/specs/`](../../openspec/specs/).

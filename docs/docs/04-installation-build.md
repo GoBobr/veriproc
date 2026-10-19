@@ -28,7 +28,7 @@ This produces:
 
 Each binary is stamped with version metadata via linker flags (`internal/version`): the
 git tag if the current commit is tagged, otherwise the `MAKEFILE_VERSION` baseline
-(currently `0.5-dev`), plus the short commit and build date. Verify with:
+(currently `0.6-dev`), plus the short commit and build date. Verify with:
 
 ```bash
 ./bin/veriproc version
