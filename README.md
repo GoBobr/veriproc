@@ -120,7 +120,7 @@ These directories include ready-to-run instance configuration, station fixtures,
 
 ## More Detail
 
-See the documents under `docs/specs/` for the system architecture, API, CLI, and operator console specification.
+See `openspec/specs/` for the normative behavioral specification (architecture, domain model, persistence, REST API, CLI, verification, and operator console), and `docs/docs/` for user and operator documentation.
 
 ## Docker
 

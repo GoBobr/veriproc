@@ -7,7 +7,7 @@ known limitations.
 
 > This is *documentation of the implemented system*, not a specification driving future
 > implementation. For the normative specification (the design baseline), see
-> [`docs/specs/`](../specs/). Where this documentation and the spec disagree, the
+> [`openspec/specs/`](../../openspec/specs/). Where this documentation and the spec disagree, the
 > behavior described here reflects what the code in this repository actually does.
 
 ## How to read this
@@ -31,6 +31,8 @@ relevant page.
 | 11 | [Operations](11-operations.md) | Rolling archives, publication, retries, split groups, cleaning, reconciliation |
 | 12 | [Deployment with Docker](12-deployment-docker.md) | Images, compose, volumes, hardening |
 | 13 | [Design Considerations & Limitations](13-design-limitations.md) | Why it is built this way, what it does not do |
+| 14 | [Data Model Reference (As-Built)](14-data-model-reference.md) | Physical table schemas, uniqueness, indexes, implementation-status deviations |
+| 15 | [Known Issues](15-known-issues.md) | Spec-vs-implementation deviations and development backlog |
 
 ## Rendering these docs
 

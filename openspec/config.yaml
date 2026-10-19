@@ -1,0 +1,64 @@
+schema: spec-driven
+githubCopilot:
+  cloudAgent: false
+
+context: |
+  VeriProc is a Go orchestration system for satellite EO processing pipelines:
+  a control-plane daemon (cmd/veriprocd) with REST API (internal/httpapi,
+  /api/v1), a CLI (cmd/veriproc), and an operator web console (cmd/
+  veriproc-console + internal/console gateway + webapp/ Vite frontend).
+  Persistence is SQLite via internal/store migrations. Executors: local,
+  slurm-native, slurm-docker, stub (internal/executor). Deduplication by
+  processing fingerprint; station-based routing with split groups and join
+  barriers. docs/docs/ is human-facing as-built documentation;
+  openspec/specs/ is the normative source of truth for behavior and is what
+  agents must treat as authoritative. Known deviations between target spec
+  and current code are catalogued in docs/docs/15-known-issues.md -
+  preserve those Known-Issue references.
+
+rules:
+  proposal:
+    - State whether the change affects the REST API, CLI, console, or executor layer
+    - Reference affected openspec/specs/<domain> capabilities by name
+    - Never propose edits to openspec/specs directly; changes go through propose -> apply - archive
+  specs:
+    - Every requirement SHALL use normative prose (SHALL/MUST)
+    - Every requirement SHALL have at least one testable scenario in GIVEN/WHEN/THEN form
+    - Scenarios SHALL be verifiable against the Go test suite (internal/**, cmd/**) or webapp/tests
+    - Preserve implementation-status notes distinguishing current behavior from target behavior
+    - Keep requirement names unique per capability and under 50 characters
+    - No tables, diagrams, or code-block examples in spec files; put reference material in docs/docs
+  tasks:
+    - Map each task to the requirement and scenario it implements or verifies
+    - Include a test task for every scenario touched by the change
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

@@ -1,0 +1,156 @@
+# Known Issues and Development Backlog
+
+This document tracks spec-vs-implementation deviations and identified risks. The
+normative capability specs in `openspec/specs/` reference these entries as "Known Issues".
+The current code is treated as the baseline; each entry below is a proposal for a
+future development iteration.
+
+Priority: **P1** = correctness/data-integrity risk, **P2** = contract gap,
+**P3** = tooling/coverage hardening.
+
+## P1 — Correctness and data integrity
+
+### KI-1: Duplicate scheduler submission after crash between submit and job-ID persistence
+- **Spec**: §2.11, §2.15.1, §4.6.8
+- **Code**: `internal/runs/dispatcher.go` re-dispatches any run in `ready` state on
+  each pass; there is no submission-uncertainty marker or `orphaned` state.
+- **Impact**: A backend crash between scheduler acceptance (e.g. `sbatch`) and
+  job-record persistence leads to a second submission of the same run.
+- **Proposal**: Introduce a submission-uncertainty marker (or `dispatching` state)
+  and reconcile with the scheduler before resubmission, keyed by a persistent
+  run identity embedded in the SLURM job name.
+
+### KI-2: Unowned working roots are never detected
+- **Spec**: §2.15.1 case 3
+- **Code**: `PrepareRun` creates the working root before the transactional run
+  insert and removes it only on in-process error paths; the cleaner
+  (`internal/cleaner`) only purges DB-recorded entities.
+- **Impact**: A crash in that window leaves a permanently unowned directory on
+  shared storage.
+- **Proposal**: Startup filesystem scan comparing `working_root_base` contents
+  against `runs.working_root` with classification/reclaim rules.
+
+### KI-3: `force` included in the processing fingerprint
+- **Spec**: §2.14, §3.15
+- **Code**: `computeFingerprint` (`internal/runs/service.go`) hashes `"force": force`.
+- **Impact**: A forced rerun of identical scientific context always gets a distinct
+  fingerprint, so it can never be compared against the canonical owner; weakens
+  fingerprint-based canonicality semantics.
+- **Proposal**: Exclude `force` from the fingerprint; classify forced runs as
+  non-canonical duplicates of the existing fingerprint owner.
+
+### KI-4: Async publication worker resolves all pending records against a single archive base
+- **Spec**: §2.12.1
+- **Code**: `internal/publisher/publisher.go` joins record `TargetPath` against one
+  configured `archiveBase` while records carry per-record `ArchiveID`.
+- **Impact**: Pending publications for archives other than the configured base are
+  at risk of mispublication.
+- **Proposal**: Resolve the archive base per record `ArchiveID`.
+
+### KI-5: Missing relational uniqueness constraints
+- **Spec**: §4.3.8, §4.3.11
+- **Code**: `internal/store/migrations/0001_init.sql`
+- **Gaps**:
+  - `jobs(executor, scheduler_id)` — only a plain index exists.
+  - `jobs(run_id, submission_attempt)` — absent.
+  - At most one active non-terminal job per run — not schema-enforced.
+  - `artifacts(producing_run_id, logical_type, path)` — absent; duplicate logical
+    artifact records are prevented by application logic only.
+- **Proposal**: Add constraints in an additive migration with duplicate detection.
+
+### KI-6: Escaping `path_template` silently rewritten
+- **Spec**: §2.3.1 (must not escape `working_root_base`)
+- **Code**: `workingRootPath` falls back to a safe nested layout instead of
+  failing preparation.
+- **Impact**: Misconfiguration produces silently different paths rather than a
+  validation error.
+- **Proposal**: Fail preparation on absolute/escaping expanded paths.
+
+## P2 — Contract gaps (spec target model ahead of code)
+
+### KI-7: Run addressing uses internal `run_id` as primary API identity
+- **Spec**: §5.1, §5.4.3 (task-scoped `(task_id, retry_index)` preferred)
+- **Code**: `internal/httpapi/router.go` keys all run sub-resources by `run_id`.
+- **Proposal**: Introduce task-scoped run routes with `run_id` kept as a
+  compatibility alias, then deprecate.
+
+### KI-8: Missing REST endpoints
+- `GET /tasks/{task_id}/relationships` (spec MUST, §5.4.9).
+- Split-group member listing sub-resource (§5.4.8).
+- `/api/v1/version` is excluded from auth but has no handler (§5.1).
+- **Proposal**: Implement relationship query backed by `provenance_links`;
+  route a version handler; add group members listing.
+
+### KI-9: Undocumented implemented endpoints
+- `POST /runs/{run_id}/promote`, `POST /tasks/{task_id}/retry` (§5.4.10 now
+  documents both), `GET /groups` family using `groups` rather than `split-groups`
+  resource paths, and `?cascade=false` on task delete (§5.4.13 note added).
+- **Proposal**: Either formalize the `groups` path as canonical or move to
+  `split-groups`; make task-delete cascade unconditional or spec the flag.
+
+### KI-10: List filters and pagination envelope gaps
+- Task list: window overlap/containment, creation-time range, parent-run,
+  canonical-presence filters; `page_size`/`ordering`/`filters` envelope fields.
+- Run list: `retry_index`, terminal-time range, scheduler-id filters.
+- Artifact list: file type, validation status, canonical/latest/publication
+  filters; pagination.
+- **Proposal**: Extend handlers and spec §5.4.2/§5.4.4/§5.4.6 together.
+
+### KI-11: Task detail representation thin
+- **Spec**: §5.5.2 requires routing content, routing history, client metadata,
+  related run summaries.
+- **Code**: `tasks.go:toWire` returns none of these.
+- **Proposal**: Extend task detail response.
+
+### KI-12: CLI command surface gaps
+- Missing: `relationships`, `job get`, `artifact get`, `config validate`,
+  submit document input (`--file`/stdin), configuration files and profiles (§6.11).
+- **Proposal**: Prioritize `artifact get` and submit document input; defer
+  profiles.
+
+### KI-13: Relational model target versus implemented schema
+- Missing tables: `instance_configuration_revisions` (§4.3.5),
+  `generation_hook_identities` (§4.3.6).
+- Simplified split-group model: single `state` column instead of closure/readiness/
+  evaluation states, no parent window, evaluation mode, readiness policy, failure
+  reason; membership keyed by run rather than child key (§4.3.13/§4.3.14).
+- `station_revisions`: no `validation_status`, missing `station_name`/`content_hash`/
+  `effective_at` indexes and deployment-wide station name uniqueness.
+- Manifest header/entry and idempotency/deduplication column gaps (§4.3.9, §4.3.10,
+  §4.3.15, §4.3.16 status notes).
+- **Proposal**: Decide per table whether to upgrade the code or downgrade the spec
+  target; split-group model is the largest open design decision.
+
+### KI-14: Generator module execution not implemented
+- **Spec**: §2.3.1, §3.20 (future-extension contract now marked).
+- **Code**: identity strings recorded only (`internal/runs/service.go`, `finalize.go`).
+- **Proposal**:Either specify and implement a module-loading contract or remove the
+  module contract from the spec permanently.
+
+## P3 — Coverage and tooling hardening
+
+### KI-15: CLI test coverage
+- Untested: `health`, `readiness`, `logs`, `artifact list`, `version --check-api`
+  command-to-API mapping; exit codes 3, 6, 7, 8; stdout/stderr separation;
+  API-version incompatibility failure.
+
+### KI-16: Console frontend test coverage
+- §8.14.2/§8.14.3 gaps: instance-grid degraded rendering, task-box navigation,
+  run selector, tree browsing, filter state changes, upstream failure display;
+  audit-log emission only tested for hide; upstream timeout handling and cache
+  invalidation untested.
+
+### KI-17: No conformance-report artifact
+- Spec §7.10 requires a scenario-to-test-ID matrix; none is generated.
+- **Proposal**: Generate the matrix from spec-tagged Go test names.
+
+### KI-18: Stale spec cross-references in code comments
+- E.g. `internal/publisher/publisher.go` and `internal/reconciler/reconciler.go`
+  cite section numbers that do not exist in the current spec layout.
+- **Proposal**: Sweep code comments during the OpenSpec migration.
+
+## Change log
+
+| Date | Change |
+|---|---|
+| 2026-10-17 | Initial backlog extracted from the spec-vs-code conformance audit |

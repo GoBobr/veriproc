@@ -152,3 +152,100 @@ root and driven only through a generated job order. State is durable and reconci
 a crash never duplicates canonical work. These properties — determinism, isolation,
 durable recovery, safe deduplication, explicit provenance, and executor portability — are
 the load-bearing ideas; the rest of the system serves them.
+## Appendix: Specification diagrams
+
+Diagrams preserved from the normative specification
+(originally the chapter-2 system architecture specification; source document removed; see git history) as as-built reference material.
+
+### Input selection algorithm (§2.7.4)
+
+```mermaid
+flowchart TD
+  A[Declared station input] --> B[Resolve folder references]
+  B --> C[Lookup input category in top-level product_categories]
+  C --> D{Station overrides category in rolling_folders?}
+  D -- Yes --> E[Use station override folders]
+  D -- No --> F[Use top-level category folders]
+  E --> G[Expand rolling archive IDs to paths]
+  F --> G
+  G --> H[Resolve effective filename_pattern and substitute FILE_TYPE when present]
+  H --> I[Scan every configured folder in user-priority order]
+  I --> J[Parse candidate entry names under filename_pattern]
+  J --> K[Filter by object kind, declared input, window_match, and margins]
+  K --> L{Any valid candidates?}
+  L -- No --> M{Input mandatory?}
+  M -- Yes --> N[Fail preparation]
+  M -- No --> O[Record optional input missing]
+  L -- Yes --> FA[Apply declared filter rules in order]
+  FA --> FB{All candidates eliminated?}
+  FB -- Yes --> M
+  FB -- No --> P[Group candidates by file_type, start_time, and end_time]
+  P --> Q[Select one winner per group by generation_time, suffix, folder priority, then stable path]
+  Q --> R[Record manifest entries with grouping keys and winner comparison metadata]
+  R --> S[Symlink selected filesystem objects into working_root/input]
+```
+
+### Run lifecycle state machine (§2.10.1)
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> preparing
+  preparing --> ready
+  preparing --> failed
+  ready --> dispatched
+  dispatched --> running
+  running --> finalizing
+  running --> failed
+  finalizing --> complete
+  finalizing --> failed
+  dispatched --> cancelled
+  running --> cancelled
+  failed --> [*]
+  complete --> [*]
+  cancelled --> [*]
+```
+
+### Output validation and publication flow (§2.12.1)
+
+```mermaid
+flowchart TD
+  A[Scheduler reports terminal success] --> B[Validate mandatory outputs in working_root/output]
+  B --> C{Validation passed?}
+  C -- No --> D[Run failed]
+  C -- Yes --> E{Station output publish policy?}
+  E -- No --> H[Record artifacts]
+  E -- Yes --> F[Resolve rolling archive target by ID]
+  F --> G[Publish output idempotently]
+  G --> H[Record artifacts and publication metadata]
+  H --> I[Evaluate task-out.yaml or default downstream routing]
+```
+
+### Simple linear downstream routing (§2.13.4)
+
+```mermaid
+flowchart LR
+  A[Parent task: scen1] --> B[Run completes]
+  B --> C[Validate outputs]
+  C --> D[Read task-out.yaml or default downstream]
+  D --> E[Create child task: scen2]
+  E --> F[Resolve scen2 inputs]
+```
+
+### Fan-out/fan-in downstream routing (§2.13.4)
+
+```mermaid
+flowchart TD
+  A[Parent task window] --> B[Splitter run]
+  B --> C[Create split group]
+  C --> D1[Child task 1]
+  C --> D2[Child task 2]
+  C --> D3[Child task N]
+  D1 --> E[Child completion registry]
+  D2 --> E
+  D3 --> E
+  E --> F{Readiness policy satisfied?}
+  F -- No --> E
+  F -- Yes --> G[Create aggregation task]
+  G --> H[Aggregation run]
+```
