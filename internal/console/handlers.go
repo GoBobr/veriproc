@@ -96,6 +96,25 @@ func (g *Gateway) handleUnpauseStation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleStationConfig proxies the station's resolved configuration view
+// from the upstream instance (Station Config View requirement). Read-only:
+// any authenticated principal (viewer or operator) may call it.
+func (g *Gateway) handleStationConfig(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.PathValue("instance_id")
+	stationID := r.PathValue("station_id")
+	inst, ok := g.instance(instanceID)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown_instance", "instance not configured")
+		return
+	}
+	out, err := inst.client.StationConfig(r.Context(), stationID)
+	if err != nil {
+		writeErr(w, httpStatusFromUpstream(err), "upstream_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (g *Gateway) stationControl(w http.ResponseWriter, r *http.Request, action string, op func(*upstreamInstance, string) (map[string]any, error)) {
 	instanceID := r.PathValue("instance_id")
 	stationID := r.PathValue("station_id")

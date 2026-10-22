@@ -50,6 +50,7 @@ operator console are both clients of this API. This page is the endpoint referen
 | GET | `/api/v1/stations` | List stations. |
 | GET | `/api/v1/stations/summary` | Health summary (all stations). |
 | GET | `/api/v1/stations/{station_id}/summary` | Health summary (one station). |
+| GET | `/api/v1/stations/{station_id}/config` | Resolved station configuration view (see below). |
 | POST | `/api/v1/stations/{station_id}/pause` | Pause admission. |
 | POST | `/api/v1/stations/{station_id}/unpause` | Resume admission. |
 

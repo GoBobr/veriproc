@@ -46,4 +46,27 @@ describe("ConsoleClient", () => {
     expect(url).toContain("inst%20with%20space");
     expect(url).toContain("task%2Fslash");
   });
+
+  it("stationConfig fetches the resolved config document", async () => {
+    let url = "";
+    let method = "";
+    let auth: string | null = null;
+    globalThis.fetch = mockFetch((input, init) => {
+      url = String(input);
+      method = init?.method ?? "GET";
+      auth = new Headers(init?.headers).get("Authorization");
+      return jsonOk({
+        station_id: "scecli",
+        content_hash: "sha256:abc",
+        config_yaml: "execution:\n",
+      });
+    }) as typeof fetch;
+    const c = new ConsoleClient("tok");
+    const res = await c.stationConfig("eucent", "scecli");
+    expect(method).toBe("GET");
+    expect(auth).toBe("Bearer tok");
+    expect(url).toBe("/api/console/instances/eucent/stations/scecli/config");
+    expect(res.station_id).toBe("scecli");
+    expect(res.config_yaml).toContain("execution");
+  });
 });

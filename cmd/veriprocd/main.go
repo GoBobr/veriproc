@@ -103,6 +103,9 @@ func run(args []string) error {
 	}
 	groupSvc := groups.NewService(st, nil)
 	stationSvc := stations.NewService(st, nil)
+	// Wire the config view to the startup-loaded registry, instance
+	// definitions, and startup env snapshot (secret redaction).
+	stationSvc.SetConfigSource(registry, registry, cfg.Definitions, env)
 	// Apply station display order: explicit config wins; fall back to
 	// directory-alphabetical order from LoadDir.
 	if len(cfg.Storage.StationOrder) > 0 {

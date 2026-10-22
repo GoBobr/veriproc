@@ -22,7 +22,14 @@ type Service struct {
 	completedVisibilityTimeout time.Duration
 	// stationOrder is the display ordering applied by List/Summary. When nil
 	// the DB default (station_id alphabetical) is used.
-	stationOrder               []string
+	stationOrder []string
+	// Config-view source: the startup-loaded registry, instance definitions
+	// (context resolution scope), and env snapshot (secret redaction). Wired
+	// via SetConfigSource; read by ConfigView.
+	configResolver     Resolver
+	configDescriptions DescriptionProvider
+	configDefinitions  map[string]any
+	configEnv          map[string]string
 }
 
 type SummaryCounts struct {

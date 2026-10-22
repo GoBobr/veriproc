@@ -2,6 +2,7 @@ import type {
   DashboardInstance,
   InstancesResponse,
   PreviewResponse,
+  StationConfigResponse,
   StationRunsResponse,
   SystemInfo,
   TreeResponse,
@@ -73,6 +74,12 @@ export class ConsoleClient {
       "POST",
       `/api/console/instances/${enc(instanceID)}/stations/${enc(stationID)}/pause`,
       {}
+    );
+
+  stationConfig = (instanceID: string, stationID: string): Promise<StationConfigResponse> =>
+    this.send(
+      "GET",
+      `/api/console/instances/${enc(instanceID)}/stations/${enc(stationID)}/config`
     );
 
   unpauseStation = (instanceID: string, stationID: string) =>

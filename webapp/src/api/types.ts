@@ -134,3 +134,18 @@ export interface StationRunsResponse {
   ordering: string;
   filters: Record<string, string>;
 }
+
+// --- Station config view types ---
+
+// StationConfigResponse mirrors the resolved station configuration served by
+// GET /api/console/instances/{id}/stations/{sid}/config (proxied from the
+// upstream config endpoint).
+export interface StationConfigResponse {
+  station_id: string;
+  station_name?: string;
+  content_hash: string;
+  schema_version?: string;
+  effective_at?: string;
+  config?: Record<string, unknown>;
+  config_yaml?: string;
+}

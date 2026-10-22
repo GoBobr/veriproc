@@ -138,6 +138,16 @@ Returns a paginated list of runs for the specified station, proxied from the ups
 
 The response includes `items`, `page_size`, `next_cursor`, `ordering`, and `filters`.
 
+### Station config endpoint
+
+```
+GET /api/console/instances/{instance_id}/stations/{station_id}/config
+```
+
+Proxies the upstream `GET /api/v1/stations/{station_id}/config` resolved station configuration
+view (read-only; available to `viewer` and `operator` roles). See §10.6 for the dialog that
+consumes it.
+
 ## 10.6 Station Activity View
 
 Clicking a station label on the dashboard opens a **station activity page** in a new
@@ -177,3 +187,21 @@ Status buttons and run badges reuse the same colour scheme as the dashboard slot
 | complete | green |
 | failed | red |
 | cancelled | orange |
+
+### Station config dialog
+
+The station activity page header offers a **Config** button (next to Pause/Unpause; available to
+viewers as a read-only action). It opens a modal dialog showing the station's fully resolved
+configuration as a scrollable, read-only YAML document — including the container image tag
+under `execution.container.image`.
+
+The content is a **startup snapshot**: `<env:VAR>` references were expanded when the daemon
+loaded `station.yaml`, and instance `definitions` references are resolved for display; per-run
+runtime references (`<start>`, `<working_root>`, `prep.*`, …) are shown as literal `<key>` text.
+A freshness line shows the revision's `content_hash` and `effective_at`, so you can tell whether
+the view reflects the current daemon startup (restart required after config or env changes).
+Values of environment variables whose names look like secrets (token, password, secret, key,
+credential) are redacted as `[REDACTED]`.
+
+The dialog fetches `GET /api/console/instances/{instance_id}/stations/{station_id}/config`,
+which the gateway proxies from the upstream `GET /api/v1/stations/{station_id}/config` endpoint.

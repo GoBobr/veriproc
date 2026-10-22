@@ -49,11 +49,12 @@ type JoinCounter interface {
 
 // Spec describes one station the registry will serve.
 type Spec struct {
-	StationID      string
-	StationName    string
-	ContentHash    string
-	SchemaVersion  string
-	Execution      Execution
+	StationID     string
+	StationName   string
+	Description   string
+	ContentHash   string
+	SchemaVersion string
+	Execution     Execution
 	JobOrder       JobOrderConfig
 	Inputs         []InputDefinition
 	Outputs        []OutputDefinition
@@ -63,17 +64,29 @@ type Spec struct {
 
 // Registry is the in-memory Resolver.
 type Registry struct {
-	mu     sync.RWMutex
-	byID   map[string]*store.StationRevisionRecord
-	byName map[string]string // station_name -> station_id (uniqueness)
+	mu           sync.RWMutex
+	byID         map[string]*store.StationRevisionRecord
+	byName       map[string]string // station_name -> station_id (uniqueness)
+	descriptions map[string]string // station_id -> description (not persisted)
 }
 
 // NewRegistry creates an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		byID:   map[string]*store.StationRevisionRecord{},
-		byName: map[string]string{},
+		byID:         map[string]*store.StationRevisionRecord{},
+		byName:       map[string]string{},
+		descriptions: map[string]string{},
 	}
+}
+
+// Description returns the operator-facing description for a station as
+// loaded at startup. Descriptions are kept in memory only (they travel inside
+// the config-view response) and are not persisted to station_revisions.
+func (r *Registry) Description(stationID string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	d, ok := r.descriptions[stationID]
+	return d, ok
 }
 
 // Seed registers station revisions both in memory and (best-effort) in the
@@ -155,6 +168,7 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 		r.mu.Lock()
 		r.byID[sp.StationID] = rec
 		r.byName[sp.StationName] = sp.StationID
+		r.descriptions[sp.StationID] = sp.Description
 		r.mu.Unlock()
 	}
 	return nil

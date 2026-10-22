@@ -26,6 +26,9 @@ type UpstreamClient interface {
 	StationSummary(ctx context.Context, stationID string, since time.Time) (StationSummary, error)
 	PauseStation(ctx context.Context, stationID string) (map[string]any, error)
 	UnpauseStation(ctx context.Context, stationID string) (map[string]any, error)
+	// StationConfig fetches the station's resolved configuration view
+	// (GET /api/v1/stations/{station_id}/config).
+	StationConfig(ctx context.Context, stationID string) (map[string]any, error)
 	SubmitTask(ctx context.Context, body map[string]any) (map[string]any, error)
 	GetTask(ctx context.Context, taskID string) (map[string]any, error)
 	RetryTask(ctx context.Context, taskID string, body map[string]any) (map[string]any, error)
@@ -245,6 +248,14 @@ func (c *HTTPUpstreamClient) PauseStation(ctx context.Context, stationID string)
 func (c *HTTPUpstreamClient) UnpauseStation(ctx context.Context, stationID string) (map[string]any, error) {
 	var out map[string]any
 	err := c.do(ctx, "POST", "/api/v1/stations/"+url.PathEscape(stationID)+"/unpause", nil, map[string]any{}, &out)
+	return out, err
+}
+
+// StationConfig fetches the station's resolved configuration view from
+// GET /api/v1/stations/{station_id}/config (Station Config Endpoint).
+func (c *HTTPUpstreamClient) StationConfig(ctx context.Context, stationID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, "GET", "/api/v1/stations/"+url.PathEscape(stationID)+"/config", nil, nil, &out)
 	return out, err
 }
 

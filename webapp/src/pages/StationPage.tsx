@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { useAuth } from "../state/auth";
 import { useFetch, usePoll } from "../state/poll";
 import { taskHref } from "../state/router";
+import { StationConfigDialog } from "../components/StationConfigDialog";
 import type { StationRun, StationRunsResponse } from "../api/types";
 
 interface Props {
@@ -89,6 +90,8 @@ export function StationPage({ instanceID, stationID }: Props) {
   const [pageSize, setPageSize] = useState(50);
   const [cursor, setCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([]);
+  // Config-dialog visibility (read-only, available to viewers too).
+  const [showConfig, setShowConfig] = useState(false);
 
   // Sync page size once UI config is loaded.
   useEffect(() => {
@@ -190,9 +193,24 @@ export function StationPage({ instanceID, stationID }: Props) {
               Unpause
             </button>
           )}
+          <button
+            class="secondary small"
+            onClick={() => setShowConfig(true)}
+            title="Show resolved station configuration"
+          >
+            Config
+          </button>
         </div>
         {runsQ.error && <div class="degraded-msg">error: {runsQ.error.message}</div>}
       </div>
+
+      {showConfig && (
+        <StationConfigDialog
+          instanceID={instanceID}
+          stationID={stationID}
+          onClose={() => setShowConfig(false)}
+        />
+      )}
 
       <div class="station-table-wrap">
         {runs.length === 0 && !runsQ.loading ? (

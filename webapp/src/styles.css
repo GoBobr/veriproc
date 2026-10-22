@@ -308,6 +308,26 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .info-table td, .info-table th { padding: 4px 6px; text-align: left; vertical-align: top; }
 .info-table td:first-child { color: var(--muted); white-space: nowrap; }
 .info-table code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+
+/* Station config dialog */
+.station-config-dialog { min-width: 520px; max-width: 780px; }
+.station-config-meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+.station-config-meta code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.station-config-yaml {
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  user-select: text;
+  cursor: text;
+}
 .info-table code.muted { color: var(--muted); }
 .info-section-head { padding-top: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 11px; text-transform: uppercase; color: var(--muted); }
 .info-instance-name { padding-top: 8px; font-weight: 500; display: flex; align-items: center; gap: 6px; }

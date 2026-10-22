@@ -85,6 +85,7 @@ func NewRouter(d Deps) http.Handler {
 		mux.HandleFunc("GET /api/v1/stations", sh.list)
 		mux.HandleFunc("GET /api/v1/stations/summary", sh.summary)
 		mux.HandleFunc("GET /api/v1/stations/{station_id}/summary", sh.summaryOne)
+		mux.HandleFunc("GET /api/v1/stations/{station_id}/config", sh.config)
 		mux.HandleFunc("POST /api/v1/stations/{station_id}/pause", sh.pause)
 		mux.HandleFunc("POST /api/v1/stations/{station_id}/unpause", sh.unpause)
 	}

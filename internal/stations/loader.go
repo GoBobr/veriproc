@@ -361,6 +361,7 @@ func SpecFromDefinition(def Definition) (Spec, error) {
 	return Spec{
 		StationID:      def.StationID,
 		StationName:    def.StationName,
+		Description:    def.Description,
 		ContentHash:    computed,
 		SchemaVersion:  def.SchemaVersion,
 		Execution:      def.Execution,

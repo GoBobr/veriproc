@@ -52,6 +52,9 @@ type fakeUpstream struct {
 	taskRuns     map[string][]map[string]any
 	tasks        map[string]map[string]any
 	runs         map[string]map[string]any
+	// stationConfigs serves GET /stations/{id}/config for the proxy test.
+	stationConfigs map[string]map[string]any
+	stationCfgErr  error
 	health       error
 }
 
@@ -86,6 +89,15 @@ func (f *fakeUpstream) UnpauseStation(_ context.Context, id string) (map[string]
 	defer f.mu.Unlock()
 	f.unpauseCalls = append(f.unpauseCalls, id)
 	return map[string]any{"station_id": id, "paused": false}, nil
+}
+func (f *fakeUpstream) StationConfig(_ context.Context, id string) (map[string]any, error) {
+	if f.stationCfgErr != nil {
+		return nil, f.stationCfgErr
+	}
+	if c, ok := f.stationConfigs[id]; ok {
+		return c, nil
+	}
+	return nil, &UpstreamError{Status: 404, Body: "station not found"}
 }
 func (f *fakeUpstream) SubmitTask(_ context.Context, body map[string]any) (map[string]any, error) {
 	f.mu.Lock()
@@ -256,6 +268,66 @@ func TestRouter_PauseRequiresOperator(t *testing.T) {
 	}
 	if len(fake.pauseCalls) != 1 || fake.pauseCalls[0] != "STA" {
 		t.Errorf("pause not propagated: %+v", fake.pauseCalls)
+	}
+}
+
+// TestRouter_StationConfigProxy — GET stations/{id}/config proxies the
+// upstream config payload (Gateway Minimum API Surface delta) and maps
+// upstream errors.
+func TestRouter_StationConfigProxy(t *testing.T) {
+	fake := &fakeUpstream{
+		stationConfigs: map[string]map[string]any{
+			"STA": {
+				"station_id":   "STA",
+				"content_hash": "sha256:abc",
+				"config_yaml":  "execution:\n  container:\n    image: reg/scene:1.0\n",
+			},
+		},
+	}
+	gw, _ := newTestGateway(t, fake)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/stations/STA/config", "operatortok", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var view map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view["station_id"] != "STA" || view["config_yaml"] == nil {
+		t.Fatalf("config payload not passed through: %v", view)
+	}
+
+	// Unknown station: upstream 404 must map to a gateway error response.
+	rr = httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/stations/NOPE/config", "operatortok", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown station status = %d, want 404", rr.Code)
+	}
+}
+
+// TestRouter_StationConfigViewerAllowed — viewer may read the station config
+// endpoint while mutating endpoints stay operator-only (Viewer Reads Station
+// Config / Server-side enforcement).
+func TestRouter_StationConfigViewerAllowed(t *testing.T) {
+	fake := &fakeUpstream{
+		stationConfigs: map[string]map[string]any{"STA": {"station_id": "STA"}},
+	}
+	gw, _ := newTestGateway(t, fake)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/stations/STA/config", "viewertok", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("viewer config status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("POST", "/api/console/instances/vp1/stations/STA/unpause", "viewertok", nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("viewer unpause status = %d, want 403", rr.Code)
 	}
 }
 
@@ -554,6 +626,9 @@ func (f *fakeFailingUpstream) PauseStation(_ context.Context, _ string) (map[str
 	return nil, f.err
 }
 func (f *fakeFailingUpstream) UnpauseStation(_ context.Context, _ string) (map[string]any, error) {
+	return nil, f.err
+}
+func (f *fakeFailingUpstream) StationConfig(_ context.Context, _ string) (map[string]any, error) {
 	return nil, f.err
 }
 func (f *fakeFailingUpstream) SubmitTask(_ context.Context, _ map[string]any) (map[string]any, error) {

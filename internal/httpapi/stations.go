@@ -92,7 +92,24 @@ func (h *stationHandler) unpause(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
-
+// config serves the station's resolved configuration view (Station Config
+// Endpoint requirement). Read-only: readable with reader or operator
+// credentials via the method-based auth middleware.
+func (h *stationHandler) config(w http.ResponseWriter, r *http.Request) {
+	view, err := h.svc.ConfigView(r.Context(), r.PathValue("station_id"))
+	if err != nil {
+		switch {
+		case errors.Is(err, stations.ErrUnknownStation):
+			apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, "station not found")
+		case errors.Is(err, stations.ErrNoConfigSource):
+			apierr.Write(w, r, http.StatusServiceUnavailable, apierr.CodeDependencyUnavailable, "station config source not configured")
+		default:
+			apierr.Write(w, r, http.StatusInternalServerError, apierr.CodeInternal, "internal server error")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
 func writeStationErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, stations.ErrUnknownStation):
