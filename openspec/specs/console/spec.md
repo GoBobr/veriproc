@@ -38,6 +38,7 @@ acting strictly as a client of the VeriProc control plane.
   end times, cancel a running or queued run, and retry an eligible failed or cancelled task
 - open a dedicated task page for a selected non-empty execution box
 - browse the selected run working root and quick-view ASCII files and logs without leaving the task page
+
 ### Requirement: Three-Layer Architecture
 
 The deployment model SHALL consist of a browser frontend, a console gateway, and one or more
@@ -65,6 +66,7 @@ upstream `veriprocd` instances, and the browser MUST communicate only with the c
 - **GIVEN** a browser using the console
 - **WHEN** it renders the dashboard
 - **THEN** direct browser access to upstream `veriprocd` instances is not required
+
 ### Requirement: Multi-Instance Dashboard Grid
 
 The main page SHALL present a grid of instance blocks that collapses responsively on narrow screens
@@ -81,6 +83,7 @@ without losing core controls.
   and a scrollable list of station rows
 - **AND** the selected interval MUST mean from the selected timestamp until current backend time
 - **AND** counters in that instance block MUST be computed against that interval
+
 ### Requirement: Station Row Rendering
 
 Each station row SHALL render a fixed station label on the left, a strip of a configurable number of
@@ -123,6 +126,7 @@ visible execution slots (default 12), and per-interval success and failure count
   `cnt_fail` MUST count runs or tasks reaching failed or cancelled terminal state during the interval
 - **AND** the implementation MUST document whether counters are task-based or run-based, with run-based
   counting preferred
+
 ### Requirement: Hide Failure Acknowledgment
 
 Hiding a failed run SHALL be an operator acknowledgment action affecting dashboard visibility only.
@@ -133,6 +137,7 @@ Hiding a failed run SHALL be an operator acknowledgment action affecting dashboa
 - **WHEN** the hide is applied
 - **THEN** it MUST remove the run from the station row
 - **AND** it MUST NOT delete run records, logs, artifacts, or working-root content from disk
+
 ### Requirement: Station Context Menu
 
 Right-clicking a station name SHALL open a context menu; for viewers it MUST NOT expose mutating actions.
@@ -153,6 +158,7 @@ Right-clicking a station name SHALL open a context menu; for viewers it MUST NOT
 - **AND** it SHOULD support RFC 3339 entry and a browser-native date-time control
 - **WHEN** start and end times are invalid or inverted
 - **THEN** the submission MUST be rejected by request validation
+
 ### Requirement: Task-Box Context Menu
 
 Right-clicking a task box SHALL open a context menu scoped to the represented run or task.
@@ -175,6 +181,7 @@ Right-clicking a task box SHALL open a context menu scoped to the represented ru
 - **GIVEN** a non-empty task box
 - **WHEN** the user primary-clicks it
 - **THEN** the task detail page MUST open in a new browser tab
+
 ### Requirement: Task Detail Page Layout
 
 The task detail page SHALL contain three main panes: general task and run information, a working-root
@@ -193,6 +200,7 @@ browser, and a quick-view pane.
 - **GIVEN** a task with more than one run
 - **WHEN** the run selector is used to switch runs
 - **THEN** the working-root browser and quick-view data MUST refresh for the selected run without leaving the page
+
 ### Requirement: Working-Root Tree Browser
 
 The working-root browser SHALL allow browsing only inside the selected run working root.
@@ -205,6 +213,7 @@ The working-root browser SHALL allow browsing only inside the selected run worki
   hint such as text, log, binary, directory, or unknown
 - **AND** it SHOULD start at the working-root top level and make common folders such as `input`, `output`,
   and `logs` easy to reach
+
 ### Requirement: Quick-View Pane
 
 The quick-view pane SHALL stay on the task page while the operator browses files, showing inline content
@@ -218,6 +227,7 @@ for ASCII or UTF-8 text files including logs, and metadata plus a download actio
 - **GIVEN** a file preview fails because the file is too large, binary, or missing
 - **WHEN** the quick-view pane renders
 - **THEN** it MUST display a precise reason instead of a blank pane
+
 ### Requirement: Station Activity Table
 
 Clicking a station label SHALL open a station activity page in a new browser tab displaying a paginated,
@@ -250,6 +260,7 @@ sortable table of all runs for that station.
   `GET /api/v1/runs` endpoint scoped to the station identified by the path parameter
 - **AND** it MUST pass through pagination, sorting, and state filter query parameters and return the upstream
   response including the `next_cursor` pagination token
+
 ### Requirement: Gateway Configuration
 
 The console gateway SHALL load a dedicated configuration file (`veriproc.console/v1` schema) defining
@@ -275,6 +286,7 @@ directory, session settings, and audit-retention settings.
 
 - dashboard defaults MUST include visible slot count, completed-run visibility timeout, refresh interval,
   and station activity page size
+
 ### Requirement: Console SQLite Data Model
 
 The console database SHALL be distinct from the upstream control-plane database and store only
@@ -296,6 +308,7 @@ hidden_station_runs (or equivalent acknowledgment table), and audit_log.
 - the hidden-run table MUST be console-local, identifying target instance, station, task, and retry index,
   recording acting user and timestamp, and allowing the renderer to suppress an acknowledged failed run
   without mutating upstream state
+
 ### Requirement: Users and Roles
 
 The console SHALL support exactly two effective user classes: `viewer` (read dashboards, task pages, and
@@ -316,6 +329,7 @@ logs) and `operator` (all viewer actions plus submit, pause, unpause, cancel, re
 - **WHEN** they are stored
 - **THEN** they MUST be salted and hashed, never plaintext
 - **AND** token-based or SSO-backed authentication is allowed
+
 ### Requirement: Audit Log
 
 Every mutating action initiated from the console SHALL write an audit record containing at minimum timestamp,
@@ -335,6 +349,7 @@ summary, and outcome status.
 - **WHEN** the failure is handled
 - **THEN** the console MUST show the upstream error reason when safe to expose
 - **AND** it MUST record the failure in the audit log
+
 ### Requirement: Gateway Minimum API Surface
 
 The console gateway SHALL expose UI-oriented dashboard endpoints rather than forcing the browser to assemble
@@ -355,6 +370,7 @@ many upstream calls. The minimum endpoints are:
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/pause`
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/unpause`
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/submissions`
+- `GET /api/console/instances/{instance_id}/stations/{station_id}/config`
 - `POST /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/cancel`
 - `POST /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/hide?station_id=...`
 - `POST /api/console/instances/{instance_id}/tasks/{task_id}/retry`
@@ -363,6 +379,7 @@ many upstream calls. The minimum endpoints are:
 - `GET /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/tree`
 - `GET /api/console/instances/{instance_id}/tasks/{task_id}/runs/{retry_index}/file?path=...`
 - `GET /api/console/instances/{instance_id}/stations/{station_id}/runs?limit=...&cursor=...&sort=...&order=...`
+
 ### Requirement: Stable Console Identity
 
 The console gateway SHALL treat `task_id` and `retry_index` as the stable console identity.
@@ -373,6 +390,7 @@ The console gateway SHALL treat `task_id` and `retry_index` as the stable consol
 - **WHEN** the gateway needs to call a run-id-scoped upstream operation
 - **THEN** it MAY resolve the corresponding `run_id` through `GET /api/v1/tasks/{task_id}/runs` or
   `GET /api/v1/runs?task_id=...` first
+
 ### Requirement: Upstream Capability Slice
 
 The upstream capabilities required by the console SHALL exist somewhere authoritative — directly in
@@ -401,6 +419,7 @@ Minimum upstream capabilities:
 - unpause a station
 - retry an eligible task
 - retrieve run lists for a task
+
 ### Requirement: Station Summary Contract
 
 For each station, the upstream or adapter layer SHALL expose station identifier, paused state, count of
@@ -470,6 +489,7 @@ caller-supplied interval, and a last-authoritative-refresh timestamp.
   `station` field together with `since`
 - summary slot occupants MUST contain `kind` (one of `running`, `completed`, `queued`, `failed`),
   `run_id` when applicable, `task_id`, `retry_index`, `state`, and `terminal_at` for terminal runs when known
+
 ### Requirement: Upstream Capability Testing
 
 The upstream `veriprocd` capabilities required by the console SHALL be covered by automated unit tests and, where practical, narrow handler-level tests. The upstream test suite MUST verify at minimum the capabilities listed under the additional rules below, and MUST NOT require a live scheduler or live browser; it SHOULD use table-driven service tests, fake stores, and narrow HTTP handler tests.
@@ -514,11 +534,12 @@ access, not through upstream `veriprocd` API endpoints, and MUST obey containmen
 - **WHEN** the response is returned
 - **THEN** it MUST declare truncation
 - **AND** binary files MUST NOT be silently decoded as text
+
 ### Requirement: Authorization Enforcement
 
 The console gateway SHALL enforce authorization server-side, even though the frontend hides controls the
 current user cannot use.
-- `viewer` MAY call dashboard, task, run, tree, and file-preview endpoints
+- `viewer` MAY call dashboard, task, run, tree, file-preview, and station-config endpoints
 - `viewer` MUST NOT call pause, unpause, submit, cancel, retry, or hide endpoints
 - `operator` MAY call all read endpoints and all mutating endpoints
 
@@ -527,6 +548,13 @@ current user cannot use.
 - **GIVEN** a viewer-authenticated request to a mutating endpoint
 - **WHEN** the gateway processes it
 - **THEN** the request MUST be rejected regardless of what the frontend displays
+
+#### Scenario: Viewer Reads Station Config
+
+- **GIVEN** a viewer-authenticated request to the station config endpoint
+- **WHEN** the gateway processes it
+- **THEN** the request succeeds and the gateway proxies it to the upstream config endpoint
+
 ### Requirement: Refresh and Performance
 
 The rules in this requirement are normative and SHALL be satisfied by the implementation.
@@ -542,6 +570,7 @@ The dashboard SHOULD feel near-real-time without creating excessive upstream loa
 - **WHEN** the dashboard refreshes
 - **THEN** a failing instance block MUST NOT block rendering of healthy instances
 - **AND** the failing block MUST render as degraded with the last successful refresh time when known
+
 ### Requirement: Visual Design Essentials
 
 The UI SHALL be visually sparse and operational rather than decorative, with the required visual properties and recommended palette listed under the additional rules below.
@@ -592,6 +621,7 @@ response serialization for dashboard, task-detail, tree, and preview endpoints.
 
 - the gateway test suite MAY assume the upstream capabilities of §8.9 exist and are independently
   unit-tested in `veriprocd`
+
 ### Requirement: Frontend Unit Tests
 
 The frontend unit tests SHALL cover, at minimum, instance-grid rendering for one, several, and unavailable
@@ -616,6 +646,7 @@ browsing and quick-view pane updates; and user-visible handling of upstream acti
 refresh states.
 
 - snapshot-only coverage is NOT sufficient without behavioral assertions
+
 ### Requirement: Unit Testing Edge Cases
 
 The unit-testing suite SHALL include explicit coverage for these edge cases: a failed run hidden and the
@@ -635,6 +666,7 @@ and failed runs in one station row; a hide request repeated for an already hidde
 
 a failed task whose failed run is still visible in red; one managed instance unavailable while others
 continue refreshing normally; preview of a log file exactly at the preview-size limit and just beyond it.
+
 ### Requirement: Additional Required Test Coverage
 
 The overall console unit-testing suite SHALL also verify, at minimum, the behaviors listed under the additional rules below.
@@ -665,3 +697,31 @@ MUST run in isolation using fakes, mocks, or temporary filesystem fixtures.
 - **WHEN** tests exercise it
 - **THEN** they MUST use temporary directories and explicit fixtures so containment and file-kind behavior
   are deterministic
+
+### Requirement: Station Config View
+
+The station activity page SHALL provide a `Config` control in its header, positioned next to the
+Pause and Unpause controls, that opens a modal dialog displaying the station's fully resolved
+configuration as a read-only, scrollable field.
+
+#### Scenario: Config Button Opens Dialog
+
+- **GIVEN** the station activity page
+- **WHEN** the user activates the `Config` control
+- **THEN** a modal dialog opens showing the resolved configuration document fetched from the gateway
+  config endpoint
+- **AND** the dialog is read-only and scrollable, and its content includes the container image
+  reference with its version tag
+
+#### Scenario: Freshness Indication
+
+- **GIVEN** the config dialog is open
+- **WHEN** the response metadata is rendered
+- **THEN** the dialog shows the configuration `content_hash` and `effective_at` so the operator can
+  tell whether the view reflects the current daemon startup
+
+#### Scenario: Config Fetch Failure
+
+- **GIVEN** the upstream instance is unavailable or returns an error for the config request
+- **WHEN** the dialog is opened
+- **THEN** the dialog displays the error reason instead of configuration content
