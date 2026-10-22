@@ -15,7 +15,7 @@ NPM     ?= npm
 # ── versioning ──────────────────────────────────────────────────────────────
 # Change MAKEFILE_VERSION here to update the baseline version for all components.
 # If the current commit carries an exact git tag, that tag takes priority.
-MAKEFILE_VERSION := 0.6-dev
+MAKEFILE_VERSION := 0.6.1
 GIT_TAG          := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_COMMIT       := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE       := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)

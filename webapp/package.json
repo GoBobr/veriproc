@@ -1,7 +1,7 @@
 {
   "name": "veriproc-console-webapp",
   "private": true,
-  "version": "0.6-dev",
+  "version": "0.6.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
