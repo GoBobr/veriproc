@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -34,11 +35,62 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
-// handleListInstances returns the configured instances. Tokens and other
-// secret references are stripped.
-func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
+// handleIdentity reports the effective console identity of the caller: the
+// subject resolved from the credential, the effective console role, and
+// whether the principal is anonymous. The role is always derived server-side
+// from the credential - the caller never supplies it - so a login submission
+// cannot choose a role.
+//
+// The endpoint resolves the credential strictly: a credential that matches no
+// access-profile entry is rejected with 401 even when anonymous browsing is
+// enabled. A login attempt must therefore fail visibly - the browser shows the
+// error and lets the user correct the token or dismiss the dialog - instead
+// of silently reporting success for a token that was never accepted.
+//
+// It is served outside the authenticated API so an anonymous visitor can
+// discover its own state and a login attempt can report the upgraded identity.
+func (g *Gateway) handleIdentity(w http.ResponseWriter, r *http.Request) {
+	session, err := g.authenticateStrict(r)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc-console"`)
+		msg := "missing or invalid bearer token: supply Authorization: Bearer <token> with a reader or operator credential"
+		if errors.Is(err, ErrCredentialRejected) {
+			msg = "invalid bearer token: no access-profile entry matches this credential; " +
+				"ask an operator to grant you a reader or operator token"
+		}
+		writeErr(w, http.StatusUnauthorized, "unauthenticated", msg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subject":   session.Principal.Subject,
+		"role":      session.Principal.Role,
+		"anonymous": session.Anonymous,
+	})
+
+	// A successful identity resolution is the moment a login happens: re-probe
+	// the upstreams so instances reachable under the newly presented
+	// credential appear in the next instance list without a restart.
+	if !session.Anonymous {
+		g.reprobeInstances(r.Context())
+	}
+}
+
+// handleListInstances returns the configured instances the gateway can
+// actually reach. Tokens and other secret references are stripped.
+//
+// Each instance is probed first and instances whose upstream rejects the
+// gateway's credential (401/403) are omitted: the gateway cannot read them,
+// so no caller - anonymous, viewer, or operator - can be shown them.
+func (g *Gateway) handleListInstances(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	g.reprobeInstances(ctx)
+
 	items := make([]map[string]any, 0, len(g.cfg.Instances))
 	for _, inst := range g.cfg.Instances {
+		if u, ok := g.instances[inst.ID]; ok && !u.accessible() {
+			continue
+		}
 		items = append(items, map[string]any{
 			"id":                inst.ID,
 			"title":             inst.Title,
@@ -597,6 +649,7 @@ func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h, err := inst.client.GetHealth(r.Context())
+			inst.observeUpstream(err)
 			if err != nil {
 				ih.Status = "down"
 				ih.Error = err.Error()

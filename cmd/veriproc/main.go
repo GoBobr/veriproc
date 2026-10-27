@@ -51,6 +51,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gobobr/veriproc/internal/auth"
 	"github.com/gobobr/veriproc/internal/policy"
 	"github.com/gobobr/veriproc/internal/version"
 	"golang.org/x/term"
@@ -125,6 +126,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return c.cmdGroup(sub, tail)
 	case "station", "stations":
 		return c.cmdStation(sub, tail)
+	case "users":
+		return c.cmdUsers(sub, tail)
 	case "clean":
 		return c.cmdClean(tail)
 	case "health":
@@ -223,7 +226,7 @@ func envOr(k, def string) string {
 func dispatch(args []string) (cmd, sub string, rest []string) {
 	cmd = args[0]
 	switch cmd {
-	case "task", "run", "artifact", "group", "groups", "station", "stations":
+	case "task", "run", "artifact", "group", "groups", "station", "stations", "users":
 		if len(args) >= 2 {
 			return cmd, args[1], args[2:]
 		}
@@ -248,6 +251,22 @@ type client struct {
 	// followAll forces renderList to fetch every page without prompting
 	// (used when stdout is not a terminal, e.g. piped into `less`).
 	followAll bool
+	// warnedCredentialRejected records that the guest-fallback warning has
+	// already been printed, so a command that issues several requests warns
+	// only once.
+	warnedCredentialRejected bool
+}
+
+// warnCredentialRejected reports that the server rejected the supplied
+// credential and served the request as an anonymous guest. The warning names
+// no credential value.
+func (c *client) warnCredentialRejected() {
+	if c.warnedCredentialRejected {
+		return
+	}
+	c.warnedCredentialRejected = true
+	fmt.Fprintln(c.stderr, "veriproc: warning: the supplied credential was rejected by the server; "+
+		"served as an anonymous guest (read-only). Check VERIPROC_TOKEN / --token.")
 }
 
 type apiError struct {
@@ -290,6 +309,12 @@ func (c *client) do(method, path string, body any) (map[string]any, []byte, erro
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	// A server that rejected the supplied credential and served the request as
+	// a guest says so in a response header. Report it once, without echoing
+	// the credential, so the caller is not silently downgraded.
+	if resp.StatusCode < 400 && resp.Header.Get(auth.CredentialRejectedHeader) == auth.CredentialRejectedValue {
+		c.warnCredentialRejected()
+	}
 	if resp.StatusCode >= 400 {
 		ae := &apiError{StatusCode: resp.StatusCode, Body: raw}
 		var env struct {
@@ -314,9 +339,15 @@ func (c *client) do(method, path string, body any) (map[string]any, []byte, erro
 }
 
 func (c *client) reportErr(err error) int {
-	fmt.Fprintln(c.stderr, "veriproc: "+err.Error())
 	var ae *apiError
 	if errors.As(err, &ae) {
+		fmt.Fprintln(c.stderr, "veriproc: "+err.Error())
+		// Access rejections get an actionable follow-up: name the credential
+		// or role required and how to supply it, without echoing a token.
+		if hint := accessDeniedHint(ae, c.token); hint != "" {
+			fmt.Fprintln(c.stderr, "veriproc: "+hint)
+			return ExitAuth
+		}
 		switch ae.StatusCode {
 		case http.StatusBadRequest:
 			return ExitValidation
@@ -331,10 +362,29 @@ func (c *client) reportErr(err error) int {
 		}
 		return ExitGeneric
 	}
+	fmt.Fprintln(c.stderr, "veriproc: "+err.Error())
 	// Network / connection failures: indeterminate for state-changing,
 	// unavailable otherwise. We pick unavailable; callers can use the
 	// indeterminate exit code via specific helpers when needed.
 	return ExitUnavailable
+}
+
+// accessDeniedHint renders an actionable message for a 401/403 response. It
+// returns "" for any other status. The hint never contains a token value.
+func accessDeniedHint(ae *apiError, token string) string {
+	switch ae.StatusCode {
+	case http.StatusUnauthorized:
+		if strings.TrimSpace(token) == "" {
+			return "access denied: no token supplied; set VERIPROC_TOKEN or pass --token <token> " +
+				"(ask an operator for a reader or operator credential)"
+		}
+		return "access denied: this token was rejected; check VERIPROC_TOKEN / --token, " +
+			"or ask an operator to grant you access"
+	case http.StatusForbidden:
+		return "access denied: operator access is required for this command; " +
+			"ask an operator to grant you an operator credential"
+	}
+	return ""
 }
 
 // --- output rendering -------------------------------------------------------
@@ -2056,9 +2106,19 @@ Commands:
   station unpause    STATION_ID
   station topology   [--format block|mermaid] [--by-input]
   clean         (--before TS | --after TS) [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
+  users list    [--profile PATH]
+  users add     [--profile PATH] [--label TEXT] SUBJECT reader|operator
+  users revoke  [--profile PATH] SUBJECT
   health
   readiness
   version       [--check-api]
+
+Users flags (access-profile management, local file only — no API call):
+  --profile PATH   access profile file (default: $VERIPROC_ACCESS_PROFILE)
+  --label TEXT     human-readable label stored with a new entry (users add)
+  users add/revoke require the caller's own credential (--token or
+  $VERIPROC_TOKEN) to be an operator entry in that same profile file;
+  the minted token is printed exactly once by "users add".
 
 Delete/clean flags:
   --dry-run   show what would be deleted, then exit without deleting
@@ -2069,7 +2129,8 @@ Delete/clean flags:
                 only delete targeted objects, nullify nullable references,
                 preserve descendant tasks and their working roots)
 
-Environment: VERIPROC_API_URL, VERIPROC_TOKEN, VERIPROC_OUTPUT, VERIPROC_TIMEOUT.
+Environment: VERIPROC_API_URL, VERIPROC_TOKEN, VERIPROC_OUTPUT, VERIPROC_TIMEOUT,
+VERIPROC_ACCESS_PROFILE (users subcommands).
 Exit codes follow Spec §6.10 (0 ok, 2 usage, 3 validation, 4 not_found,
 5 conflict, 6 auth, 7 unavailable, 8 indeterminate).`)
 }

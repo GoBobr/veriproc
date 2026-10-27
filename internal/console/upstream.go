@@ -47,13 +47,34 @@ type UpstreamClient interface {
 	CancelRun(ctx context.Context, runID string, body map[string]any) (map[string]any, error)
 }
 
+// relayTokenKey carries the per-request upstream credential chosen by the
+// gateway (see D15): the console caller's own bearer token when the caller is
+// authenticated, otherwise the configured per-instance service credential.
+type relayTokenKey struct{}
+
+// WithRelayToken returns ctx carrying tok as the bearer token to present on
+// the upstream hop. An empty tok means "no credential": the upstream request
+// is sent without an Authorization header, overriding any configured service
+// token. Callers that want the service credential simply do not set it.
+func WithRelayToken(ctx context.Context, tok string) context.Context {
+	return context.WithValue(ctx, relayTokenKey{}, tok)
+}
+
+// relayToken returns the token the gateway should present upstream for ctx,
+// and whether one was explicitly chosen. When none was chosen the client falls
+// back to its configured service credential.
+func relayToken(ctx context.Context) (string, bool) {
+	tok, ok := ctx.Value(relayTokenKey{}).(string)
+	return tok, ok
+}
+
 // HTTPUpstreamClient implements UpstreamClient against a live veriprocd REST
 // API. It is safe for concurrent use.
 type HTTPUpstreamClient struct {
-	baseURL  string
-	token    string
-	hc       *http.Client
-	slotCap  int
+	baseURL string
+	token   string
+	hc      *http.Client
+	slotCap int
 }
 
 // NewHTTPUpstreamClient constructs an UpstreamClient for the supplied
@@ -118,8 +139,15 @@ func (c *HTTPUpstreamClient) do(ctx context.Context, method, path string, query 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	// Credential for this hop: the caller's relayed token when the gateway
+	// chose one (D15), otherwise the configured service credential. An empty
+	// value on either side means no Authorization header at all.
+	tok := c.token
+	if t, ok := relayToken(ctx); ok {
+		tok = t
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -171,12 +199,12 @@ func (c *HTTPUpstreamClient) Stations(ctx context.Context) ([]StationListItem, e
 
 // SummarySlot is one occupant in an upstream station summary.
 type SummarySlot struct {
-	Kind        string    `json:"kind"`
-	RunID       string    `json:"run_id,omitempty"`
-	TaskID      string    `json:"task_id"`
-	RetryIndex  int       `json:"retry_index"`
-	State       string    `json:"state"`
-	TerminalAt  *time.Time `json:"terminal_at,omitempty"`
+	Kind       string     `json:"kind"`
+	RunID      string     `json:"run_id,omitempty"`
+	TaskID     string     `json:"task_id"`
+	RetryIndex int        `json:"retry_index"`
+	State      string     `json:"state"`
+	TerminalAt *time.Time `json:"terminal_at,omitempty"`
 }
 
 // SummaryCounts is the success/failure pair returned by the upstream summary.
@@ -187,15 +215,15 @@ type SummaryCounts struct {
 
 // StationSummary mirrors one item from /api/v1/stations/summary.
 type StationSummary struct {
-	StationID    string         `json:"station_id"`
-	StationName  string         `json:"station_name,omitempty"`
-	Paused       bool           `json:"paused"`
-	RunningCount int            `json:"running_count"`
-	QueuedCount  int            `json:"queued_count"`
-	Counts       SummaryCounts  `json:"counts"`
-	Slots        []SummarySlot  `json:"slots"`
-	LastRefresh  *time.Time     `json:"last_refresh,omitempty"`
-	Downstream   []string       `json:"downstream,omitempty"`
+	StationID    string        `json:"station_id"`
+	StationName  string        `json:"station_name,omitempty"`
+	Paused       bool          `json:"paused"`
+	RunningCount int           `json:"running_count"`
+	QueuedCount  int           `json:"queued_count"`
+	Counts       SummaryCounts `json:"counts"`
+	Slots        []SummarySlot `json:"slots"`
+	LastRefresh  *time.Time    `json:"last_refresh,omitempty"`
+	Downstream   []string      `json:"downstream,omitempty"`
 }
 
 // StationsSummary is the multi-station summary response.
@@ -287,10 +315,10 @@ func (c *HTTPUpstreamClient) ListTasks(ctx context.Context, query url.Values) ([
 // It includes pagination metadata (next_cursor) so the console gateway can
 // pass it through to the frontend.
 type RunsListResponse struct {
-	Items      []map[string]any `json:"items"`
-	PageSize   int              `json:"page_size"`
-	NextCursor string           `json:"next_cursor,omitempty"`
-	Ordering   string           `json:"ordering"`
+	Items      []map[string]any  `json:"items"`
+	PageSize   int               `json:"page_size"`
+	NextCursor string            `json:"next_cursor,omitempty"`
+	Ordering   string            `json:"ordering"`
 	Filters    map[string]string `json:"filters"`
 }
 

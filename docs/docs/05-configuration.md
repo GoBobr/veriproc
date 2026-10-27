@@ -46,6 +46,9 @@ A later source overrides an earlier one only when it supplies a non-empty value.
 | `VERIPROC_WORKING_ROOT_BASE` | `storage.working_root_base` |
 | `VERIPROC_STATION_CONFIG_ROOT` | `storage.station_config_root` |
 | `VERIPROC_EXECUTOR` | `executor.type` (legacy single-executor form) |
+| `VERIPROC_ACCESS_PROFILE` | `auth.profile_path` |
+| `VERIPROC_ALLOW_ANONYMOUS_READERS` | `auth.allow_unauthenticated_readers` (`1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off`) |
+| `VERIPROC_AUTH_QUOTA_PER_MINUTE` | `auth.quota_per_minute` |
 
 ## 5.2 Environment variable expansion in YAML files
 
@@ -145,6 +148,7 @@ rolling_archives: { … }                # named archive roots
 product_categories: [ … ]              # ordered input search lists
 executor:    { … }                     # executor registry
 generators:  { … }                     # job-order / working-root generator identity
+auth:        { … }                     # access profile & anonymous readers
 ```
 
 ## 5.4 `http` — REST server
@@ -444,7 +448,85 @@ generators:
     version: local-mvp-v1
 ```
 
-## 5.17 Complete annotated example
+## 5.17 `auth` — access profile & anonymous readers
+
+Authentication is driven by an **access profile**: a plain, passwd-like file shared by the
+daemon, the CLI, and the web console, so one credential means the same thing everywhere.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `auth.profile_path` | path | — | Access-profile file. When set, it is the credential source for `/api/v1`. |
+| `auth.allow_unauthenticated_readers` | bool | `false` | Admit **read** requests without a valid credential as an anonymous `reader`. Mutating requests always require a valid token. |
+| `auth.quota_per_minute` | int | `0` (off) | Per-principal rate limit on mutating requests. |
+
+```yaml
+auth:
+  profile_path: /shared/veriproc/access.profile
+  allow_unauthenticated_readers: true   # viewers can watch without a token
+  quota_per_minute: 120
+```
+
+**Profile format** — one entry per line, `subject:role:token`, optional `# label` after a
+space; `#` comments and blank lines are ignored. Roles are `reader` (read-only) and
+`operator` (read + write):
+
+```
+# access.profile — shared by veriprocd, veriproc CLI, veriproc-console
+alice:operator:6f1c…  # Alice, on-call operator
+bob:reader:93ab…      # Bob, read-only dashboard
+```
+
+Tokens may instead be stored in digest form: prefix the token field with `sha256:` and
+place the hex SHA-256 digest of the token after it (`alice:operator:sha256:2bb80d…`).
+Verification hashes the presented token once and looks up the digest, so the file never
+needs to contain a usable secret. `veriproc users add` writes entries this way.
+
+**Rules:**
+
+- The file is re-read automatically when its size or mtime changes (checked at most once
+  per 5 s), so grants and revocations take effect without restarting the daemon.
+- The file is written atomically (temp file + rename) and must be mode `0600`; a looser
+  permission triggers a warning at load.
+- The profile is validated at startup — a malformed line refuses the boot.
+
+**Three auth modes:**
+
+| Profile | `allow_unauthenticated_readers` | Behaviour |
+|---------|--------------------------------|-----------|
+| not set | — | No credential source: API open (legacy sandbox mode, or `VERIPROC_AUTH_TOKENS` env tokens). |
+| set | `false` | Credentialed: every request needs a valid token; `reader` on a mutating endpoint → `403`. |
+| set | `true` | Credentialed + anonymous readers: **reads without a valid token** run as anonymous `reader`; mutations still require a valid token. |
+
+**A rejected credential is treated as no credential.** With `allow_unauthenticated_readers`
+enabled, a token that is *present but matches no profile entry* — a typo, a revoked
+token, a value pasted with a trailing newline — is served as the anonymous `reader`
+principal on read endpoints rather than refused, and the response carries
+`X-VeriProc-Auth: credential-rejected` so the caller still learns their credential was
+not accepted. On a mutating endpoint it is refused. The fallback never widens
+capability: a rejected token buys exactly what sending no token buys.
+
+Set `allow_unauthenticated_readers: false` to get a hard lockout instead — then every
+unmatched credential is refused with `401`.
+
+**Migration from `VERIPROC_AUTH_TOKENS`.** The legacy env format
+(`subject:role:token;…`) still works when `auth.profile_path` is unset. To move to a
+profile, write the same entries into a file (one per line, no `;` separator), point
+`auth.profile_path` (or `VERIPROC_ACCESS_PROFILE`) at it, and drop the env var:
+
+```bash
+# before: VERIPROC_AUTH_TOKENS='alice:operator:tok1;bob:reader:tok2'
+# after:
+printf 'alice:operator:tok1\nbob:reader:tok2\n' > /shared/veriproc/access.profile
+chmod 600 /shared/veriproc/access.profile
+# instance.yaml:  auth: { profile_path: /shared/veriproc/access.profile }
+```
+
+The console's anonymous-browsing flag (`auth.allow_anonymous_browsing`, see §10) is a
+**separate** dial: it governs only the gateway's own `/api/console/*` reads, while
+daemon-side `allow_unauthenticated_readers` governs only direct `/api/v1` access.
+Enabling one never enables the other.
+
+## 5.18 Complete annotated example
 
 The bundled [`sandbox/instance.yaml`](../../sandbox/instance.yaml) is a complete, working
 example. A condensed version:
@@ -493,7 +575,7 @@ generators:
   working_root: { type: system-default, version: local-mvp-v1 }
 ```
 
-## 5.18 Validation behavior
+## 5.19 Validation behavior
 
 The daemon validates configuration at startup and refuses to start on error. Common
 failures:

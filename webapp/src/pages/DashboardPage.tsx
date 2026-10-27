@@ -23,8 +23,11 @@ function saveVisibility(map: Record<string, boolean>) {
 }
 
 export function DashboardPage() {
-  const { client } = useAuth();
-  const { data, error, loading } = useFetch(() => client.instances(), []);
+  const { client, session } = useAuth();
+  // Re-fetch when the session changes: an in-place login upgrade swaps the
+  // client's credential, and the gateway may then return a different set of
+  // reachable instances.
+  const { data, error, loading } = useFetch(() => client.instances(), [session?.token, session?.role]);
   const [hidden, setHidden] = useState<Record<string, boolean>>(loadVisibility);
 
   const toggleInstance = (id: string) => {

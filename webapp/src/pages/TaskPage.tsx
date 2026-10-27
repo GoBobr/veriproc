@@ -244,7 +244,7 @@ function RunBrowser({
         )}
         {treeQ.error && <div class="degraded-msg">tree: {treeQ.error.message}</div>}
         <ul>
-          {treeQ.data?.entries.map((e) => (
+          {(treeQ.data?.entries ?? []).map((e) => (
             <li
               key={e.path}
               class={e.is_dir ? "dir" : ""}

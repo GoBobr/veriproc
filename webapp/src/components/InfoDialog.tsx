@@ -66,7 +66,7 @@ export function InfoDialog({ onClose }: Props) {
                 <tr>
                   <th colSpan={2} class="info-section-head">Upstream Instances</th>
                 </tr>
-                {info.instances.map((inst) => (
+                {(info.instances ?? []).map((inst) => (
                   <>
                     <tr key={inst.id + "-header"}>
                       <td colSpan={2} class="info-instance-name">

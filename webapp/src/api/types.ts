@@ -1,6 +1,19 @@
 // Shared frontend types mirroring the console gateway JSON shapes.
 export type Role = "viewer" | "operator";
 
+// Identity is the response of GET /api/console/identity: the server-derived
+// effective identity for the presented credential. The client never supplies
+// a subject or role; it stores what the server reports.
+//
+// The endpoint resolves credentials strictly: a credential that matches no
+// access-profile entry is rejected with 401, so a failed login is always
+// reported rather than silently downgraded to a guest session.
+export interface Identity {
+  subject: string;
+  role: Role;
+  anonymous: boolean;
+}
+
 export interface InstanceInfo {
   id: string;
   title: string;
@@ -40,7 +53,7 @@ export interface DashboardStationRow {
   running_count: number;
   queued_count: number;
   counts: { success: number; failure: number };
-  slots: DashboardSlot[];
+  slots: DashboardSlot[] | null;
   overflow: number;
   last_refresh?: string;
   /** Station IDs declared as downstream targets in the station definition. */
@@ -50,10 +63,16 @@ export interface DashboardStationRow {
 export interface DashboardInstance {
   instance_id: string;
   title: string;
-  status: "ok" | "degraded";
+  /**
+   * ok — data present; degraded — upstream failed; access_denied — the
+   * credential presented to the instance was rejected (rendered as a
+   * permission notice).
+   */
+  status: "ok" | "degraded" | "access_denied";
   error?: string;
   since: string;
-  stations: DashboardStationRow[];
+  /** Always an array in a well-formed response, but the server may send null. */
+  stations: DashboardStationRow[] | null;
   last_refresh: string;
 }
 
@@ -75,7 +94,7 @@ export interface SystemInfo {
     build_date: string;
     api_version: string;
   };
-  instances: InstanceHealthInfo[];
+  instances: InstanceHealthInfo[] | null;
 }
 
 export interface TreeEntry {
@@ -90,7 +109,7 @@ export interface TreeEntry {
 export interface TreeResponse {
   working_root: string;
   path: string;
-  entries: TreeEntry[];
+  entries: TreeEntry[] | null;
 }
 
 export interface PreviewResponse {
@@ -128,7 +147,7 @@ export interface StationRun {
 }
 
 export interface StationRunsResponse {
-  items: StationRun[];
+  items: StationRun[] | null;
   page_size: number;
   next_cursor?: string;
   ordering: string;

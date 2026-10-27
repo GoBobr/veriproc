@@ -58,6 +58,15 @@ db:
   dsn: file:sandbox-console/console.db   # console-scoped SQLite (schema auto-created)
 
 auth:
+  # Preferred: authenticate against the same access profile the daemons use.
+  # When profile_path is set it is the sole credential source; the inline
+  # tokens below no longer authenticate anyone.
+  profile_path: /shared/veriproc/access.profile
+  # Admit credential-less reads of /api/console/* as a read-only session so
+  # the dashboard opens without a login. Independent of each daemon's own
+  # allow_unauthenticated_readers flag.
+  allow_anonymous_browsing: true
+  # Legacy (only when profile_path is unset): console-local identities.
   # Plaintext only for local use. The gateway stores SHA-256 hashes at
   # registration time; plaintext is never persisted.
   tokens:
@@ -91,7 +100,9 @@ instances:
 | `ui` | `preview_max_bytes` | Maximum file-preview size. |
 | `ui` | `station_runs_page_size` | Default page size for the station activity view's run table (default: 50). |
 | `db` | `dsn` | Console SQLite location (`file:<path>`). |
-| `auth.tokens[]` | `subject` / `role` / `token` | Console login identities. Roles: `viewer`, `operator`. |
+| `auth.profile_path` | — | Shared access-profile file; when set it replaces `auth.tokens` as the credential source. |
+| `auth.allow_anonymous_browsing` | — | Admit credential-less reads of the console API as a read-only session. Independent of the daemons' `allow_unauthenticated_readers`. |
+| `auth.tokens[]` | `subject` / `role` / `token` | Legacy console-local identities (used only when `profile_path` is unset). Roles: `viewer`, `operator`. |
 | `webapp_dir` | — | Directory of the built frontend bundle. |
 | `instances[]` | `id` / `title` | Instance identity and display name. |
 | `instances[]` | `base_url` | Upstream `veriprocd` URL. |
@@ -102,14 +113,66 @@ instances:
 
 ## 10.4 Security notes
 
+- **Shared access profile:** with `auth.profile_path` set, the gateway verifies console
+  logins against the same file the daemons read, so a token resolves to the same subject
+  everywhere (`reader` → console `viewer`, `operator` → console `operator`). The
+  console-local `api_tokens` table is *not* an authority once a profile is configured.
+- **Credentials come from the `Authorization` header only.** The former
+  `?access_token=` query parameter is no longer accepted (query credentials leak into
+  logs and browser history).
+- **No user management in the console.** The gateway serves no endpoint that lists, adds,
+  modifies, or revokes access-profile entries, and no console mutating endpoint writes the
+  profile file. Grant and revoke access with the CLI (`veriproc users`, see
+  [CLI §8.11](08-cli.md#811-users-access-profile-management)).
+- **Anonymous browsing** (`auth.allow_anonymous_browsing`) opens the dashboard as a
+  read-only session; mutating endpoints still require a credential. This flag is
+  independent of each daemon's `allow_unauthenticated_readers`: upstream reads are relayed
+  with a credential chosen per call (see *Upstream credential relay* below), so the daemon's
+  flag still governs anonymous content reads through the console exactly as it governs
+  direct API access.
+- **A rejected credential is never a silent guest.** The console distinguishes two
+  surfaces:
+  - **Content endpoints** (`/api/console/instances`, dashboards, run trees, …) treat a
+    credential that matches no profile entry like no credential at all: with anonymous
+    browsing enabled the read is served as a read-only guest and the response carries
+    `X-VeriProc-Auth: credential-rejected`. A mutating endpoint rejects it outright.
+  - **The identity endpoint** (`GET /api/console/identity`) is the login path, and it is
+    strict: an unmatched credential is rejected with `401` and a message stating that no
+    access-profile entry matches. The sign-in dialog therefore shows the failure, and the
+    dialog can be closed — the console keeps working in whatever session state it already
+    had. A wrong password is never silently swapped for a guest session.
+- **Instance visibility:** the gateway probes each instance's health and hides instances
+  that are unreachable or whose probe fails, so the list only shows instances the console
+  can talk to. The set is re-probed after a successful login. A credential rejection on an
+  instance's *content* does not hide it — the pane shows a permission notice instead (see
+  *Access-denied panes* below).
 - **Token storage:** the gateway hashes tokens (SHA-256) at registration; plaintext from
   the config is never written to the database. Still, treat the config file as a secret and
   replace sandbox tokens for any non-local deployment.
 - **Filesystem containment:** only paths under `allowed_roots` can be reached through the
   run-tree and file-preview endpoints. Symlinks are resolved and checked, so a symlink
   cannot escape the allow-list. Keep `allowed_roots` as narrow as possible.
-- **Upstream auth:** when an upstream daemon enforces auth, give the instance an `operator`
-  or `viewer` token via `instances[].token` as appropriate for the console's needs.
+- **Upstream credential relay:** every gateway→daemon request presents a bearer token
+  chosen per call:
+  - **Authenticated console caller** → the caller's own credential is relayed upstream, so
+    the daemon sees the logged-in user's profile entry (a `viewer` session relays a `reader`
+    credential, an `operator` session an `operator` one).
+  - **Anonymous caller** (including a rejected credential downgraded to guest) → the
+    configured per-instance service credential (`instances[].token` / `token_env` /
+    `token_file`) is used; if none is configured, no `Authorization` header is sent.
+
+  Consequence: with no service credential configured, anonymous visitors see the
+  access-denied pane on every instance, but signing in with a valid profile token makes the
+  panes load — the daemon then accepts the relayed credential. Operator-only upstream
+  actions (submit/pause/cancel) are limited by the *relayed* credential, so a `viewer`
+  console session cannot perform them even when `instances[].token` is an operator token.
+- **Access-denied panes:** when an instance's content fetch is rejected upstream (`401`/
+  `403`), the dashboard response carries `status: "access_denied"` with an empty station
+  array, and the web console renders a permission notice in that instance's pane — stating
+  that the current session lacks permission — instead of failing to render or showing a raw
+  upstream error blob. The pane carries no login button of its own; signing in happens from
+  the top bar. Other upstream failures still render as `status: "degraded"` with the error
+  text.
 
 ## 10.5 Console API surface
 

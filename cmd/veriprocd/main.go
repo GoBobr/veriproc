@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 
+	"github.com/gobobr/veriproc/internal/accessprofile"
 	"github.com/gobobr/veriproc/internal/auth"
 	"github.com/gobobr/veriproc/internal/cleaner"
 	"github.com/gobobr/veriproc/internal/config"
@@ -160,8 +161,13 @@ func run(args []string) error {
 		Logger:         logger,
 	})
 
-	// M6: parse VERIPROC_AUTH_TOKENS=subject:role:token[:quotaPerMin][;...]
-	authn, quota := loadAuth(os.Getenv("VERIPROC_AUTH_TOKENS"))
+	// M6: credential source. An access profile is authoritative when
+	// configured; otherwise the legacy VERIPROC_AUTH_TOKENS list applies.
+	// With neither, the API is open (sandbox mode).
+	authn, quota, err := buildAuth(cfg, logger)
+	if err != nil {
+		return err
+	}
 
 	// M6: optional rolling-archive publisher.
 	var pubSvc *publisher.Service
@@ -184,6 +190,7 @@ func run(args []string) error {
 		Groups:   groupSvc,
 		Cleaner:  cleaner.New(st, logger),
 		Authn:    authn,
+		AllowAnonymousReaders: cfg.Auth.AllowUnauthenticatedReaders,
 		Quota:    quota,
 	})
 
@@ -595,6 +602,34 @@ func taskOutFanInTargets(workingRoot, groupID string) ([]string, bool, error) {
 		}
 	}
 	return nil, false, nil
+}
+
+// buildAuth resolves the daemon's credential source and quota enforcer.
+//
+// An access profile is authoritative when configured: the legacy
+// VERIPROC_AUTH_TOKENS list is then ignored, so a deployment has exactly one
+// authority. With neither configured the API is open (sandbox mode) and both
+// return values are nil.
+func buildAuth(cfg *config.Config, logger zerolog.Logger) (auth.Authenticator, *auth.QuotaEnforcer, error) {
+	if cfg.Auth.ProfilePath != "" {
+		src, err := accessprofile.NewSource(cfg.Auth.ProfilePath, accessprofile.Options{
+			Warn: func(e error) { logger.Warn().Err(e).Msg("access profile") },
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("load access profile: %w", err)
+		}
+		logger.Info().
+			Str("profile", src.Path()).
+			Bool("anonymous_readers", cfg.Auth.AllowUnauthenticatedReaders).
+			Msg("access profile loaded")
+		var quota *auth.QuotaEnforcer
+		if cfg.Auth.QuotaPerMinute > 0 {
+			quota = auth.NewQuotaEnforcer(time.Now)
+		}
+		return auth.NewProfileAuthenticator(src, cfg.Auth.QuotaPerMinute), quota, nil
+	}
+	a, q := loadAuth(os.Getenv("VERIPROC_AUTH_TOKENS"))
+	return a, q, nil
 }
 
 // loadAuth parses VERIPROC_AUTH_TOKENS into a StaticAuthenticator and

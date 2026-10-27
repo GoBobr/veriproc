@@ -100,8 +100,11 @@ type DBConfig struct {
 // AuthConfig configures console-local users and tokens.
 //
 // Two source modes are supported:
-//   - Static: users declared inline with a hashed token reference
-//   - File: a separate tokens YAML loaded at startup
+//   - Profile (preferred): a shared access-profile file, the same file the
+//     managed daemons read. When ProfilePath is set it is the sole credential
+//     source and the inline Tokens list no longer authenticates anyone.
+//   - Legacy: users declared inline with a hashed token reference, used only
+//     when no profile is configured.
 //
 // Tokens may also be provided via the VERIPROC_CONSOLE_TOKENS environment
 // variable using the format "subject:role:token;...".
@@ -109,6 +112,14 @@ type AuthConfig struct {
 	TokensEnv  string       `yaml:"tokens_env"`
 	TokensFile string       `yaml:"tokens_file"`
 	Tokens     []TokenEntry `yaml:"tokens"`
+	// ProfilePath is the shared access-profile file used to authenticate
+	// console users. When set it replaces the inline token list.
+	ProfilePath string `yaml:"profile_path"`
+	// AllowAnonymousBrowsing admits credential-less read requests to the
+	// console API as a read-only principal, so the dashboard opens without a
+	// login. Mutating requests always require a credential. This setting is
+	// independent of each managed daemon's own anonymous-reader setting.
+	AllowAnonymousBrowsing bool `yaml:"allow_anonymous_browsing"`
 }
 
 // TokenEntry binds a literal bearer token to a console subject and role.

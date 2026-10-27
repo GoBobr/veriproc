@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/gobobr/veriproc/internal/accessprofile"
 )
 
 // Gateway is the top-level service object wiring config, persistence,
@@ -18,19 +21,65 @@ type Gateway struct {
 	logger    zerolog.Logger
 	instances map[string]*upstreamInstance
 	now       func() time.Time
+	// profile is the shared access-profile source used to authenticate
+	// console users. Nil when no profile is configured, in which case the
+	// legacy console-local token table applies.
+	profile *accessprofile.Source
 }
 
 // upstreamInstance holds the per-instance runtime state.
 type upstreamInstance struct {
 	cfg    InstanceConfig
 	client UpstreamClient
+
+	// accessMu guards accessDenied, the outcome of the most recent upstream
+	// probe with respect to authentication/authorization.
+	accessMu sync.Mutex
+	// accessDenied is set when the last upstream probe was rejected with 401
+	// or 403, meaning the gateway's own credential cannot reach that
+	// instance. It is cleared by a subsequent successful probe.
+	accessDenied bool
+}
+
+// observeUpstream records whether err represents an upstream authentication
+// or authorization rejection for inst. A nil error clears the flag.
+func (u *upstreamInstance) observeUpstream(err error) {
+	denied := err != nil && (IsUpstreamStatus(err, http.StatusUnauthorized) ||
+		IsUpstreamStatus(err, http.StatusForbidden))
+	u.accessMu.Lock()
+	u.accessDenied = denied
+	u.accessMu.Unlock()
+}
+
+// accessible reports whether the gateway's credential is believed to reach
+// this instance. Instances are accessible until proven otherwise.
+func (u *upstreamInstance) accessible() bool {
+	u.accessMu.Lock()
+	defer u.accessMu.Unlock()
+	return !u.accessDenied
+}
+
+// reprobeInstances probes every configured instance's health and records the
+// access outcome, so the visible-instance set reflects the current upstream
+// state. It is called after a successful identity resolution (login) so that
+// a stronger credential's instances become visible without a restart.
+func (g *Gateway) reprobeInstances(ctx context.Context) {
+	var wg sync.WaitGroup
+	for _, inst := range g.instances {
+		wg.Add(1)
+		go func(u *upstreamInstance) {
+			defer wg.Done()
+			u.observeUpstream(u.client.Health(ctx))
+		}(inst)
+	}
+	wg.Wait()
 }
 
 // Options bundles the constructor inputs for NewGateway.
 type Options struct {
-	Config    *Config
-	DB        *DB
-	Logger    zerolog.Logger
+	Config *Config
+	DB     *DB
+	Logger zerolog.Logger
 	// NewClient overrides the upstream HTTP client factory. Useful for tests.
 	NewClient func(InstanceConfig) (UpstreamClient, error)
 	// Now overrides the time source. Useful for tests.
@@ -70,6 +119,19 @@ func NewGateway(opts Options) (*Gateway, error) {
 		now:       opts.Now,
 		instances: map[string]*upstreamInstance{},
 	}
+	if opts.Config.Auth.ProfilePath != "" {
+		src, err := accessprofile.NewSource(opts.Config.Auth.ProfilePath, accessprofile.Options{
+			Warn: func(e error) { opts.Logger.Warn().Err(e).Msg("access profile") },
+		})
+		if err != nil {
+			return nil, fmt.Errorf("console: load access profile: %w", err)
+		}
+		g.profile = src
+		opts.Logger.Info().
+			Str("profile", src.Path()).
+			Bool("anonymous_browsing", opts.Config.Auth.AllowAnonymousBrowsing).
+			Msg("access profile loaded")
+	}
 	for _, inst := range opts.Config.Instances {
 		cl, err := opts.NewClient(inst)
 		if err != nil {
@@ -104,7 +166,14 @@ func (g *Gateway) instance(id string) (*upstreamInstance, bool) {
 // SeedTokens registers the inline tokens from the config into the console DB.
 // Existing rows for the same token hash are overwritten so config changes
 // propagate on restart.
+//
+// It is a no-op when an access profile is configured: the profile is then the
+// sole credential source, so the console-local token table stops being an
+// authority for authenticating users.
 func (g *Gateway) SeedTokens(ctx context.Context) error {
+	if g.profile != nil {
+		return nil
+	}
 	for _, t := range g.cfg.Auth.Tokens {
 		role, err := NormalizeRole(t.Role)
 		if err != nil {
