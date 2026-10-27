@@ -1,5 +1,6 @@
 import type {
   DashboardInstance,
+  Identity,
   InstancesResponse,
   PreviewResponse,
   StationConfigResponse,
@@ -42,6 +43,27 @@ export class ConsoleClient {
 
   instances = (): Promise<InstancesResponse> =>
     this.send("GET", "/api/console/instances");
+
+  // identity resolves the effective identity for a credential. It accepts an
+  // optional token override so the login flow can resolve a newly submitted
+  // credential before the session is updated; otherwise it uses the client's
+  // own token (or no credential, to discover an anonymous session).
+  identity = (token?: string): Promise<Identity> => {
+    const t = token !== undefined ? token : this.token;
+    return fetch(this.base + "/api/console/identity", {
+      method: "GET",
+      headers: t ? { Authorization: `Bearer ${t}` } : {},
+    }).then(async (res) => {
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message =
+          (data as { error?: { message?: string } } | null)?.error?.message ||
+          `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+      return data as Identity;
+    });
+  };
 
   systemInfo = (): Promise<SystemInfo> =>
     this.send("GET", "/api/console/info");

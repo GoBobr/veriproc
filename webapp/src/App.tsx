@@ -22,10 +22,11 @@ function applyTheme(t: Theme) {
 }
 
 export function App() {
-  const { session, logout } = useAuth();
+  const { session, ready, logout } = useAuth();
   const route = useRoute();
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [showInfo, setShowInfo] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     applyTheme(theme);
@@ -33,6 +34,18 @@ export function App() {
   }, [theme]);
 
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  // The dashboard renders whenever a session exists - anonymous or
+  // authenticated. The login dialog is only a blocking screen when the
+  // gateway requires a credential (no session at all); with anonymous
+  // browsing it is an optional upgrade control.
+  const showDashboard = ready && !!session;
+  const showLoginScreen = ready && !session;
+
+  // Once a login upgrade lands, dismiss the upgrade dialog in place.
+  useEffect(() => {
+    if (session && !session.anonymous) setShowLogin(false);
+  }, [session]);
 
   return (
     <div class="app">
@@ -47,7 +60,7 @@ export function App() {
             {theme === "dark" ? "☀ Light" : "☾ Dark"}
           </button>
           <button class="info-btn" onClick={() => setShowInfo(true)} title="System info">ℹ Info</button>
-          {session && (
+          {session && !session.anonymous && (
             <div class="user">
               <span>{session.subject}</span>
               <span class={`role role-${session.role}`}>{session.role}</span>
@@ -56,16 +69,25 @@ export function App() {
               </button>
             </div>
           )}
+          {session && session.anonymous && (
+            <div class="user">
+              <span class="role role-anonymous">anonymous</span>
+              <button class="secondary" onClick={() => setShowLogin((v) => !v)}>
+                Log in
+              </button>
+            </div>
+          )}
         </div>
       </header>
       {showInfo && session && <InfoDialog onClose={() => setShowInfo(false)} />}
       <main>
-        {!session && <Login />}
-        {session && route.page === "dashboard" && <DashboardPage />}
-        {session && route.page === "station" && route.instanceID && route.stationID && (
+        {showLoginScreen && <Login />}
+        {showDashboard && session.anonymous && showLogin && <Login />}
+        {showDashboard && route.page === "dashboard" && <DashboardPage />}
+        {showDashboard && route.page === "station" && route.instanceID && route.stationID && (
           <StationPage instanceID={route.instanceID} stationID={route.stationID} />
         )}
-        {session && route.page === "task" && route.instanceID && route.taskID && (
+        {showDashboard && route.page === "task" && route.instanceID && route.taskID && (
           <TaskPage
             instanceID={route.instanceID}
             taskID={route.taskID}

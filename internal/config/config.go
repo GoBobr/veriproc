@@ -38,6 +38,7 @@ type Config struct {
 	HTTP          HTTPConfig       `yaml:"http"`
 	Log           LogConfig        `yaml:"log"`
 	DB            DBConfig         `yaml:"db"`
+	Auth          AuthConfig       `yaml:"auth"`
 	Storage       PathsConfig      `yaml:"storage"`
 	Naming        policy.Naming    `yaml:"naming"`
 	Integrity     policy.Integrity `yaml:"integrity"`
@@ -160,6 +161,29 @@ type LogConfig struct {
 // DBConfig configures the state-store connection (used from Milestone 1 onward).
 type DBConfig struct {
 	DSN string `yaml:"dsn"`
+}
+
+// AuthConfig configures how the daemon authenticates callers of /api/v1.
+//
+// Three modes are resolved from these fields:
+//
+//   - Authentication disabled: no profile path and no VERIPROC_AUTH_TOKENS.
+//   - Credentialed: a profile path or VERIPROC_AUTH_TOKENS is set.
+//   - Credentialed with anonymous readers: as above with
+//     AllowUnauthenticatedReaders, which admits credential-less read requests
+//     as an anonymous reader and never admits them on mutating endpoints.
+//
+// When ProfilePath is set it is the credential source and
+// VERIPROC_AUTH_TOKENS is ignored, so a deployment has exactly one authority.
+type AuthConfig struct {
+	// ProfilePath is the shared access-profile file for this instance.
+	ProfilePath string `yaml:"profile_path"`
+	// AllowUnauthenticatedReaders admits credential-less read requests as an
+	// anonymous reader. Mutating requests always require a credential.
+	AllowUnauthenticatedReaders bool `yaml:"allow_unauthenticated_readers"`
+	// QuotaPerMinute is the per-principal mutating-request quota applied to
+	// profile-authenticated principals. Zero disables the limit.
+	QuotaPerMinute int `yaml:"quota_per_minute"`
 }
 
 // PathsConfig configures filesystem roots referenced by later milestones.
@@ -313,6 +337,22 @@ func applyEnv(cfg *Config, env map[string]string) {
 	}
 	if v, ok := env["VERIPROC_EXECUTOR"]; ok && v != "" {
 		cfg.Executor.Type = v
+	}
+	if v, ok := env["VERIPROC_ACCESS_PROFILE"]; ok && v != "" {
+		cfg.Auth.ProfilePath = v
+	}
+	if v, ok := env["VERIPROC_ALLOW_ANONYMOUS_READERS"]; ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.Auth.AllowUnauthenticatedReaders = true
+		case "0", "false", "no", "off":
+			cfg.Auth.AllowUnauthenticatedReaders = false
+		}
+	}
+	if v, ok := env["VERIPROC_AUTH_QUOTA_PER_MINUTE"]; ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Auth.QuotaPerMinute = n
+		}
 	}
 }
 

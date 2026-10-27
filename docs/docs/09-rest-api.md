@@ -185,16 +185,32 @@ These map onto the CLI exit codes in [CLI §8.13](08-cli.md).
 
 ## 9.9 Authentication & authorization
 
-When authentication is configured, send a bearer token:
+When authentication is configured (an access profile or `VERIPROC_AUTH_TOKENS`), send a
+bearer token:
 
 ```bash
 curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/tasks
 ```
 
-- **Roles:** `viewer` (read-only) and `operator` (read + write).
+- **Roles:** `reader` (read-only) and `operator` (read + write).
 - **Mutating methods** (`POST`/`PUT`/`PATCH`/`DELETE`) require the `operator` role.
 - **Quotas:** optional per-principal request rate limits are enforced on mutating
   requests; exceeding them returns `429`.
+
+**Anonymous readers.** With `auth.allow_unauthenticated_readers: true`, a *missing*
+credential on a read endpoint is admitted as an anonymous `reader` principal (subject
+`anonymous`). A *present but invalid* token is never downgraded — it is rejected. Mutating
+requests without a credential are always rejected.
+
+**Rejections are self-describing:**
+
+| Status | When | Body |
+|--------|------|------|
+| `401` | No credential (and anonymous readers off, or a mutating request) | `missingCredentialMessage` — names `Authorization: Bearer <token>` and the roles available. |
+| `401` | Credential present but unknown | `invalidCredentialMessage` — states no access-profile entry matches; asks an operator to grant a reader or operator token. Carries `WWW-Authenticate: Bearer … error="invalid_token"`. |
+| `403` | `reader` calling a mutating endpoint | `insufficientRoleMessage` — states operator authorization is required. |
+
+None of these responses echo the presented token.
 
 When authentication is not configured, the API is open (suitable only for trusted local
 deployments).

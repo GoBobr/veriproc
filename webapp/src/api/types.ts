@@ -1,6 +1,15 @@
 // Shared frontend types mirroring the console gateway JSON shapes.
 export type Role = "viewer" | "operator";
 
+// Identity is the response of GET /api/console/identity: the server-derived
+// effective identity for the presented credential. The client never supplies
+// a subject or role; it stores what the server reports.
+export interface Identity {
+  subject: string;
+  role: Role;
+  anonymous: boolean;
+}
+
 export interface InstanceInfo {
   id: string;
   title: string;

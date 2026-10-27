@@ -183,6 +183,14 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--panel-2);
   border-radius: 4px;
 }
+.error-msg {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-radius: 4px;
+}
+.topbar .user .role-anonymous { color: var(--muted, #9aa0a6); }
 
 .station-row {
   display: flex;

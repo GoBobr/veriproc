@@ -77,16 +77,33 @@ func bearerToken(h string) string {
 }
 
 // Authenticate resolves the bearer token on r into a Principal.
+//
+// The credential is taken from the Authorization header only: the former
+// ?access_token= query path is gone, because query credentials leak into
+// access logs, browser history, and Referer headers.
+//
+// When an access profile is configured it is the sole credential source, so
+// the console and the daemons agree on who a token belongs to. Otherwise the
+// legacy console-local token table applies.
 func (g *Gateway) Authenticate(r *http.Request) (Principal, error) {
 	tok := bearerToken(r.Header.Get("Authorization"))
 	if tok == "" {
-		// Allow access tokens via query parameter for SSE/preview links if the
-		// caller explicitly opts in; production deployments should prefer the
-		// header path. The query path is intentionally namespaced.
-		tok = r.URL.Query().Get("access_token")
-	}
-	if tok == "" {
 		return Principal{}, errors.New("missing bearer token")
+	}
+	if g.profile != nil {
+		p, err := g.profile.Profile()
+		if err != nil {
+			return Principal{}, err
+		}
+		entry, ok := p.Lookup(tok)
+		if !ok {
+			return Principal{}, errors.New("invalid bearer token")
+		}
+		role, err := NormalizeRole(string(entry.Role))
+		if err != nil {
+			return Principal{}, err
+		}
+		return Principal{Subject: entry.Subject, Role: role}, nil
 	}
 	hash := HashToken(tok)
 	subject, role, err := g.db.LookupToken(r.Context(), hash)
@@ -94,4 +111,32 @@ func (g *Gateway) Authenticate(r *http.Request) (Principal, error) {
 		return Principal{}, err
 	}
 	return Principal{Subject: subject, Role: Role(role)}, nil
+}
+
+// AnonymousSubject is the reserved console subject for a request admitted
+// without a credential under anonymous browsing. It is not a value any access
+// profile entry can declare, so anonymous activity is never attributed to a
+// named user.
+const AnonymousSubject = "anonymous"
+
+// AnonymousPrincipal returns the read-only principal used for a request
+// admitted without a credential under anonymous browsing.
+func AnonymousPrincipal() Principal {
+	return Principal{Subject: AnonymousSubject, Role: RoleViewer}
+}
+
+// authenticateOrAnonymous resolves the caller, admitting an anonymous
+// read-only principal when anonymous browsing is enabled and the request
+// carries no credential. A credential that is present but unknown is always
+// rejected - it is never downgraded to anonymous, which would mask a mistyped
+// token.
+func (g *Gateway) authenticateOrAnonymous(r *http.Request) (Principal, bool, error) {
+	if bearerToken(r.Header.Get("Authorization")) == "" {
+		if g.cfg.Auth.AllowAnonymousBrowsing {
+			return AnonymousPrincipal(), true, nil
+		}
+		return Principal{}, false, errors.New("missing bearer token")
+	}
+	p, err := g.Authenticate(r)
+	return p, false, err
 }

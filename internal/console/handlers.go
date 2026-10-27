@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -34,11 +35,52 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
-// handleListInstances returns the configured instances. Tokens and other
-// secret references are stripped.
-func (g *Gateway) handleListInstances(w http.ResponseWriter, _ *http.Request) {
+// handleIdentity reports the effective console identity of the caller: the
+// subject resolved from the credential, the effective console role, and
+// whether the principal is anonymous. The role is always derived server-side
+// from the credential - the caller never supplies it - so a login submission
+// cannot choose a role.
+//
+// It is served outside the authenticated API so an anonymous visitor can
+// discover its own state and a login attempt can report the upgraded identity.
+func (g *Gateway) handleIdentity(w http.ResponseWriter, r *http.Request) {
+	p, anonymous, err := g.authenticateOrAnonymous(r)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc-console"`)
+		writeErr(w, http.StatusUnauthorized, "unauthenticated",
+			"missing or invalid bearer token: supply Authorization: Bearer <token> with a reader or operator credential")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"subject":   p.Subject,
+		"role":      p.Role,
+		"anonymous": anonymous,
+	})
+
+	// A successful identity resolution is the moment a login happens: re-probe
+	// the upstreams so instances reachable under the newly presented
+	// credential appear in the next instance list without a restart.
+	if !anonymous {
+		g.reprobeInstances(r.Context())
+	}
+}
+
+// handleListInstances returns the configured instances the gateway can
+// actually reach. Tokens and other secret references are stripped.
+//
+// Each instance is probed first and instances whose upstream rejects the
+// gateway's credential (401/403) are omitted: the gateway cannot read them,
+// so no caller - anonymous, viewer, or operator - can be shown them.
+func (g *Gateway) handleListInstances(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	g.reprobeInstances(ctx)
+
 	items := make([]map[string]any, 0, len(g.cfg.Instances))
 	for _, inst := range g.cfg.Instances {
+		if u, ok := g.instances[inst.ID]; ok && !u.accessible() {
+			continue
+		}
 		items = append(items, map[string]any{
 			"id":                inst.ID,
 			"title":             inst.Title,
@@ -597,6 +639,7 @@ func (g *Gateway) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h, err := inst.client.GetHealth(r.Context())
+			inst.observeUpstream(err)
 			if err != nil {
 				ih.Status = "down"
 				ih.Error = err.Error()

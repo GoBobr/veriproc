@@ -38,6 +38,10 @@ type Deps struct {
 	// Authn enforces bearer-token auth on /api/v1/* (M6). When nil, the API
 	// is open (preserves M0–M5 behavior for tests / local dev).
 	Authn auth.Authenticator
+	// AllowAnonymousReaders admits credential-less read requests as an
+	// anonymous reader when Authn is set. Mutating requests always require a
+	// credential. Ignored when Authn is nil.
+	AllowAnonymousReaders bool
 	// Quota enforces per-principal mutating-request quotas (M6). Optional.
 	Quota *auth.QuotaEnforcer
 }
@@ -126,7 +130,7 @@ func NewRouter(d Deps) http.Handler {
 		correlationIDMiddleware(),
 		requestLogMiddleware(d.Logger),
 		recoverMiddleware(d.Logger),
-		authMiddleware(d.Authn),
+		authMiddleware(d.Authn, d.AllowAnonymousReaders),
 		quotaMiddleware(d.Quota),
 	)
 }

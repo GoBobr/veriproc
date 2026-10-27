@@ -42,7 +42,7 @@ type DashboardStationRow struct {
 	LastRefresh  *time.Time      `json:"last_refresh,omitempty"`
 	// Downstream lists the station IDs declared as downstream targets in the
 	// station definition. Used by the UI to build "Push downstream" actions.
-	Downstream   []string        `json:"downstream,omitempty"`
+	Downstream []string `json:"downstream,omitempty"`
 }
 
 // DashboardInstance is the per-instance dashboard view returned to the
@@ -62,11 +62,11 @@ type DashboardInstance struct {
 // frontend. The expansion is pure: same inputs → same output.
 //
 // Ordering rule:
-//   1. running, alphabetical by task ID
-//   2. completed (within visibility timeout), alphabetical by task ID
-//   3. queued, alphabetical by task ID
-//   4. failed/cancelled (not hidden), alphabetical by task ID
-//   5. empty slots padding to visibleSlotCount
+//  1. running, alphabetical by task ID
+//  2. completed (within visibility timeout), alphabetical by task ID
+//  3. queued, alphabetical by task ID
+//  4. failed/cancelled (not hidden), alphabetical by task ID
+//  5. empty slots padding to visibleSlotCount
 //
 // completedVisibility prunes completed slots whose terminal time is older
 // than now-completedVisibility.

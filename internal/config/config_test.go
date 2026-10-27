@@ -87,6 +87,69 @@ func TestConfig_EnvDuration(t *testing.T) {
 	}
 }
 
+// TestConfig_AuthProfile — the access-profile path and the anonymous-reader
+// flag are configurable from YAML and from the environment.
+func TestConfig_AuthProfile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "instance.yaml")
+	yaml := "schema_version: veriproc.instance/v1\n" +
+		"auth:\n" +
+		"  profile_path: /etc/veriproc/access.conf\n" +
+		"  allow_unauthenticated_readers: true\n" +
+		"  quota_per_minute: 30\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load([]string{"--config", cfgPath}, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Auth.ProfilePath != "/etc/veriproc/access.conf" {
+		t.Errorf("profile_path = %q", cfg.Auth.ProfilePath)
+	}
+	if !cfg.Auth.AllowUnauthenticatedReaders {
+		t.Errorf("allow_unauthenticated_readers not applied")
+	}
+	if cfg.Auth.QuotaPerMinute != 30 {
+		t.Errorf("quota_per_minute = %d, want 30", cfg.Auth.QuotaPerMinute)
+	}
+
+	// Environment overrides the file.
+	cfg, err = Load([]string{"--config", cfgPath}, map[string]string{
+		"VERIPROC_ACCESS_PROFILE":            "/run/profile.conf",
+		"VERIPROC_ALLOW_ANONYMOUS_READERS":   "false",
+		"VERIPROC_AUTH_QUOTA_PER_MINUTE":     "5",
+	})
+	if err != nil {
+		t.Fatalf("env load: %v", err)
+	}
+	if cfg.Auth.ProfilePath != "/run/profile.conf" {
+		t.Errorf("profile_path from env = %q", cfg.Auth.ProfilePath)
+	}
+	if cfg.Auth.AllowUnauthenticatedReaders {
+		t.Errorf("allow_unauthenticated_readers from env not applied")
+	}
+	if cfg.Auth.QuotaPerMinute != 5 {
+		t.Errorf("quota from env = %d, want 5", cfg.Auth.QuotaPerMinute)
+	}
+}
+
+// TestConfig_AuthDefaults — an instance with no auth configuration resolves to
+// the open (authentication disabled) mode.
+func TestConfig_AuthDefaults(t *testing.T) {
+	cfg, err := Load(nil, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Auth.ProfilePath != "" {
+		t.Errorf("profile_path = %q, want empty", cfg.Auth.ProfilePath)
+	}
+	if cfg.Auth.AllowUnauthenticatedReaders {
+		t.Errorf("anonymous readers enabled by default")
+	}
+}
+
 // TestConfig_InvalidBindAddr — validation rejects malformed bind address.
 func TestConfig_InvalidBindAddr(t *testing.T) {
 	_, err := Load([]string{"--http-addr", "not-a-host-port"}, nil)

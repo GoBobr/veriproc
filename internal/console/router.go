@@ -16,7 +16,11 @@ func (g *Gateway) Router(webapp fs.FS) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "time": time.Now().UTC().Format(time.RFC3339)})
 	})
-
+	// Identity introspection sits outside the authenticated API: it is how a
+	// login submission learns the effective subject and role for a credential,
+	// and how an anonymous visitor learns it is anonymous. It never accepts a
+	// role from the caller.
+	mux.HandleFunc("GET /api/console/identity", g.handleIdentity)
 	// ── api ──────────────────────────────────────────────────────────
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/console/instances", g.handleListInstances)
@@ -50,22 +54,32 @@ func (g *Gateway) Router(webapp fs.FS) http.Handler {
 }
 
 // authMiddleware enforces console authentication on /api/console/* routes.
-// All endpoints require a valid bearer token; mutating endpoints require the
-// operator role.
+//
+// Every endpoint requires a valid bearer token unless anonymous browsing is
+// enabled, in which case a credential-less request is admitted as a read-only
+// principal on read endpoints. Mutating endpoints always require the operator
+// role, so anonymous browsing can never grant write capability.
 func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /api/console/instances is the only fully-public read on the
-		// console gateway in single-user dev mode; even then we require
-		// authentication so the UI surfaces tokens reliably.
-		p, err := g.Authenticate(r)
+		p, anonymous, err := g.authenticateOrAnonymous(r)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "unauthenticated", "missing or invalid bearer token")
+			w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc-console"`)
+			writeErr(w, http.StatusUnauthorized, "unauthenticated",
+				"missing or invalid bearer token: supply Authorization: Bearer <token> with a reader or operator credential")
 			return
 		}
 		mutating := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete
-		if mutating && !p.CanMutate() {
-			writeErr(w, http.StatusForbidden, "unauthorized", "operator role required")
-			return
+		if mutating {
+			if anonymous {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc-console"`)
+				writeErr(w, http.StatusUnauthorized, "unauthenticated",
+					"missing bearer token: anonymous browsing is read-only; supply a reader or operator credential to mutate state")
+				return
+			}
+			if !p.CanMutate() {
+				writeErr(w, http.StatusForbidden, "unauthorized", "operator role required")
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})

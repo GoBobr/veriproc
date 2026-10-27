@@ -55,7 +55,7 @@ type fakeUpstream struct {
 	// stationConfigs serves GET /stations/{id}/config for the proxy test.
 	stationConfigs map[string]map[string]any
 	stationCfgErr  error
-	health       error
+	health         error
 }
 
 func (f *fakeUpstream) Health(_ context.Context) error { return f.health }

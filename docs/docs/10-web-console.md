@@ -58,6 +58,15 @@ db:
   dsn: file:sandbox-console/console.db   # console-scoped SQLite (schema auto-created)
 
 auth:
+  # Preferred: authenticate against the same access profile the daemons use.
+  # When profile_path is set it is the sole credential source; the inline
+  # tokens below no longer authenticate anyone.
+  profile_path: /shared/veriproc/access.profile
+  # Admit credential-less reads of /api/console/* as a read-only session so
+  # the dashboard opens without a login. Independent of each daemon's own
+  # allow_unauthenticated_readers flag.
+  allow_anonymous_browsing: true
+  # Legacy (only when profile_path is unset): console-local identities.
   # Plaintext only for local use. The gateway stores SHA-256 hashes at
   # registration time; plaintext is never persisted.
   tokens:
@@ -91,7 +100,9 @@ instances:
 | `ui` | `preview_max_bytes` | Maximum file-preview size. |
 | `ui` | `station_runs_page_size` | Default page size for the station activity view's run table (default: 50). |
 | `db` | `dsn` | Console SQLite location (`file:<path>`). |
-| `auth.tokens[]` | `subject` / `role` / `token` | Console login identities. Roles: `viewer`, `operator`. |
+| `auth.profile_path` | — | Shared access-profile file; when set it replaces `auth.tokens` as the credential source. |
+| `auth.allow_anonymous_browsing` | — | Admit credential-less reads of the console API as a read-only session. Independent of the daemons' `allow_unauthenticated_readers`. |
+| `auth.tokens[]` | `subject` / `role` / `token` | Legacy console-local identities (used only when `profile_path` is unset). Roles: `viewer`, `operator`. |
 | `webapp_dir` | — | Directory of the built frontend bundle. |
 | `instances[]` | `id` / `title` | Instance identity and display name. |
 | `instances[]` | `base_url` | Upstream `veriprocd` URL. |
@@ -102,6 +113,25 @@ instances:
 
 ## 10.4 Security notes
 
+- **Shared access profile:** with `auth.profile_path` set, the gateway verifies console
+  logins against the same file the daemons read, so a token resolves to the same subject
+  everywhere (`reader` → console `viewer`, `operator` → console `operator`). The
+  console-local `api_tokens` table is *not* an authority once a profile is configured.
+- **Credentials come from the `Authorization` header only.** The former
+  `?access_token=` query parameter is no longer accepted (query credentials leak into
+  logs and browser history).
+- **No user management in the console.** The gateway serves no endpoint that lists, adds,
+  modifies, or revokes access-profile entries, and no console mutating endpoint writes the
+  profile file. Grant and revoke access with the CLI (`veriproc users`, see
+  [CLI §8.11](08-cli.md#811-users-access-profile-management)).
+- **Anonymous browsing** (`auth.allow_anonymous_browsing`) opens the dashboard as a
+  read-only session; mutating endpoints still require a credential, and a *present but
+  invalid* token is rejected rather than downgraded. This flag is independent of each
+  daemon's `allow_unauthenticated_readers`: the gateway relays its own reads upstream
+  with its own service credential (`instances[].token`).
+- **Instance visibility:** the gateway probes each instance and hides instances its own
+  credential cannot reach (upstream `401`/`403`), so the list only shows instances the
+  console can actually read. The set is re-probed after a successful login.
 - **Token storage:** the gateway hashes tokens (SHA-256) at registration; plaintext from
   the config is never written to the database. Still, treat the config file as a secret and
   replace sandbox tokens for any non-local deployment.

@@ -46,6 +46,9 @@ veriproc station list
 | `station pause <id>` | `POST /api/v1/stations/{id}/pause` |
 | `station unpause <id>` | `POST /api/v1/stations/{id}/unpause` |
 | `clean` | `POST /api/v1/maintenance/clean` |
+| `users list` | local (access-profile file) |
+| `users add` | local (access-profile file) |
+| `users revoke` | local (access-profile file) |
 | `health` | `GET /health` |
 | `readiness` | `GET /readiness` |
 | `version` | local (optional `--check-api`) |
@@ -57,8 +60,8 @@ Create a task.
 | Flag | Required | Meaning |
 |------|----------|---------|
 | `--station <id>` | yes | Destination station. |
-| `--start <ts>` | yes | Window start (see [timestamp formats](#814-timestamp-formats)). |
-| `--end <ts>` | yes | Window end (see [timestamp formats](#814-timestamp-formats)). |
+| `--start <ts>` | yes | Window start (see [timestamp formats](#815-timestamp-formats)). |
+| `--end <ts>` | yes | Window end (see [timestamp formats](#815-timestamp-formats)). |
 | `--force` | no | Force a (non-canonical) replay run. |
 | `--priority <p>` | no | Priority hint. |
 | `--idempotency-key <k>` | no | Idempotency-Key; equal key + content returns the same task. |
@@ -193,12 +196,47 @@ veriproc clean --before 2025-07-01T00:00:00Z --by processing-window --station SC
 veriproc clean --after 20260709 --before 20260715T000000 --station SCENE-L2 --force
 ```
 
-Timestamps accept the formats listed in [§8.14 Timestamp formats](#814-timestamp-formats).
+Timestamps accept the formats listed in [§8.15 Timestamp formats](#815-timestamp-formats).
 
 Canonical runs are protected by the daemon's cleaning rules; see
 [Operations §11.5](11-operations.md).
 
-## 8.11 `health`, `readiness`, `version`
+## 8.11 `users` — access-profile management
+
+```bash
+veriproc users list   [--profile PATH]
+veriproc users add    [--profile PATH] [--label TEXT] <subject> <reader|operator>
+veriproc users revoke [--profile PATH] <subject>
+```
+
+These commands edit the shared access-profile file **locally** — no API call is made, so
+they work even when the daemon is down. The profile path is resolved from `--profile`,
+then `VERIPROC_ACCESS_PROFILE`, then the CLI configuration default.
+
+- `list` prints `subject`, `role`, and `label` per entry. It never prints a token.
+- `add` mints a fresh high-entropy token (`crypto/rand`, 64 hex chars), stores it in the
+  file in digest-marked (`sha256:`) form, writes the file atomically, and prints the
+  plaintext token **exactly once** — store it now, it cannot be shown again.
+- `revoke` removes the subject's entry and rewrites the file atomically.
+
+**Operator gate.** `add` and `revoke` require the caller's own credential — `--token` or
+`VERIPROC_TOKEN` — to resolve to an `operator` entry *in the profile file being edited*.
+A missing credential, an unknown credential, or a `reader` entry all refuse the operation
+with exit code `6` and leave the file unchanged. The web console has **no** user-management
+capability by design.
+
+```bash
+# bootstrap: grant yourself operator (token printed once)
+VERIPROC_TOKEN=<your-operator-token> veriproc users add --label "Carol" carol operator
+# grant read-only access
+VERIPROC_TOKEN=<your-operator-token> veriproc users add bob reader
+# inspect (no tokens shown)
+veriproc users list
+# revoke
+VERIPROC_TOKEN=<your-operator-token> veriproc users revoke bob
+```
+
+## 8.12 `health`, `readiness`, `version`
 
 ```bash
 veriproc health         # GET /health
@@ -206,7 +244,7 @@ veriproc readiness      # GET /readiness
 veriproc version [--check-api]   # local version; --check-api also queries the daemon
 ```
 
-## 8.12 Output formats
+## 8.13 Output formats
 
 - `table` (default) — human-readable columns.
 - `json` — raw API JSON.
@@ -214,7 +252,7 @@ veriproc version [--check-api]   # local version; --check-api also queries the d
 
 Use `json`/`yaml` for scripting; `table` for interactive use.
 
-## 8.13 Exit codes
+## 8.14 Exit codes
 
 | Code | Name | Meaning |
 |------|------|---------|
@@ -231,7 +269,7 @@ Use `json`/`yaml` for scripting; `table` for interactive use.
 These map onto the HTTP status codes returned by the daemon (see
 [REST API](09-rest-api.md)).
 
-## 8.14 Timestamp formats
+## 8.15 Timestamp formats
 
 The `--start`, `--end` (submit), `--before`, and `--after` (clean) flags accept
 the following timestamp formats. All results are normalized to UTC; forms without

@@ -50,10 +50,10 @@ type UpstreamClient interface {
 // HTTPUpstreamClient implements UpstreamClient against a live veriprocd REST
 // API. It is safe for concurrent use.
 type HTTPUpstreamClient struct {
-	baseURL  string
-	token    string
-	hc       *http.Client
-	slotCap  int
+	baseURL string
+	token   string
+	hc      *http.Client
+	slotCap int
 }
 
 // NewHTTPUpstreamClient constructs an UpstreamClient for the supplied
@@ -171,12 +171,12 @@ func (c *HTTPUpstreamClient) Stations(ctx context.Context) ([]StationListItem, e
 
 // SummarySlot is one occupant in an upstream station summary.
 type SummarySlot struct {
-	Kind        string    `json:"kind"`
-	RunID       string    `json:"run_id,omitempty"`
-	TaskID      string    `json:"task_id"`
-	RetryIndex  int       `json:"retry_index"`
-	State       string    `json:"state"`
-	TerminalAt  *time.Time `json:"terminal_at,omitempty"`
+	Kind       string     `json:"kind"`
+	RunID      string     `json:"run_id,omitempty"`
+	TaskID     string     `json:"task_id"`
+	RetryIndex int        `json:"retry_index"`
+	State      string     `json:"state"`
+	TerminalAt *time.Time `json:"terminal_at,omitempty"`
 }
 
 // SummaryCounts is the success/failure pair returned by the upstream summary.
@@ -187,15 +187,15 @@ type SummaryCounts struct {
 
 // StationSummary mirrors one item from /api/v1/stations/summary.
 type StationSummary struct {
-	StationID    string         `json:"station_id"`
-	StationName  string         `json:"station_name,omitempty"`
-	Paused       bool           `json:"paused"`
-	RunningCount int            `json:"running_count"`
-	QueuedCount  int            `json:"queued_count"`
-	Counts       SummaryCounts  `json:"counts"`
-	Slots        []SummarySlot  `json:"slots"`
-	LastRefresh  *time.Time     `json:"last_refresh,omitempty"`
-	Downstream   []string       `json:"downstream,omitempty"`
+	StationID    string        `json:"station_id"`
+	StationName  string        `json:"station_name,omitempty"`
+	Paused       bool          `json:"paused"`
+	RunningCount int           `json:"running_count"`
+	QueuedCount  int           `json:"queued_count"`
+	Counts       SummaryCounts `json:"counts"`
+	Slots        []SummarySlot `json:"slots"`
+	LastRefresh  *time.Time    `json:"last_refresh,omitempty"`
+	Downstream   []string      `json:"downstream,omitempty"`
 }
 
 // StationsSummary is the multi-station summary response.
@@ -287,10 +287,10 @@ func (c *HTTPUpstreamClient) ListTasks(ctx context.Context, query url.Values) ([
 // It includes pagination metadata (next_cursor) so the console gateway can
 // pass it through to the frontend.
 type RunsListResponse struct {
-	Items      []map[string]any `json:"items"`
-	PageSize   int              `json:"page_size"`
-	NextCursor string           `json:"next_cursor,omitempty"`
-	Ordering   string           `json:"ordering"`
+	Items      []map[string]any  `json:"items"`
+	PageSize   int               `json:"page_size"`
+	NextCursor string            `json:"next_cursor,omitempty"`
+	Ordering   string            `json:"ordering"`
 	Filters    map[string]string `json:"filters"`
 }
 
