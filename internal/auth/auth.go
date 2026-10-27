@@ -26,6 +26,21 @@ var (
 	ErrQuotaExceeded      = errors.New("auth: quota exceeded")
 )
 
+// CredentialRejectedHeader is the response header set when a request was
+// served to a caller whose presented credential matched no access-profile
+// entry. The credential was rejected and the caller was admitted as an
+// anonymous reader instead (see the anonymous-reader allowance).
+//
+// The header lets a client distinguish three cases: the credential was
+// accepted (header absent), no credential was presented (header absent - the
+// caller is a guest by configuration), and the credential was rejected
+// (header present - the caller is a guest because their credential was
+// refused). It never carries credential material.
+const CredentialRejectedHeader = "X-VeriProc-Auth"
+
+// CredentialRejectedValue is the value of CredentialRejectedHeader.
+const CredentialRejectedValue = "credential-rejected"
+
 // Role is a coarse role label used by handlers to distinguish read-only from
 // mutating callers.
 type Role string

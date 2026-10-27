@@ -97,7 +97,7 @@ func (g *Gateway) Authenticate(r *http.Request) (Principal, error) {
 		}
 		entry, ok := p.Lookup(tok)
 		if !ok {
-			return Principal{}, errors.New("invalid bearer token")
+			return Principal{}, ErrCredentialRejected
 		}
 		role, err := NormalizeRole(string(entry.Role))
 		if err != nil {
@@ -125,18 +125,87 @@ func AnonymousPrincipal() Principal {
 	return Principal{Subject: AnonymousSubject, Role: RoleViewer}
 }
 
-// authenticateOrAnonymous resolves the caller, admitting an anonymous
-// read-only principal when anonymous browsing is enabled and the request
-// carries no credential. A credential that is present but unknown is always
-// rejected - it is never downgraded to anonymous, which would mask a mistyped
-// token.
-func (g *Gateway) authenticateOrAnonymous(r *http.Request) (Principal, bool, error) {
+// ErrCredentialRejected reports that the presented credential matched no
+// access-profile entry. It is distinct from a missing credential so the
+// gateway can tell the caller which of the two happened.
+var ErrCredentialRejected = errors.New("console: invalid bearer token")
+
+// Session describes how a console request was admitted.
+type Session struct {
+	// Principal is the effective identity of the caller.
+	Principal Principal
+	// Anonymous is true when the caller was admitted without a valid
+	// credential, either because none was presented or because the presented
+	// one was rejected.
+	Anonymous bool
+	// CredentialRejected is true when the caller presented a credential that
+	// matched no access-profile entry. It is false when no credential was
+	// presented, so a guest by configuration is distinguishable from a guest
+	// whose credential was rejected.
+	CredentialRejected bool
+}
+
+// authenticateStrict resolves the caller without ever downgrading.
+//
+// A request with no credential is admitted as the anonymous guest when
+// anonymous browsing is enabled and rejected otherwise. A request that
+// presents a credential matching no access-profile entry is ALWAYS rejected,
+// even when anonymous browsing is enabled: an explicit authentication attempt
+// that fails must report the failure, because silently serving the request as
+// a guest would tell the user their token was accepted when it was not.
+//
+// This is the strict path used by the identity endpoint, which is how a login
+// submission learns whether its credential was accepted.
+func (g *Gateway) authenticateStrict(r *http.Request) (Session, error) {
 	if bearerToken(r.Header.Get("Authorization")) == "" {
 		if g.cfg.Auth.AllowAnonymousBrowsing {
-			return AnonymousPrincipal(), true, nil
+			return Session{Principal: AnonymousPrincipal(), Anonymous: true}, nil
 		}
-		return Principal{}, false, errors.New("missing bearer token")
+		return Session{}, errors.New("missing bearer token")
 	}
 	p, err := g.Authenticate(r)
-	return p, false, err
+	if err != nil {
+		return Session{}, err
+	}
+	return Session{Principal: p}, nil
+}
+
+// authenticateOrAnonymous resolves the caller, admitting an anonymous
+// read-only principal when anonymous browsing is enabled.
+//
+// A credential that is present but matches no access-profile entry is handled
+// like no credential at all: on a read endpoint it is downgraded to the
+// anonymous read-only principal when anonymous browsing is enabled, and the
+// rejection is reported through Session.CredentialRejected so the caller still
+// learns that their credential was not accepted. On a mutating endpoint it is
+// always rejected.
+//
+// This lenient path serves the console's content endpoints, where a stale
+// credential in a browser should degrade to read-only guest access rather
+// than break the dashboard. An explicit login attempt goes through
+// authenticateStrict instead, so a wrong credential is always reported.
+func (g *Gateway) authenticateOrAnonymous(r *http.Request) (Session, error) {
+	if bearerToken(r.Header.Get("Authorization")) == "" {
+		if g.cfg.Auth.AllowAnonymousBrowsing {
+			return Session{Principal: AnonymousPrincipal(), Anonymous: true}, nil
+		}
+		return Session{}, errors.New("missing bearer token")
+	}
+	p, err := g.Authenticate(r)
+	if err == nil {
+		return Session{Principal: p}, nil
+	}
+	if errors.Is(err, ErrCredentialRejected) && g.cfg.Auth.AllowAnonymousBrowsing && !isMutatingMethod(r.Method) {
+		return Session{Principal: AnonymousPrincipal(), Anonymous: true, CredentialRejected: true}, nil
+	}
+	return Session{}, err
+}
+
+// isMutatingMethod reports whether the method mutates state.
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
 }

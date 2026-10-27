@@ -65,7 +65,7 @@ function saveSince(instanceId: string, presetMs: number | null, sinceDate: Date)
 }
 
 export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
-  const { client } = useAuth();
+  const { client, session } = useAuth();
 
   // activePresetMs tracks which preset button should appear highlighted.
   // null means the user typed a custom datetime in the picker.
@@ -84,7 +84,9 @@ export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
   const { data, error, loading, refresh } = usePoll(
     () => client.dashboard(instance.id, sinceDate),
     refreshIntervalMs,
-    [instance.id, sinceDate]
+    // Re-fetch on login/logout: the relayed upstream credential changes with
+    // the session, so an access-denied pane must be re-evaluated immediately.
+    [instance.id, sinceDate, session?.token]
   );
 
   const onPreset = (ms: number) => {
@@ -101,13 +103,18 @@ export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
     }
   };
 
-  const degraded = data?.status === "degraded" || !!error;
+  // The upstream refused the credential relayed on this hop: the pane shows a
+  // permission notice instead of data. Distinct from "degraded" (instance
+  // down / unreachable) so the operator is told what to do about it.
+  const accessDenied = data?.status === "access_denied";
+  const degraded = !accessDenied && (data?.status === "degraded" || !!error);
+  const stations = data?.stations ?? [];
   return (
-    <div class={`instance-block${degraded ? " degraded" : ""}`} data-instance={instance.id}>
+    <div class={`instance-block${degraded || accessDenied ? " degraded" : ""}`} data-instance={instance.id}>
       <div class="instance-header">
         <h3>{instance.title}</h3>
-        <span class={degraded ? "health-bad" : "health-ok"}>
-          {degraded ? "DEGRADED" : "OK"}
+        <span class={degraded || accessDenied ? "health-bad" : "health-ok"}>
+          {accessDenied ? "NO ACCESS" : degraded ? "DEGRADED" : "OK"}
         </span>
       </div>
       <div class="preset-row">
@@ -135,12 +142,22 @@ export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
           </span>
         )}
       </div>
+      {accessDenied && (
+        <div class="permission-msg" role="alert">
+          <strong>No permission to view this instance.</strong>
+          <p>
+            {session?.anonymous
+              ? "This instance requires a credential. Sign in with a reader or operator token to see its stations."
+              : "This instance rejected the credential presented to it. Ask an operator to grant you access."}
+          </p>
+        </div>
+      )}
       {error && <div class="degraded-msg">upstream unreachable: {error.message}</div>}
-      {data?.status === "degraded" && (
+      {!accessDenied && data?.status === "degraded" && (
         <div class="degraded-msg">degraded: {data.error || "upstream unavailable"}</div>
       )}
-      {loading && !data && <div class="degraded-msg">loading…</div>}
-      {data?.stations.map((row) => (
+      {loading && !data && !accessDenied && <div class="degraded-msg">loading…</div>}
+      {!accessDenied && stations.map((row) => (
         <StationRow
           key={row.station_id}
           instanceID={instance.id}

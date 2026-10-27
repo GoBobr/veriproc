@@ -169,6 +169,96 @@ describe("server-derived identity", () => {
     await screen.findByText(/credential rejected/);
     expect(screen.getByText("anonymous")).toBeInTheDocument();
   });
+
+  it("never turns a rejected sign-in into a guest session", async () => {
+    installFetch({
+      identityFor: (auth) =>
+        auth === undefined
+          ? { status: 200, body: anonymousIdentity }
+          : { status: 401, body: { error: { code: "unauthenticated", message: "no access-profile entry matches this credential" } } },
+      instancesFor: () => ({ items: [], ui: UI }),
+    });
+
+    render(
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    );
+    await screen.findAllByText("anonymous");
+
+    fireEvent.click(screen.getByText("Log in"));
+    const input = await screen.findByLabelText(/API token/i) as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "bad-token" } });
+    fireEvent.submit(input.closest("form")!);
+
+    // The failure is visible, and no authenticated identity was adopted.
+    await screen.findByText(/no access-profile entry matches/);
+    expect(screen.getByText("anonymous")).toBeInTheDocument();
+    expect(screen.queryByText("Log in")).toBeInTheDocument();
+  });
+
+  it("lets the operator close the sign-in dialog after a rejection", async () => {
+    installFetch({
+      identityFor: (auth) =>
+        auth === undefined
+          ? { status: 200, body: anonymousIdentity }
+          : { status: 401, body: { error: { code: "unauthenticated", message: "no access-profile entry matches this credential" } } },
+      instancesFor: () => ({ items: [], ui: UI }),
+    });
+
+    render(
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    );
+    await screen.findAllByText("anonymous");
+
+    fireEvent.click(screen.getByText("Log in"));
+    const input = await screen.findByLabelText(/API token/i) as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "bad-token" } });
+    fireEvent.submit(input.closest("form")!);
+    await screen.findByText(/no access-profile entry matches/);
+
+    // The dialog can be dismissed, and the console stays usable.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Sign in to Veriproc Console/)).toBeNull()
+    );
+    expect(screen.getByText("anonymous")).toBeInTheDocument();
+  });
+
+  it("keeps the rejection visible after the dialog is closed", async () => {
+    installFetch({
+      identityFor: (auth) =>
+        auth === undefined
+          ? { status: 200, body: anonymousIdentity }
+          : { status: 401, body: { error: { code: "unauthenticated", message: "no access-profile entry matches this credential" } } },
+      instancesFor: () => ({ items: [], ui: UI }),
+    });
+
+    render(
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    );
+    await screen.findAllByText("anonymous");
+
+    fireEvent.click(screen.getByText("Log in"));
+    const input = await screen.findByLabelText(/API token/i) as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "bad-token" } });
+    fireEvent.submit(input.closest("form")!);
+    await screen.findByText(/no access-profile entry matches/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    // The error stays on screen as a banner so it is not lost with the
+    // dialog, and it can be dismissed explicitly.
+    await screen.findByText(/no access-profile entry matches/);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/no access-profile entry matches/)).toBeNull()
+    );
+  });
 });
 
 // ── 7.3 Anonymous session lifecycle ──────────────────────────────────────

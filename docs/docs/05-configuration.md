@@ -456,7 +456,7 @@ daemon, the CLI, and the web console, so one credential means the same thing eve
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `auth.profile_path` | path | — | Access-profile file. When set, it is the credential source for `/api/v1`. |
-| `auth.allow_unauthenticated_readers` | bool | `false` | Admit credential-less **read** requests as an anonymous `reader`. Mutating requests always require a token. |
+| `auth.allow_unauthenticated_readers` | bool | `false` | Admit **read** requests without a valid credential as an anonymous `reader`. Mutating requests always require a valid token. |
 | `auth.quota_per_minute` | int | `0` (off) | Per-principal rate limit on mutating requests. |
 
 ```yaml
@@ -495,7 +495,18 @@ needs to contain a usable secret. `veriproc users add` writes entries this way.
 |---------|--------------------------------|-----------|
 | not set | — | No credential source: API open (legacy sandbox mode, or `VERIPROC_AUTH_TOKENS` env tokens). |
 | set | `false` | Credentialed: every request needs a valid token; `reader` on a mutating endpoint → `403`. |
-| set | `true` | Credentialed + anonymous readers: credential-less **reads** run as anonymous `reader`; mutations still require a token. |
+| set | `true` | Credentialed + anonymous readers: **reads without a valid token** run as anonymous `reader`; mutations still require a valid token. |
+
+**A rejected credential is treated as no credential.** With `allow_unauthenticated_readers`
+enabled, a token that is *present but matches no profile entry* — a typo, a revoked
+token, a value pasted with a trailing newline — is served as the anonymous `reader`
+principal on read endpoints rather than refused, and the response carries
+`X-VeriProc-Auth: credential-rejected` so the caller still learns their credential was
+not accepted. On a mutating endpoint it is refused. The fallback never widens
+capability: a rejected token buys exactly what sending no token buys.
+
+Set `allow_unauthenticated_readers: false` to get a hard lockout instead — then every
+unmatched credential is refused with `401`.
 
 **Migration from `VERIPROC_AUTH_TOKENS`.** The legacy env format
 (`subject:role:token;…`) still works when `auth.profile_path` is unset. To move to a

@@ -322,6 +322,78 @@ func TestGateway_IdentityAnonymous(t *testing.T) {
 	}
 }
 
+// Scenario: Identity Endpoint Never Downgrades (console spec): the identity
+// endpoint is how a login submission learns whether its credential was
+// accepted, so a rejected credential must fail loudly rather than resolve to
+// a guest session.
+func TestGateway_IdentityRejectsInvalidCredential(t *testing.T) {
+	gw, _ := newProfileGateway(t, testProfileText, true, nil)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest(http.MethodGet, "/api/console/identity", "wrong-token", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("identity with a wrong credential: got %d, want 401 (%s)", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "no access-profile entry matches") {
+		t.Errorf("identity body should name the rejected credential: %s", body)
+	}
+	if strings.Contains(body, `"anonymous":true`) {
+		t.Errorf("identity body must not report a guest session: %s", body)
+	}
+	if strings.Contains(body, "wrong-token") {
+		t.Errorf("identity response leaked the token: %s", body)
+	}
+}
+
+// Scenario: Rejected Credential Reports Rejection (console spec): the
+// rejection names the problem so the console can tell the operator that their
+// credential is wrong.
+func TestGateway_IdentityRejectionMessage(t *testing.T) {
+	gw, _ := newProfileGateway(t, testProfileText, true, nil)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest(http.MethodGet, "/api/console/identity", "wrong-token", nil))
+	if got := rr.Header().Get("WWW-Authenticate"); !strings.Contains(got, "Bearer") {
+		t.Errorf("WWW-Authenticate = %q, want a Bearer challenge", got)
+	}
+}
+
+// Scenario: Invalid Credential Served As Guest On Content Reads (console
+// spec): the console content surface downgrades a stale browser credential to
+// a read-only guest, and reports the downgrade.
+func TestGateway_InvalidCredentialServedAsGuestOnContentReads(t *testing.T) {
+	gw, _ := newProfileGateway(t, testProfileText, true, nil)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest(http.MethodGet, "/api/console/instances", "wrong-token", nil))
+	if rr.Code == http.StatusUnauthorized {
+		t.Fatalf("content read with a wrong credential: got 401, want the guest path (%s)", rr.Body.String())
+	}
+	if got := rr.Header().Get("X-VeriProc-Auth"); got != "credential-rejected" {
+		t.Errorf("X-VeriProc-Auth = %q, want credential-rejected", got)
+	}
+}
+
+// Scenario: Invalid Credential Rejected On Mutations (console spec).
+func TestGateway_InvalidCredentialRejectedOnMutations(t *testing.T) {
+	gw, _ := newProfileGateway(t, testProfileText, true, nil)
+	rt := gw.Router(nil)
+
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest(http.MethodPost,
+		"/api/console/instances/vp1/stations/STA/pause", "wrong-token", strings.NewReader("{}")))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("content mutation with a wrong credential: got %d, want 401", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "token") {
+		t.Errorf("rejection should state a token is required: %s", rr.Body.String())
+	}
+}
+
 // ── 5.6 Anonymous browsing ───────────────────────────────────────────────
 
 func TestGateway_AnonymousReadAdmitted(t *testing.T) {

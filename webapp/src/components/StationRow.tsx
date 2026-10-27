@@ -26,6 +26,9 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
   const [showSubmit, setShowSubmit] = useState(false);
   const [pushTask, setPushTask] = useState<{ taskID: string; targetStationID: string; force: boolean } | null>(null);
   const isOperator = session?.role === "operator";
+  // The server may send null for a collection; normalize once so every use
+  // below (rendering and menu construction) is null-safe.
+  const slots = row.slots ?? [];
 
   const onLabelContext = (e: MouseEvent) => {
     e.preventDefault();
@@ -50,7 +53,7 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
         label: "Submit task…",
         onClick: () => setShowSubmit(true),
       });
-      if (row.counts.failure > 0 || row.slots.some((slot) => slot.kind === "failed" || slot.kind === "cancelled")) {
+      if (row.counts.failure > 0 || slots.some((slot) => slot.kind === "failed" || slot.kind === "cancelled")) {
         items.push({
           label: "Hide all failed",
           onClick: () => {
@@ -144,7 +147,7 @@ export function StationRow({ instanceID, row, onChanged }: Props) {
         {row.paused && <span class="paused-badge">PAUSED</span>}
       </div>
       <div class="slot-strip">
-        {row.slots.map((s, i) => (
+        {slots.map((s, i) => (
           <button
             key={i}
             class="slot"

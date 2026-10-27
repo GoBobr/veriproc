@@ -181,7 +181,7 @@ All error responses use a normalized envelope:
 | 503 Service Unavailable | Dependency down / not ready. |
 | 504 Gateway Timeout | Slow upstream. |
 
-These map onto the CLI exit codes in [CLI §8.13](08-cli.md).
+These map onto the CLI exit codes in [CLI §8.15](08-cli.md).
 
 ## 9.9 Authentication & authorization
 
@@ -199,15 +199,33 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/tasks
 
 **Anonymous readers.** With `auth.allow_unauthenticated_readers: true`, a *missing*
 credential on a read endpoint is admitted as an anonymous `reader` principal (subject
-`anonymous`). A *present but invalid* token is never downgraded — it is rejected. Mutating
-requests without a credential are always rejected.
+`anonymous`). Mutating requests without a credential are always rejected.
+
+**A rejected credential falls back to the guest.** A credential that is *present but does
+not match any access-profile entry* — a typo, a revoked token, a value pasted with a
+trailing newline — is handled exactly like no credential at all: the read is served as the
+anonymous `reader` principal when `auth.allow_unauthenticated_readers` is enabled, and it
+is rejected on a mutating endpoint regardless of that flag. The downgrade never widens
+capability: a rejected token buys exactly what sending no token buys, and the request is
+attributed to the reserved `anonymous` subject rather than to any named profile subject.
+
+The downgrade is never silent. A served-as-guest read carries the response header:
+
+```text
+X-VeriProc-Auth: credential-rejected
+```
+
+The header is absent when the credential was accepted, so a client can always tell the two
+apart. With `auth.allow_unauthenticated_readers` disabled there is no guest to fall back to
+and the credential is rejected outright — so that flag is what turns a downgrade into a
+hard lockout.
 
 **Rejections are self-describing:**
 
 | Status | When | Body |
 |--------|------|------|
 | `401` | No credential (and anonymous readers off, or a mutating request) | `missingCredentialMessage` — names `Authorization: Bearer <token>` and the roles available. |
-| `401` | Credential present but unknown | `invalidCredentialMessage` — states no access-profile entry matches; asks an operator to grant a reader or operator token. Carries `WWW-Authenticate: Bearer … error="invalid_token"`. |
+| `401` | Credential present but unknown, and no anonymous guest to fall back to (or a mutating request) | `invalidCredentialMessage` — states no access-profile entry matches; asks an operator to grant a reader or operator token. Carries `WWW-Authenticate: Bearer … error="invalid_token"`. |
 | `403` | `reader` calling a mutating endpoint | `insufficientRoleMessage` — states operator authorization is required. |
 
 None of these responses echo the presented token.

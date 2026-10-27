@@ -51,6 +51,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gobobr/veriproc/internal/auth"
 	"github.com/gobobr/veriproc/internal/policy"
 	"github.com/gobobr/veriproc/internal/version"
 	"golang.org/x/term"
@@ -250,6 +251,22 @@ type client struct {
 	// followAll forces renderList to fetch every page without prompting
 	// (used when stdout is not a terminal, e.g. piped into `less`).
 	followAll bool
+	// warnedCredentialRejected records that the guest-fallback warning has
+	// already been printed, so a command that issues several requests warns
+	// only once.
+	warnedCredentialRejected bool
+}
+
+// warnCredentialRejected reports that the server rejected the supplied
+// credential and served the request as an anonymous guest. The warning names
+// no credential value.
+func (c *client) warnCredentialRejected() {
+	if c.warnedCredentialRejected {
+		return
+	}
+	c.warnedCredentialRejected = true
+	fmt.Fprintln(c.stderr, "veriproc: warning: the supplied credential was rejected by the server; "+
+		"served as an anonymous guest (read-only). Check VERIPROC_TOKEN / --token.")
 }
 
 type apiError struct {
@@ -292,6 +309,12 @@ func (c *client) do(method, path string, body any) (map[string]any, []byte, erro
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	// A server that rejected the supplied credential and served the request as
+	// a guest says so in a response header. Report it once, without echoing
+	// the credential, so the caller is not silently downgraded.
+	if resp.StatusCode < 400 && resp.Header.Get(auth.CredentialRejectedHeader) == auth.CredentialRejectedValue {
+		c.warnCredentialRejected()
+	}
 	if resp.StatusCode >= 400 {
 		ae := &apiError{StatusCode: resp.StatusCode, Body: raw}
 		var env struct {

@@ -21,9 +21,15 @@ import (
 //     authentication must carry a valid credential.
 //   - authn != nil, allowAnonymousReaders == true: a request with no
 //     credential on a read endpoint is admitted as an anonymous reader; a
-//     request with no credential on a mutating endpoint is rejected. A
-//     credential that is present but unknown is always rejected - it is never
-//     downgraded to anonymous, which would mask a mistyped token.
+//     request with no credential on a mutating endpoint is rejected.
+//
+// A credential that is present but matches no access-profile entry is handled
+// exactly like no credential at all: on a read endpoint it is downgraded to the
+// anonymous reader when the anonymous-reader allowance is enabled, and the
+// response reports the rejection through the CredentialRejectedHeader header.
+// On a mutating endpoint it is always rejected. The downgrade therefore never
+// widens capability beyond what the anonymous allowance already grants, while
+// still telling the caller that their credential was not accepted.
 //
 // Rejections name the credential or role required and never echo a token.
 func authMiddleware(authn auth.Authenticator, allowAnonymousReaders bool) func(http.Handler) http.Handler {
@@ -34,26 +40,38 @@ func authMiddleware(authn auth.Authenticator, allowAnonymousReaders bool) func(h
 				return
 			}
 			tok := bearerToken(r.Header.Get("Authorization"))
+			mutating := auth.IsMutator(r.Method)
 
 			if tok == "" {
-				if allowAnonymousReaders && !auth.IsMutator(r.Method) {
+				if allowAnonymousReaders && !mutating {
 					ctx := auth.WithPrincipal(r.Context(), auth.AnonymousPrincipal())
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
 				w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc"`)
 				apierr.Write(w, r, http.StatusUnauthorized,
-					apierr.CodeUnauthenticated, missingCredentialMessage(allowAnonymousReaders, auth.IsMutator(r.Method)))
+					apierr.CodeUnauthenticated, missingCredentialMessage(allowAnonymousReaders, mutating))
 				return
 			}
 
 			p, err := authn.Authenticate(r.Context(), tok)
 			if err != nil {
+				// A credential that matches no entry is downgraded to the
+				// anonymous reader on reads, mirroring a credential-less
+				// request, but only when the instance allows anonymous
+				// readers. The header tells the caller their credential was
+				// rejected rather than silently accepted.
+				if allowAnonymousReaders && !mutating && isUnknownCredential(err) {
+					w.Header().Set(CredentialRejectedHeader, CredentialRejectedValue)
+					ctx := auth.WithPrincipal(r.Context(), auth.AnonymousPrincipal())
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 				w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc", error="invalid_token"`)
 				switch {
 				case errors.Is(err, auth.ErrMissingCredentials):
 					apierr.Write(w, r, http.StatusUnauthorized,
-						apierr.CodeUnauthenticated, missingCredentialMessage(allowAnonymousReaders, auth.IsMutator(r.Method)))
+						apierr.CodeUnauthenticated, missingCredentialMessage(allowAnonymousReaders, mutating))
 				default:
 					apierr.Write(w, r, http.StatusUnauthorized,
 						apierr.CodeUnauthenticated, invalidCredentialMessage)
@@ -61,7 +79,7 @@ func authMiddleware(authn auth.Authenticator, allowAnonymousReaders bool) func(h
 				return
 			}
 			// Reader role may not invoke mutating endpoints.
-			if p.Role != auth.RoleOperator && auth.IsMutator(r.Method) {
+			if p.Role != auth.RoleOperator && mutating {
 				apierr.Write(w, r, http.StatusForbidden,
 					apierr.CodeUnauthorized, insufficientRoleMessage)
 				return
@@ -70,6 +88,25 @@ func authMiddleware(authn auth.Authenticator, allowAnonymousReaders bool) func(h
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// CredentialRejectedHeader and CredentialRejectedValue are re-exported from
+// internal/auth so a client of this package can detect the guest downgrade
+// without importing the auth package as well.
+const (
+	// CredentialRejectedHeader is set on a response that was served to a
+	// caller whose presented credential matched no access-profile entry.
+	CredentialRejectedHeader = auth.CredentialRejectedHeader
+	// CredentialRejectedValue is the value of CredentialRejectedHeader.
+	CredentialRejectedValue = auth.CredentialRejectedValue
+)
+
+// isUnknownCredential reports whether err means "the presented credential
+// matched no entry". Other failures - a profile that cannot be read, for
+// instance - are not credential rejections and must not be silently
+// downgraded, because they are server-side problems rather than the caller's.
+func isUnknownCredential(err error) bool {
+	return errors.Is(err, auth.ErrInvalidToken) || errors.Is(err, auth.ErrMissingCredentials)
 }
 
 // The rejection messages are part of the API contract (see the access-profiles

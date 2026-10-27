@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"sort"
 	"time"
@@ -50,7 +51,7 @@ type DashboardStationRow struct {
 type DashboardInstance struct {
 	InstanceID  string                `json:"instance_id"`
 	Title       string                `json:"title"`
-	Status      string                `json:"status"` // ok | degraded
+	Status      string                `json:"status"` // ok | degraded | access_denied
 	Error       string                `json:"error,omitempty"`
 	Since       time.Time             `json:"since"`
 	Stations    []DashboardStationRow `json:"stations"`
@@ -154,6 +155,12 @@ func ExpandStationRow(
 // BuildInstanceDashboard fetches the upstream station summary and produces
 // the UI model. A non-nil error means the gateway could not reach upstream;
 // callers may surface a degraded view.
+//
+// An upstream 401/403 is reported as Status "access_denied" rather than
+// "degraded": the instance is reachable but the credential presented on this
+// hop was refused, which the frontend renders as a permission notice instead
+// of a raw error blob. Stations is always non-nil so the JSON never carries
+// "stations": null.
 func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string, since time.Time) DashboardInstance {
 	inst, ok := g.instance(instanceID)
 	now := g.now()
@@ -162,6 +169,7 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 		Title:       "",
 		Status:      "ok",
 		Since:       since,
+		Stations:    []DashboardStationRow{},
 		LastRefresh: now,
 	}
 	if !ok {
@@ -173,6 +181,16 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 
 	summary, err := inst.client.StationsSummary(ctx, since)
 	if err != nil {
+		// Deliberately NOT fed to observeUpstream: a content rejection must
+		// not hide the instance from the list (D10). The probe owns hiding;
+		// this path only reports the state of this pane.
+		if IsUpstreamStatus(err, http.StatusUnauthorized) || IsUpstreamStatus(err, http.StatusForbidden) {
+			// The credential relayed on this hop was refused. Report it as a
+			// permission state with a short reason, not the raw upstream body.
+			view.Status = "access_denied"
+			view.Error = "the credential presented to this instance was rejected"
+			return view
+		}
 		view.Status = "degraded"
 		view.Error = err.Error()
 		return view

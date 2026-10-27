@@ -196,7 +196,7 @@ veriproc clean --before 2025-07-01T00:00:00Z --by processing-window --station SC
 veriproc clean --after 20260709 --before 20260715T000000 --station SCENE-L2 --force
 ```
 
-Timestamps accept the formats listed in [§8.15 Timestamp formats](#815-timestamp-formats).
+Timestamps accept the formats listed in [§8.16 Timestamp formats](#816-timestamp-formats).
 
 Canonical runs are protected by the daemon's cleaning rules; see
 [Operations §11.5](11-operations.md).
@@ -252,7 +252,25 @@ veriproc version [--check-api]   # local version; --check-api also queries the d
 
 Use `json`/`yaml` for scripting; `table` for interactive use.
 
-## 8.14 Exit codes
+## 8.14 Guest fallback on a rejected credential
+
+Against a daemon with `auth.allow_unauthenticated_readers: true`, a read command whose
+credential was **rejected** (a typo, a revoked token, a stale `VERIPROC_TOKEN` left in a
+shell profile) is still served — as an anonymous, read-only guest. The CLI says so, once
+per invocation, on stderr:
+
+```console
+$ veriproc --token $STALE_TOKEN run list
+veriproc: warning: the supplied credential was rejected by the server; served as an anonymous guest (read-only). Check VERIPROC_TOKEN / --token.
+```
+
+The command still exits `0`, because the read itself succeeded — the warning is
+diagnostic, not an error. It never echoes the credential value.
+
+A **mutating** command is not covered by the fallback: the daemon rejects a rejected
+credential on a mutating endpoint, and the CLI exits `6`.
+
+## 8.15 Exit codes
 
 | Code | Name | Meaning |
 |------|------|---------|
@@ -269,7 +287,7 @@ Use `json`/`yaml` for scripting; `table` for interactive use.
 These map onto the HTTP status codes returned by the daemon (see
 [REST API](09-rest-api.md)).
 
-## 8.15 Timestamp formats
+## 8.16 Timestamp formats
 
 The `--start`, `--end` (submit), `--before`, and `--after` (clean) flags accept
 the following timestamp formats. All results are normalized to UTC; forms without

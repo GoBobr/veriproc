@@ -17,6 +17,7 @@
   --paused-row-bg: rgba(243, 156, 18, 0.10);
   --paused-row-border: rgba(243, 156, 18, 0.50);
   --danger: #e74c3c;
+  --warn: #e0a458;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -39,6 +40,7 @@
   --paused-row-bg: rgba(196, 122, 0, 0.09);
   --paused-row-border: rgba(196, 122, 0, 0.45);
   --danger: #d42a2a;
+  --warn: #b5730a;
 }
 
 * { box-sizing: border-box; }
@@ -183,6 +185,16 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--panel-2);
   border-radius: 4px;
 }
+.permission-msg {
+  font-size: 12px;
+  padding: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--warn, #e0a458);
+  border-radius: 4px;
+  color: var(--text);
+}
+.permission-msg strong { color: var(--warn, #e0a458); }
+.permission-msg p { margin: 6px 0 8px; color: var(--muted); }
 .error-msg {
   color: var(--danger);
   font-size: 12px;
@@ -191,6 +203,41 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   border-radius: 4px;
 }
 .topbar .user .role-anonymous { color: var(--muted, #9aa0a6); }
+
+/* Banner shown when the supplied credential was rejected: either the gateway
+   downgraded the request to a read-only guest, or an explicit sign-in was
+   refused. */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border, #333);
+}
+.banner-warning {
+  color: var(--warn, #e0a458);
+  background: var(--panel-2);
+}
+/* Push the action buttons to the right, keeping them grouped together even
+   when the banner carries more than one. */
+.banner .secondary:first-of-type {
+  margin-left: auto;
+}
+
+/* Placeholder shown when the sign-in dialog was dismissed while no session
+   at all exists. */
+.login-required {
+  margin: 48px auto;
+  max-width: 480px;
+  padding: 24px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.login-required h2 { margin-top: 0; }
+.login-required p { color: var(--muted); }
 
 .station-row {
   display: flex;

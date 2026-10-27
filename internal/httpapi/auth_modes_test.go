@@ -134,10 +134,41 @@ func TestAPI_AuthModes_AnonymousReaderDeniedOnMutations(t *testing.T) {
 	}
 }
 
-// An unknown credential is never downgraded to anonymous: it is rejected even
-// when anonymous readers are allowed.
-func TestAPI_AuthModes_InvalidTokenNeverDowngraded(t *testing.T) {
+// Scenario: Invalid Credential Served As Guest On Reads (api spec).
+// An unknown credential is downgraded to the anonymous reader on read
+// endpoints when anonymous readers are allowed, and the rejection is
+// reported through the response header.
+func TestAPI_AuthModes_InvalidTokenServedAsGuestOnReads(t *testing.T) {
 	a := newProfileAPI(t, "alice:reader:reader-token\n", true)
+
+	resp, body := doReq(t, "GET", a.srv.URL+"/api/v1/runs", "wrong-token")
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Fatalf("status = %d, want the read to be served as a guest: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("X-VeriProc-Auth"); got != "credential-rejected" {
+		t.Errorf("X-VeriProc-Auth = %q, want credential-rejected", got)
+	}
+}
+
+// Scenario: Invalid Credential Rejected On Mutations (api spec): the
+// downgrade never applies to a mutating endpoint.
+func TestAPI_AuthModes_InvalidTokenRejectedOnMutations(t *testing.T) {
+	a := newProfileAPI(t, "alice:reader:reader-token\n", true)
+
+	resp, body := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", "wrong-token")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	if code := errCode(t, body); code != "unauthenticated" {
+		t.Errorf("code = %q, want unauthenticated", code)
+	}
+}
+
+// Scenario: Invalid Credential Without Anonymous Allowance (api spec): with
+// the anonymous-readers allowance off there is no guest to fall back to, so
+// the credential is rejected outright.
+func TestAPI_AuthModes_InvalidTokenRejectedWithoutAnonymousAllowance(t *testing.T) {
+	a := newProfileAPI(t, "alice:reader:reader-token\n", false)
 
 	resp, body := doReq(t, "GET", a.srv.URL+"/api/v1/runs", "wrong-token")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -145,6 +176,36 @@ func TestAPI_AuthModes_InvalidTokenNeverDowngraded(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "no access-profile entry matches") {
 		t.Errorf("message = %s, want it to name the rejected credential", body)
+	}
+}
+
+// Scenario: Downgrade Never Widens Capability (api spec): a rejected
+// credential buys exactly what sending no credential buys, so it can never
+// mutate state.
+func TestAPI_AuthModes_DowngradeNeverWidensCapability(t *testing.T) {
+	a := newProfileAPI(t, "alice:reader:reader-token\n", true)
+
+	// The same rejected credential gets the same refusal on a mutation that a
+	// credential-less request gets.
+	withCred, _ := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", "wrong-token")
+	withoutCred, _ := doReq(t, "POST", a.srv.URL+"/api/v1/tasks", "")
+	if withCred.StatusCode != withoutCred.StatusCode {
+		t.Errorf("status with credential = %d, without = %d, want them equal",
+			withCred.StatusCode, withoutCred.StatusCode)
+	}
+	if withCred.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", withCred.StatusCode)
+	}
+}
+
+// The rejection header is absent when the credential was accepted, so a
+// client can tell the two apart.
+func TestAPI_AuthModes_AcceptedCredentialHasNoRejectionHeader(t *testing.T) {
+	a := newProfileAPI(t, "alice:reader:reader-token\n", true)
+
+	resp, _ := doReq(t, "GET", a.srv.URL+"/api/v1/runs", "reader-token")
+	if got := resp.Header.Get("X-VeriProc-Auth"); got != "" {
+		t.Errorf("X-VeriProc-Auth = %q, want it absent for an accepted credential", got)
 	}
 }
 

@@ -47,6 +47,27 @@ type UpstreamClient interface {
 	CancelRun(ctx context.Context, runID string, body map[string]any) (map[string]any, error)
 }
 
+// relayTokenKey carries the per-request upstream credential chosen by the
+// gateway (see D15): the console caller's own bearer token when the caller is
+// authenticated, otherwise the configured per-instance service credential.
+type relayTokenKey struct{}
+
+// WithRelayToken returns ctx carrying tok as the bearer token to present on
+// the upstream hop. An empty tok means "no credential": the upstream request
+// is sent without an Authorization header, overriding any configured service
+// token. Callers that want the service credential simply do not set it.
+func WithRelayToken(ctx context.Context, tok string) context.Context {
+	return context.WithValue(ctx, relayTokenKey{}, tok)
+}
+
+// relayToken returns the token the gateway should present upstream for ctx,
+// and whether one was explicitly chosen. When none was chosen the client falls
+// back to its configured service credential.
+func relayToken(ctx context.Context) (string, bool) {
+	tok, ok := ctx.Value(relayTokenKey{}).(string)
+	return tok, ok
+}
+
 // HTTPUpstreamClient implements UpstreamClient against a live veriprocd REST
 // API. It is safe for concurrent use.
 type HTTPUpstreamClient struct {
@@ -118,8 +139,15 @@ func (c *HTTPUpstreamClient) do(ctx context.Context, method, path string, query 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	// Credential for this hop: the caller's relayed token when the gateway
+	// chose one (D15), otherwise the configured service credential. An empty
+	// value on either side means no Authorization header at all.
+	tok := c.token
+	if t, ok := relayToken(ctx); ok {
+		tok = t
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

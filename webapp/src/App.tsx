@@ -27,6 +27,9 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [showInfo, setShowInfo] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  // Set when the gateway refused a credential the user submitted. It outlives
+  // the dialog so the rejection stays visible after the dialog is closed.
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     applyTheme(theme);
@@ -41,10 +44,22 @@ export function App() {
   // browsing it is an optional upgrade control.
   const showDashboard = ready && !!session;
   const showLoginScreen = ready && !session;
+  // Two independent dialog states:
+  //  - showLogin is the guest *upgrade* dialog, opened from the top bar.
+  //  - loginDismissed records that the *blocking* dialog (no session at all)
+  //    was closed; without it the console has nothing to show, so a
+  //    "sign-in required" placeholder stands in for it.
+  const [loginDismissed, setLoginDismissed] = useState(false);
+  const blockingLoginOpen = showLoginScreen && !loginDismissed;
+  const upgradeLoginOpen = showDashboard && !!session?.anonymous && showLogin;
+  const loginOpen = blockingLoginOpen || upgradeLoginOpen;
 
   // Once a login upgrade lands, dismiss the upgrade dialog in place.
   useEffect(() => {
-    if (session && !session.anonymous) setShowLogin(false);
+    if (session && !session.anonymous) {
+      setShowLogin(false);
+      setAuthError(null);
+    }
   }, [session]);
 
   return (
@@ -79,10 +94,51 @@ export function App() {
           )}
         </div>
       </header>
+      {session && session.credentialRejected && (
+        <div class="banner banner-warning" role="status">
+          Your credential was rejected, so you are browsing as a guest with read-only access.{" "}
+          <button class="secondary" onClick={() => setShowLogin(true)}>
+            Log in
+          </button>
+        </div>
+      )}
+      {authError && !loginOpen && (
+        <div class="banner banner-warning" role="alert">
+          Sign-in failed: {authError}{" "}
+          <button class="secondary" onClick={() => setShowLogin(true)}>
+            Try again
+          </button>
+          <button class="secondary" onClick={() => setAuthError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {showInfo && session && <InfoDialog onClose={() => setShowInfo(false)} />}
       <main>
-        {showLoginScreen && <Login />}
-        {showDashboard && session.anonymous && showLogin && <Login />}
+        {blockingLoginOpen && (
+          <Login
+            onRejected={setAuthError}
+            onCancel={() => setLoginDismissed(true)}
+          />
+        )}
+        {showLoginScreen && loginDismissed && (
+          <div class="login-required">
+            <h2>Sign-in required</h2>
+            <p>
+              This console requires a reader or operator credential. The sign-in dialog was
+              dismissed, so there is nothing to show until you sign in.
+            </p>
+            <button class="primary" onClick={() => setLoginDismissed(false)}>
+              Sign in
+            </button>
+          </div>
+        )}
+        {upgradeLoginOpen && (
+          <Login
+            onRejected={setAuthError}
+            onCancel={() => setShowLogin(false)}
+          />
+        )}
         {showDashboard && route.page === "dashboard" && <DashboardPage />}
         {showDashboard && route.page === "station" && route.instanceID && route.stationID && (
           <StationPage instanceID={route.instanceID} stationID={route.stationID} />

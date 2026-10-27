@@ -41,26 +41,36 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 // from the credential - the caller never supplies it - so a login submission
 // cannot choose a role.
 //
+// The endpoint resolves the credential strictly: a credential that matches no
+// access-profile entry is rejected with 401 even when anonymous browsing is
+// enabled. A login attempt must therefore fail visibly - the browser shows the
+// error and lets the user correct the token or dismiss the dialog - instead
+// of silently reporting success for a token that was never accepted.
+//
 // It is served outside the authenticated API so an anonymous visitor can
 // discover its own state and a login attempt can report the upgraded identity.
 func (g *Gateway) handleIdentity(w http.ResponseWriter, r *http.Request) {
-	p, anonymous, err := g.authenticateOrAnonymous(r)
+	session, err := g.authenticateStrict(r)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="veriproc-console"`)
-		writeErr(w, http.StatusUnauthorized, "unauthenticated",
-			"missing or invalid bearer token: supply Authorization: Bearer <token> with a reader or operator credential")
+		msg := "missing or invalid bearer token: supply Authorization: Bearer <token> with a reader or operator credential"
+		if errors.Is(err, ErrCredentialRejected) {
+			msg = "invalid bearer token: no access-profile entry matches this credential; " +
+				"ask an operator to grant you a reader or operator token"
+		}
+		writeErr(w, http.StatusUnauthorized, "unauthenticated", msg)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"subject":   p.Subject,
-		"role":      p.Role,
-		"anonymous": anonymous,
+		"subject":   session.Principal.Subject,
+		"role":      session.Principal.Role,
+		"anonymous": session.Anonymous,
 	})
 
 	// A successful identity resolution is the moment a login happens: re-probe
 	// the upstreams so instances reachable under the newly presented
 	// credential appear in the next instance list without a restart.
-	if !anonymous {
+	if !session.Anonymous {
 		g.reprobeInstances(r.Context())
 	}
 }
