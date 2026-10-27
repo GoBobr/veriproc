@@ -72,3 +72,39 @@ configuration; the rejection MUST NOT reveal any token value.
 - **GIVEN** any rejected request
 - **WHEN** the error envelope is inspected
 - **THEN** it contains no token value and no credential material from the access configuration
+
+### Requirement: Invalid Credential Downgrade
+
+A request presenting a credential that matches no access-profile entry SHALL be handled as a
+request carrying no credential: served as the anonymous `reader` principal on a read endpoint when
+the anonymous-reader allowance is enabled, and rejected on a mutating endpoint regardless of that
+allowance. The downgrade SHALL NOT widen capability beyond the anonymous allowance, and the
+response SHALL report that the credential was rejected.
+
+#### Scenario: Invalid Credential Served As Guest On Reads
+
+- **GIVEN** a daemon started with anonymous readers allowed
+- **WHEN** a request presenting a credential that matches no profile entry calls a read endpoint
+- **THEN** the request is served as an anonymous `reader` principal
+- **AND** the response indicates that the presented credential was rejected
+
+#### Scenario: Invalid Credential Rejected On Mutations
+
+- **GIVEN** a daemon started with anonymous readers allowed
+- **WHEN** a request presenting a credential that matches no profile entry calls a mutating endpoint
+- **THEN** the request is rejected as unauthenticated
+- **AND** the rejection message names the rejected credential requirement and contains no token value
+
+#### Scenario: Invalid Credential Without Anonymous Allowance
+
+- **GIVEN** a daemon started without the anonymous-reader allowance
+- **WHEN** a request presenting a credential that matches no profile entry calls any endpoint
+  subject to authentication
+- **THEN** the request is rejected as unauthenticated
+
+#### Scenario: Downgrade Never Widens Capability
+
+- **GIVEN** a daemon started with anonymous readers allowed
+- **WHEN** a request presenting an unmatched credential is served
+- **THEN** the resolved principal carries the reserved anonymous subject and the anonymous role
+- **AND** the request is attributed to the anonymous subject, not to any named profile subject

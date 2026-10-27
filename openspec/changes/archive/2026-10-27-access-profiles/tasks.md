@@ -58,6 +58,23 @@
 - [x] 8.2 Run the full Go test suite and the webapp test suite and confirm no pre-existing test regressed — verify with `go test ./...` and the `webapp` test command reporting success.
 - [x] 8.3 Exercise the flow end to end against a local daemon and gateway: bootstrap the profile with an operator entry via `users add`, grant a reader subject, authenticate with it from the CLI, revoke it with the operator credential, and observe the rejection without a daemon restart — verify with an integration script whose output is captured as the artifact.
 
+## 9. Invalid Credential Downgrade To Guest
+
+- [x] 9.1 Downgrade an unmatched credential to the anonymous principal on daemon read endpoints when the anonymous-reader allowance is enabled, keep rejecting it on mutating endpoints, and never widen capability beyond the anonymous allowance — verify with API tests covering "Invalid Credential Served As Guest On Reads", "Invalid Credential Rejected On Mutations", "Invalid Credential Without Anonymous Allowance", and "Downgrade Never Widens Capability".
+- [x] 9.2 Report the downgrade to the caller through a response header on the daemon, so a client can tell a rejected credential from an accepted one — verify with an API test asserting the header is set on a downgraded read and absent on an accepted one.
+- [x] 9.3 Apply the downgrade in the console gateway on *content* read endpoints when anonymous browsing is enabled, keep rejecting it on mutating endpoints, and report the rejection through the response header, while keeping the identity endpoint strict — verify with gateway tests covering "Invalid Credential Served As Guest On Content Reads", "Invalid Credential Rejected On Mutations", "Identity Endpoint Never Downgrades", and "Rejected Credential Reports Rejection".
+- [x] 9.4 Warn in the CLI when a read was served as a guest after the server rejected the supplied credential, without echoing the credential value and without changing the exit code, so the command still completes successfully — verify with CLI tests covering "Rejected Credential Reports Guest Fallback" and "Rejected Credential On Mutation Fails".
+- [x] 9.5 Surface the rejection in the web console: a login with an unmatched credential SHALL show the server's rejection message in a dialog, SHALL NOT become a guest session behind the operator's back, and the dialog SHALL be dismissible so browsing continues in the previous session state — verify with a webapp test covering the rejected login and the dismissal.
+- [x] 9.6 Document the downgrade behaviour, the `X-VeriProc-Auth` response header, the strict console login path, and the converse that disabling the anonymous flags restores hard lockout — verify that every documented name appears in the corresponding implementation.
+
+## 10. Upstream Credential Relay And Access-Denied Panes
+
+- [x] 10.1 Relay the console caller's own credential on every gateway→daemon request when the caller is authenticated, falling back to the configured per-instance service credential for anonymous callers and sending no `Authorization` header when no service credential exists — verify with gateway tests covering "Authenticated Caller Credential Relayed", "Anonymous Caller Uses Service Credential", and "Anonymous Caller Without Service Credential Sends None".
+- [x] 10.2 Restrict instance-list hiding to the upstream probe outcome so an instance whose content rejects the caller stays listed — verify with a gateway test covering "Content Rejection Does Not Hide Instance" alongside the existing "Inaccessible Instance Hidden" and "Instance Appears After Login".
+- [x] 10.3 Report an upstream `401`/`403` on the dashboard as a structured access-denied state with an empty station array instead of a raw error blob — verify with a gateway test covering "Access Denial Reported Structurally".
+- [x] 10.4 Render a permission notice in the instance pane for the access-denied state — pointing anonymous sessions at the top-bar login control rather than carrying its own login button — and make every dashboard/tree/info collection render null-safely so a `null` array never aborts rendering — verify with webapp tests covering "Permission Notice Rendered" and "Null Collections Never Crash The Pane".
+- [x] 10.5 Document the upstream credential relay (caller credential, else service credential), the access-denied pane, and the resulting rights model in `docs/docs/10-web-console.md` — verify that every documented behaviour appears in the implementation.
+
 ## Workflow follow-up
 
 - Archive the change after the project's review requirements are satisfied.

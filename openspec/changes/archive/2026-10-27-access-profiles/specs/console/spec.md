@@ -71,6 +71,14 @@ subject when the request carries no credential and anonymous browsing is enabled
 - **WHEN** the identity endpoint is called without a credential
 - **THEN** the response reports the reserved anonymous subject and the read-only effective role
 
+#### Scenario: Rejected Credential Reports Rejection
+
+- **GIVEN** a gateway with anonymous browsing enabled
+- **WHEN** the identity endpoint is called with a credential that matches no profile entry
+- **THEN** the request is rejected as unauthenticated with a message stating that no profile entry
+  matches the credential
+- **AND** the request is NOT downgraded to an anonymous session
+
 ### Requirement: Console Anonymous Browsing
 
 The console gateway SHALL support an anonymous-browsing mode in which requests without a credential
@@ -95,6 +103,42 @@ on a mutating endpoint.
 - **WHEN** a request without a credential calls any endpoint subject to authentication
 - **THEN** the request is rejected as unauthenticated
 
+### Requirement: Console Invalid Credential Downgrade On Content
+
+A console content request presenting a credential that matches no access-profile entry SHALL be
+handled as a request carrying no credential: on a read endpoint it SHALL be admitted as the
+anonymous read-only principal when the anonymous-browsing mode is enabled, and it SHALL be
+rejected on a mutating endpoint regardless of that mode. Such a content response SHALL carry
+the credential-rejection header.
+
+#### Scenario: Invalid Credential Served As Guest On Content Reads
+
+- **GIVEN** the gateway running in anonymous-browsing mode
+- **WHEN** a request presenting a credential that matches no profile entry calls a content read
+  endpoint
+- **THEN** the request is processed as the anonymous read-only principal
+- **AND** the response carries the credential-rejection header
+
+#### Scenario: Invalid Credential Rejected On Mutations
+
+- **GIVEN** the gateway running in anonymous-browsing mode
+- **WHEN** a request presenting a credential that matches no profile entry calls a mutating endpoint
+- **THEN** the request is rejected as unauthenticated with a message stating that a token is required
+
+### Requirement: Console Identity Endpoint Is Strict
+
+The identity endpoint SHALL always reject a credential that matches no access-profile entry,
+even when anonymous browsing is enabled, so that an explicit login attempt reports its
+failure instead of resolving to a guest session.
+
+#### Scenario: Identity Endpoint Never Downgrades
+
+- **GIVEN** the gateway running in anonymous-browsing mode
+- **WHEN** a request presenting a credential that matches no profile entry calls the identity
+  endpoint
+- **THEN** the request is rejected as unauthenticated with a message stating that no profile entry
+  matches the credential
+
 ### Requirement: Anonymous Scope Independence
 
 The gateway's anonymous-browsing setting and each managed daemon's anonymous-reader setting SHALL be
@@ -111,13 +155,15 @@ not enable it on the other.
 
 ### Requirement: Instance Visibility Filtering
 
-The console gateway SHALL report only those managed instances the calling principal is allowed to
-reach, hiding instances that reject the gateway's credential, and SHALL recompute that set after a
-successful login so that instances become visible to a stronger credential.
+The console gateway SHALL report only those managed instances whose upstream probe succeeds,
+hiding instances that are unreachable or whose upstream rejects the gateway's own probe, and
+SHALL recompute that set after a successful login. A credential rejection encountered while
+fetching an instance's *content* SHALL NOT hide the instance; it SHALL be reported on that
+instance's dashboard instead (see "Dashboard Access Denial Reporting").
 
 #### Scenario: Inaccessible Instance Hidden
 
-- **GIVEN** a managed instance whose upstream rejects the gateway's credential
+- **GIVEN** a managed instance whose upstream probe fails
 - **WHEN** the instance list is requested
 - **THEN** that instance is absent from the returned list
 
@@ -126,6 +172,69 @@ successful login so that instances become visible to a stronger credential.
 - **GIVEN** an instance hidden from an anonymous caller
 - **WHEN** the same gateway is queried with a credential that is accepted upstream
 - **THEN** the instance is present in the returned list
+
+#### Scenario: Content Rejection Does Not Hide Instance
+
+- **GIVEN** a managed instance whose health probe succeeds but whose content endpoints reject
+  the caller's credential
+- **WHEN** the instance list is requested
+- **THEN** the instance is present in the returned list
+
+### Requirement: Upstream Credential Relay
+
+The console gateway SHALL authenticate each upstream request with the console caller's own
+credential when the caller is authenticated, and SHALL fall back to the configured per-instance
+service credential (`instances[].token` / `token_env` / `token_file`) when the caller is
+anonymous, so that a signed-in operator's upstream rights follow their own profile entry and
+the daemon's anonymous-reader setting continues to govern anonymous content reads through the
+console.
+
+#### Scenario: Authenticated Caller Credential Relayed
+
+- **GIVEN** a console session authenticated with a profile credential
+- **WHEN** the session reads an instance's dashboard
+- **THEN** the upstream request carries the caller's credential, not the service credential
+
+#### Scenario: Anonymous Caller Uses Service Credential
+
+- **GIVEN** an anonymous console session and a configured per-instance service credential
+- **WHEN** the session reads an instance's dashboard
+- **THEN** the upstream request carries the service credential
+
+#### Scenario: Anonymous Caller Without Service Credential Sends None
+
+- **GIVEN** an anonymous console session and no configured service credential
+- **WHEN** the session reads an instance's dashboard
+- **THEN** the upstream request carries no `Authorization` header
+
+### Requirement: Dashboard Access Denial Reporting
+
+When an instance's content fetch is rejected upstream with `401` or `403`, the console gateway
+SHALL return the dashboard with a structured access-denied state and an empty station list
+rather than a raw upstream error blob, and the web console SHALL render a permission notice in
+that instance's pane — stating that the current session lacks permission — instead of failing
+to render. The pane itself SHALL NOT carry its own login button; signing in remains the job of
+the top-bar login control.
+
+#### Scenario: Access Denial Reported Structurally
+
+- **GIVEN** an instance whose upstream rejects the caller's credential on the dashboard summary
+- **WHEN** the dashboard endpoint is called
+- **THEN** the response reports an access-denied status and an empty station array
+
+#### Scenario: Permission Notice Rendered
+
+- **GIVEN** a dashboard response carrying the access-denied state
+- **WHEN** the web console renders the instance pane
+- **THEN** the pane shows a permission notice naming the instance
+- **AND** the pane contains no login button; the top-bar login control remains the way to sign in
+- **AND** no unhandled client-side error occurs
+
+#### Scenario: Null Collections Never Crash The Pane
+
+- **GIVEN** any dashboard, tree, or info response whose collection field is `null` or absent
+- **WHEN** the web console renders it
+- **THEN** the pane renders without a client-side error
 
 ### Requirement: Console Login Flow
 
@@ -151,6 +260,13 @@ credential.
 - **WHEN** the identity response is received
 - **THEN** the console states that the credential was rejected and remains in the anonymous or
   previous session state
+
+#### Scenario: Rejected Login Dialog Is Dismissible
+
+- **GIVEN** a login submission that was rejected
+- **WHEN** the operator dismisses the login dialog
+- **THEN** the dialog closes
+- **AND** the console continues in its previous session state
 
 ### Requirement: Anonymous Console Session
 

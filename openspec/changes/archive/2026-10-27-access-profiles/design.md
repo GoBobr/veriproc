@@ -83,7 +83,7 @@ Deployment reality (from `e2e-vp/`): instances run as containers, share `/tcenas
 
 Both surfaces resolve anonymous access independently; neither implies the other. The gateway's anonymous reads still travel to each daemon *with the gateway's own service credential* (`ResolveInstanceToken`), so the console's anonymous mode does not depend on the daemon's anonymous-reader flag — it depends on the service credential the gateway holds.
 
-A *present but invalid* credential is never downgraded to anonymous (that would mask a typo'd token). Mutating requests without a credential are always rejected at both scopes, with a message naming the required roles.
+A *present but invalid* credential is treated exactly like no credential at all: it is downgraded to the anonymous principal, and the rejection is still reported to the caller (see D14). Mutating requests are never downgraded — a request with no credential, or with a credential that does not resolve, is rejected at both scopes, with a message naming the required roles.
 
 The anonymous principal uses the reserved subject `anonymous` and never carries a quota.
 
@@ -92,6 +92,81 @@ The anonymous principal uses the reserved subject `anonymous` and never carries 
 Injecting the anonymous principal in the middleware (rather than weakening the authenticator) keeps the rest of the stack unchanged: handlers, rate limiting, and audit all see a normal `Principal`. Confining anonymous access to read endpoints means the flag can never grant write capability, which is exactly the user's "view the state, never admin privileges".
 
 **Interaction with authentication-disabled mode.** Authentication-disabled remains only when no profile path and no env tokens are configured — that is today's "spec is empty" behaviour, a deliberate open-instance mode for sandboxes. The anonymous-reader flag is the *safe* alternative: read-only by construction.
+
+### D14 — An invalid credential is downgraded to guest, and the rejection is reported rather than swallowed
+
+**Decision.** When a request presents a credential that does not resolve to a profile entry, the
+daemon and the console gateway treat it the same way as a request with no credential at all:
+it is admitted as the anonymous principal on read endpoints when the respective anonymous flag
+is enabled, and rejected on mutating endpoints regardless of that flag. The downgrade is never
+silent — the response reports that the credential was rejected, so a caller can tell "you are
+guests" apart from "your token was accepted and you are this subject".
+
+- **Daemon (`/api/v1`)**: a rejected credential on a read endpoint is served as the anonymous
+  `reader` principal, and the response carries the header `X-VeriProc-Auth: credential-rejected`
+  alongside the request's outcome. On a mutating endpoint the request is rejected with `401`
+  and the existing `invalidCredentialMessage`.
+- **Console gateway (`/api/console/*`)**: the same downgrade applies to *content* reads when
+  anonymous browsing is enabled, and the response carries the header
+  `X-VeriProc-Auth: credential-rejected`. The **identity endpoint is the exception**: it
+  always rejects an unmatched credential with `401`, because it is the endpoint the browser
+  calls to *resolve* a login. Downgrading there would turn a failed sign-in into a silent
+  success, which is exactly the failure mode the user called out: "the wrong credential
+  should result in an error visible in console, and it should anyway not skip authentication
+  on wrong credentials — just display an error and allow closing the sign-in dialog".
+- **CLI**: a read command that was served as guest after a rejection prints a warning to
+  stderr naming the fact that the supplied credential was rejected; the exit code stays `0`
+  because the read did succeed and the caller asked only to look at the state. A mutating
+  command still exits `6`.
+
+**Rationale.** The user's requirement is that an instance configured for guest access must be
+usable as a guest *without* a valid token, and that "if token is wrong, consider user as a
+guest". Rejecting a mistyped token outright makes the guest mode fragile in exactly the
+situations it is meant to cover: a stale `VERIPROC_TOKEN` left in a shell profile, a token
+that was revoked, a token pasted with a trailing newline. In all of those cases the caller
+simply wants to *look at the state*, and the anonymous-reader flag already states that this
+is permitted — so denying the read adds no security while making the flag unreliable.
+
+The important property is that the downgrade is **bounded and reported**. It can never widen
+capability beyond what the anonymous flag already grants: the anonymous principal reads and
+cannot mutate, carries no quota entitlement beyond that of a guest, and is attributed to the
+reserved `anonymous` subject rather than to any named profile subject. So a rejected token
+buys the caller exactly what sending no token buys — no more. Reporting the rejection
+(`X-VeriProc-Auth` on the daemon and console content responses, a warning line in the CLI, a
+`401` with an explicit message in the console login flow) preserves the diagnostic that a
+strict 401 used to provide: the caller learns their credential is wrong instead of silently
+operating with reduced rights, and the audit trail still shows an anonymous principal rather
+than a named one.
+
+**Where the downgrade deliberately does NOT apply.** The console login flow is an *explicit*
+authentication attempt, not a content request. Answering it with a guest session would report
+success for a credential that was refused, and the operator would never learn that their token
+was revoked. The same argument applies to any future endpoint whose purpose is to resolve a
+credential. The split is therefore not "reads versus writes" but "content versus
+authentication": content degrades, authentication reports.
+
+**Alternative considered — keep rejecting unknown credentials with 401.** Rejected: it makes
+the guest mode conditional on holding a token that the deployment says is optional. A user
+with a stale token in their shell would have to discover the flag, unset it, and retry before
+they could read state the instance has already declared readable by anyone. The strict
+version also fails closed in the *wrong* direction: it blocks reads the deployment policy
+already permits.
+
+**Alternative considered — downgrade the credential to guest but keep returning 401.** Meaningless
+by construction: a 401 is a rejection, so the body could not carry the read the caller asked
+for.
+
+**Alternative considered — downgrade everywhere, including the console identity endpoint.**
+Rejected: the identity endpoint answers the question "is this credential good?". Returning a
+guest identity for a bad credential answers "no" with "yes, you are a guest", so the browser
+cannot tell the operator that their token is wrong. This was the first implementation of D14
+and it was corrected after the user pointed out that a wrong credential on the password
+protected dashboard must produce a visible error.
+
+**Consequence to document.** A revoked token is indistinguishable from a wrong token at the
+authentication boundary, so revocation behaves like a downgrade rather than a hard lockout.
+Hard lockout remains available by disabling the anonymous flag, which rejects every
+credential-less and every unmatched credential alike.
 
 ### D7 — The console authenticates against the same profile; its own token table becomes a cache, not an authority
 
@@ -113,13 +188,27 @@ Injecting the anonymous principal in the middleware (rather than weakening the a
 
 **Alternative considered — a `POST /api/console/login` that returns a session cookie.** Rejected: reintroduces cookie sessions and the CSRF requirement the console spec explicitly notes does not apply to token-based auth, for no benefit — the client already holds the token.
 
-### D10 — Instance visibility is derived from upstream probe results, recomputed on identity change
+### D10 — Instance visibility comes from the probe; content rejection surfaces as an access-denied pane
 
-**Decision.** The gateway records, per instance, whether the last upstream probe (health or stations listing) was rejected as 401/403. The instance list returns only instances the current principal may reach; instances rejected upstream are omitted for *everyone* (including operators), because the gateway itself cannot read them. On successful login, the gateway re-probes and re-filters.
+**Decision.** The gateway records, per instance, whether the last upstream *probe* (health) was rejected as 401/403 or failed to connect. The instance list omits instances whose probe fails, so the grid only contains instances the gateway can talk to at all. A credential rejection that happens on *content* (the dashboard summary, run lists, task detail) is deliberately **not** a hiding condition: it is reported on that instance's own dashboard as a structured `access_denied` state, and the frontend renders a permission pane in place of the station rows. On successful login the gateway re-probes, and the caller's own credential is relayed upstream (see D15), so the pane turns into data without a reload.
 
-**Rationale.** The gateway's ability to see an instance is determined by the daemon, not by the caller's token — a viewer and an operator may both be served by the same gateway credential. So "hide what the user cannot reach" degenerates to "hide what the gateway cannot reach", which is a property of the instance, not the user. The user's requirement ("instances not available for logged in / anonymous users are hidden") is satisfied in the common deployment where the console is pointed at instances for which it holds a credential; where the gateway holds a reader credential but a user holds an operator one, upstream operator-only *actions* remain unavailable to the gateway — a limitation to be documented, not hidden.
+**Rationale.** Hiding was the right instinct when the gateway held the only upstream credential: if the gateway could not read an instance, nobody could, so a card that always failed was noise. Once upstream calls carry the *caller's* credential (D15) that premise no longer holds — an instance that rejects an anonymous caller may well accept the same browser after login. Hiding it then hides the very signal the operator needs: that the instance exists and is readable with the right credential. The user's requirement is explicit — "show a warning the user has no permission to access that pane" — which presupposes the pane is *shown*, with a warning in it, rather than absent.
 
-**Consequence to document.** If the gateway's own credential is a `reader`, the console cannot perform operator actions (submit/pause/cancel) even for an operator user, because the upstream will reject the gateway's token. That is already true today. The design does not change it; it only makes the resulting invisible/limited state visible in the UI rather than as a silent error.
+The probe stays the hiding condition because it answers a different question: "is this instance configured and reachable". The daemon's health endpoint is auth-exempt, so the probe never rejects on credentials in practice; a network failure still removes the card, while a credential rejection leaves it in place to explain itself.
+
+**Consequence to document.** An instance whose content rejects the caller appears in the grid with a permission pane instead of disappearing. Operators who prefer hard hiding can still get it by pointing the console at instances it should never serve.
+
+### D15 — Upstream calls carry the caller's credential when there is one, else the service credential
+
+**Decision.** Every gateway→daemon request presents a bearer token chosen per call: if the console caller is authenticated, the caller's own credential is relayed upstream; if the caller is anonymous (or presented a credential that was rejected and downgraded to guest), the gateway's configured per-instance service credential (`instances[].token` / `token_env` / `token_file`) is used instead, and if no service credential is configured no `Authorization` header is sent at all. The relay token travels in the request context, so the `UpstreamClient` interface is unchanged and every existing call site picks it up automatically.
+
+**Rationale.** The gateway previously sent only its own service credential, which made the console's effective upstream rights a property of the deployment rather than of the logged-in user: with no service credential configured, *nobody* — not even an operator who holds a valid token — could read any instance, and logging in changed nothing. The user's model is the opposite: signing in should make the panes load, because the daemon then sees a credential the profile accepts. Relaying also keeps the two anonymous scopes honest (D6): the daemon's `allow_unauthenticated_readers=false` still blocks anonymous *content* reads through the console, exactly as it blocks direct anonymous API calls, while the console's own anonymous-browsing flag continues to govern only whether the browser may open the dashboard at all.
+
+**Alternative considered — always relay the caller's credential, never a service token.** Rejected: it would delete the documented anonymous-browsing path, where a deployment lets guests view state through the console using a machine credential, and it would break every existing configuration that relies on `instances[].token`.
+
+**Alternative considered — keep service-token-only and just fix the UI message.** Rejected: the warning would have to tell the operator that logging in cannot help, because the console would still be unable to read the instance for anyone. That is a configuration dead end, not a permission model.
+
+**Consequence to document.** The console's upstream rights are now the *caller's* rights when the caller is authenticated: a `reader` console session relays a `reader` credential, so operator-only upstream actions remain unavailable to it even if `instances[].token` is an operator token. The service credential remains the ceiling for anonymous browsing only.
 
 ### D11 — `veriproc users` is a local, file-gated profile editor
 
@@ -157,7 +246,8 @@ The `reader` refusal still has value: it catches the common mistake of an operat
 - **Every consumer polls the file** → 5 s stat of one small file is negligible; on NFS it is one metadata op.
 - **Filesystem permission is the admin boundary** → no remote revoke path; a compromised host account can grant itself access. Accepted trade-off for a minimal, dependency-free model; documented in `docs/docs/`.
 - **The `sha256:` digest form makes the file useless for "copy this token from the file" workflows** → intentional; the CLI prints the plaintext once at creation and that is the only copy.
-- **Anonymous readers widen the unauthenticated surface** → scoped to read endpoints only, and only when explicitly enabled per instance; an invalid token is never downgraded to anonymous (D6).
+- **Anonymous readers widen the unauthenticated surface** → scoped to read endpoints only, and only when explicitly enabled per instance; an invalid token is downgraded to the same anonymous scope and never widens it (D6, D14).
+- **Rejecting a credential downgrades rather than locks out** → the caller keeps read access but is told their credential was rejected (`X-VeriProc-Auth` header, `credential_rejected` in the console identity body, a CLI warning), and the request is still attributed to the reserved `anonymous` subject rather than to a named one. Disable the anonymous flags to get hard lockout (D14).
 - **Console gateway credential limits what all console users can do** → documented (D10); not worsened by this change.
 - **CORS `*` combined with `Authorization`** → pre-existing and out of scope for this change, but worth a follow-up; noted in the proposal's impact section as a known weakness, not addressed here because it would change console behaviour beyond access management.
 - **Two configuration vocabularies (`VERIPROC_AUTH_TOKENS` vs. profile path)** during migration → the profile path wins and the env var is ignored only when a profile is configured; the change is additive to the daemon CLI/config surface.

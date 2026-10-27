@@ -29,6 +29,25 @@ exit with the authentication exit code `6`, and MUST NOT echo any token value.
 - **WHEN** a CLI invocation without a token performs a read command
 - **THEN** the command succeeds without an authentication error
 
+### Requirement: CLI Guest Fallback Reporting
+
+When a CLI read command is served as a guest because the supplied credential was rejected by the
+server, the CLI SHALL report that the credential was rejected, SHALL NOT echo the credential value,
+and SHALL exit successfully, because the read itself succeeded.
+
+#### Scenario: Rejected Credential Reports Guest Fallback
+
+- **GIVEN** an instance configured to allow anonymous readers
+- **WHEN** a CLI read command presents a credential the server rejects
+- **THEN** the command completes successfully and prints a warning naming the rejected credential
+- **AND** the warning contains no credential value
+
+#### Scenario: Rejected Credential On Mutation Fails
+
+- **GIVEN** an instance configured to allow anonymous readers
+- **WHEN** a CLI mutating command presents a credential the server rejects
+- **THEN** the command fails with the authentication exit code `6`
+
 ### Requirement: Users Management Commands
 
 The CLI SHALL provide a `users` command group that lists, adds, and revokes entries of an access
