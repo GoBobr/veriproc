@@ -64,10 +64,15 @@ type SlurmSettings struct {
 }
 
 // ContainerConfig describes station-level container runtime settings.
+// Entrypoint optionally overrides the image ENTRYPOINT (a single docker
+// token, passed to `docker run --entrypoint`). Everything after the image —
+// the station executable and args — becomes the command, exactly like raw
+// docker. Needed for images whose ENTRYPOINT is the processor binary itself.
 type ContainerConfig struct {
-	Image  string   `yaml:"image,omitempty" json:"image,omitempty"`
-	Mounts []string `yaml:"mounts,omitempty" json:"mounts,omitempty"`
-	User   string   `yaml:"user,omitempty" json:"user,omitempty"`
+	Image      string   `yaml:"image,omitempty" json:"image,omitempty"`
+	Mounts     []string `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	User       string   `yaml:"user,omitempty" json:"user,omitempty"`
+	Entrypoint string   `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty"`
 }
 
 // IsZero reports whether the station declares no execution configuration.
@@ -75,7 +80,7 @@ func (e Execution) IsZero() bool {
 	return e.Mode == "" && e.Executable == "" && len(e.Args) == 0 &&
 		e.Resources.CPUsPerTask == 0 && e.Resources.MemGB == 0 && e.Resources.Walltime == "" &&
 		e.Slurm.Partition == "" && e.Slurm.Account == "" && e.Slurm.QOS == "" && len(e.Slurm.ExtraArgs) == 0 &&
-		e.Container.Image == "" && len(e.Container.Mounts) == 0 && e.Container.User == ""
+		e.Container.Image == "" && len(e.Container.Mounts) == 0 && e.Container.User == "" && e.Container.Entrypoint == ""
 }
 
 // JobOrderConfig holds the station's joborder rendering configuration.
@@ -146,13 +151,18 @@ type InputFilter struct {
 }
 
 type InputDefinition struct {
-	FileType        string        `yaml:"file_type" json:"file_type"`
-	Category        string        `yaml:"category" json:"category"`
-	ObjectKind      string        `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
-	Pattern         string        `yaml:"pattern,omitempty" json:"pattern,omitempty"`
-	FilenamePattern string        `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
-	WindowMatch     string        `yaml:"window_match,omitempty" json:"window_match,omitempty"`
-	Margins         []int         `yaml:"margins,omitempty" json:"margins,omitempty"`
+	FileType        string `yaml:"file_type" json:"file_type"`
+	Category        string `yaml:"category" json:"category"`
+	ObjectKind      string `yaml:"object_kind,omitempty" json:"object_kind,omitempty"`
+	Pattern         string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	FilenamePattern string `yaml:"filename_pattern,omitempty" json:"filename_pattern,omitempty"`
+	WindowMatch     string `yaml:"window_match,omitempty" json:"window_match,omitempty"`
+	Margins         []int  `yaml:"margins,omitempty" json:"margins,omitempty"`
+	// Source selects where the input's file list comes from.
+	// "rolling" (default): classical window matching over category folders.
+	// "upstream": the file list is taken from the task's task-out declared
+	// inputs payload instead of scanning folders.
+	Source string `yaml:"source,omitempty" json:"source,omitempty"`
 	// Mandatory is a pointer so the loader can distinguish an explicit
 	// "mandatory: false" (non-blocking input) from an omitted field. It is
 	// normalized into Optional at load time; the matcher reads Optional only.
@@ -405,6 +415,7 @@ func normalizeDefinition(def Definition) Definition {
 	def.Execution.Slurm.QOS = strings.TrimSpace(def.Execution.Slurm.QOS)
 	def.Execution.Container.Image = strings.TrimSpace(def.Execution.Container.Image)
 	def.Execution.Container.User = strings.TrimSpace(def.Execution.Container.User)
+	def.Execution.Container.Entrypoint = strings.TrimSpace(def.Execution.Container.Entrypoint)
 	for i := range def.Execution.Slurm.ExtraArgs {
 		def.Execution.Slurm.ExtraArgs[i] = strings.TrimSpace(def.Execution.Slurm.ExtraArgs[i])
 	}
@@ -440,6 +451,10 @@ func normalizeDefinition(def Definition) Definition {
 		def.Inputs[i].Category = strings.TrimSpace(def.Inputs[i].Category)
 		def.Inputs[i].ObjectKind = strings.TrimSpace(strings.ToLower(def.Inputs[i].ObjectKind))
 		def.Inputs[i].Pattern = strings.TrimSpace(def.Inputs[i].Pattern)
+		def.Inputs[i].Source = strings.TrimSpace(strings.ToLower(def.Inputs[i].Source))
+		if def.Inputs[i].Source == "" {
+			def.Inputs[i].Source = "rolling"
+		}
 		// An explicit "mandatory" setting is authoritative and drives the
 		// canonical Optional flag the matcher reads: mandatory:true => not
 		// optional; mandatory:false => optional. When omitted, Optional keeps
@@ -519,6 +534,14 @@ func validateDefinition(def Definition) error {
 			return errors.New("execution.container.mounts must not contain empty entries")
 		}
 	}
+	// The entrypoint must be a single non-empty docker token; a list form
+	// (extra arguments after the binary) is rejected — compose across fields
+	// (entrypoint + executable + args) instead, like raw docker.
+	if def.Execution.Container.Entrypoint != "" {
+		if strings.ContainsAny(def.Execution.Container.Entrypoint, " \t\n") {
+			return errors.New("execution.container.entrypoint must be a single token; put arguments in execution.executable/args")
+		}
+	}
 	// Validate joborder section.
 	switch def.JobOrder.Renderer {
 	case "default", "template":
@@ -580,11 +603,39 @@ func validateDefinition(def Definition) error {
 		if input.FileType == "" {
 			return errors.New("input file_type must not be empty")
 		}
-		if input.Category == "" {
+		// Category only selects the folders scanned for window matching;
+		// upstream-declared inputs get their file list from the creating
+		// task and never scan folders, so category is optional for them.
+		if input.Category == "" && input.Source != "upstream" {
 			return fmt.Errorf("input %s category must not be empty", input.FileType)
 		}
 		if !validObjectKind(input.ObjectKind) {
 			return fmt.Errorf("input %s object_kind must be regular_file or directory", input.FileType)
+		}
+		switch input.Source {
+		case "", "rolling", "upstream":
+			// valid
+		default:
+			return fmt.Errorf("input %s source %q invalid; must be rolling or upstream", input.FileType, input.Source)
+		}
+		if input.Source == "upstream" {
+			if cat := def.RollingFolders[input.Category]; len(cat) > 0 {
+				return fmt.Errorf("input %s source upstream must not have a rolling_folders override for category %s (meaningless for upstream-declared file lists)", input.FileType, input.Category)
+			}
+		}
+		if input.Source == "upstream" {
+			if input.Optional {
+				return fmt.Errorf("input %s source upstream must be mandatory (optional/mandatory:false is not supported)", input.FileType)
+			}
+			if input.WindowMatch != "" {
+				return fmt.Errorf("input %s source upstream must not set window_match (meaningless for upstream-declared file lists)", input.FileType)
+			}
+			if input.Pattern != "" {
+				return fmt.Errorf("input %s source upstream must not set pattern (meaningless for upstream-declared file lists)", input.FileType)
+			}
+			if input.FilenamePattern != "" {
+				return fmt.Errorf("input %s source upstream must not set filename_pattern (meaningless for upstream-declared file lists)", input.FileType)
+			}
 		}
 		for fi, f := range input.Filters {
 			if err := validateInputFilter(input.FileType, fi, f); err != nil {
@@ -710,4 +761,3 @@ func validateInputFilter(fileType string, idx int, f InputFilter) error {
 	}
 	return nil
 }
-

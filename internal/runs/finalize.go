@@ -1163,8 +1163,8 @@ func cleanPublicationSubpath(subpath string) (string, error) {
 }
 
 type downstreamPlan struct {
-	Tasks            []*store.TaskRecord
-	JoinTaskIDs      []string
+	Tasks       []*store.TaskRecord
+	JoinTaskIDs []string
 	// JoinExpected maps each join task ID to the number of upstream producers
 	// that must arrive before the task is released to the dispatcher.
 	JoinExpected     map[string]int
@@ -1198,11 +1198,23 @@ type taskOutSplitGroupYAML struct {
 }
 
 type taskOutDownstreamYAML struct {
-	Key          string        `yaml:"key"`
-	StationID    string        `yaml:"station_id"`
-	Window       taskOutWindow `yaml:"window"`
-	SplitGroupID string        `yaml:"split_group_id"`
-	Role         string        `yaml:"role"`
+	Key          string             `yaml:"key"`
+	StationID    string             `yaml:"station_id"`
+	Window       taskOutWindow      `yaml:"window"`
+	SplitGroupID string             `yaml:"split_group_id"`
+	Role         string             `yaml:"role"`
+	Inputs       []taskOutInputYAML `yaml:"inputs"`
+}
+
+// taskOutInputYAML is one declared input handed to the downstream task:
+// the upstream station names one of the target station's declared input
+// file types and the concrete file list that feeds it. The payload is
+// validated at task-out read time (files exist, file_type declared) and
+// persisted with the created task; input resolution for inputs declared
+// `source: upstream` consumes it instead of scanning category folders.
+type taskOutInputYAML struct {
+	FileType string   `yaml:"file_type" json:"file_type"`
+	Files    []string `yaml:"files" json:"files"`
 }
 
 type taskOutWindow struct {
@@ -1460,18 +1472,29 @@ func (s *Service) buildTaskOutDownstreamTasks(ctx context.Context, run *store.Ru
 			}
 			groupMemberCounts[entry.SplitGroupID]++
 		}
+		resolved, err := s.resolver.Resolve(ctx, entry.StationID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve task-out downstream %s: %w", entry.StationID, err)
+		}
+		declaredInputs, err := s.validateTaskOutInputs(idx, entry, resolved)
+		if err != nil {
+			return nil, nil, err
+		}
 		dupKey := entry.StationID + "|" + start.Format(time.RFC3339Nano) + "|" + end.Format(time.RFC3339Nano) + "|" + entry.SplitGroupID + "|" + entry.Key
+		if len(declaredInputs) > 0 {
+			dupKey += "|" + string(declaredInputs)
+		}
 		if seen[dupKey] {
 			return nil, nil, fmt.Errorf("task-out.yaml duplicate downstream entry %q", dupKey)
 		}
 		seen[dupKey] = true
 
-		resolved, err := s.resolver.Resolve(ctx, entry.StationID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve task-out downstream %s: %w", entry.StationID, err)
-		}
 		created := baseCreated.Add(time.Duration(idx) * time.Microsecond)
-		hashSeed := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%s|%s", parent.TaskID, entry.Key, resolved.StationID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))))
+		hashMaterial := fmt.Sprintf("%s|%s|%s|%s|%s", parent.TaskID, entry.Key, resolved.StationID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
+		if len(declaredInputs) > 0 {
+			hashMaterial += "|" + string(declaredInputs)
+		}
+		hashSeed := sha256.Sum256([]byte(hashMaterial))
 		hex6 := hex.EncodeToString(hashSeed[:3])
 		taskIDTimestamp := created
 		if s.naming.TaskIDTimestamp == policy.TaskIDTimestampStart {
@@ -1506,6 +1529,7 @@ func (s *Service) buildTaskOutDownstreamTasks(ctx context.Context, run *store.Ru
 			SplitGroupID:         entry.SplitGroupID,
 			RoutingContent:       raw,
 			RoutingContentHash:   hex.EncodeToString(sum[:]),
+			DeclaredInputs:       declaredInputs,
 			SubmissionOrigin:     "backend",
 			State:                "accepted",
 			CreatedAt:            created,
@@ -1527,6 +1551,61 @@ func (s *Service) buildTaskOutDownstreamTasks(ctx context.Context, run *store.Ru
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].GroupID < groups[j].GroupID })
 	return children, groups, nil
+}
+
+// validateTaskOutInputs validates the entry's declared inputs payload
+// against the target station's declared input file types and the filesystem,
+// and returns the canonical JSON payload to persist on the created task (nil
+// when the entry declares no inputs). Every listed file must exist at
+// task-out read time; file_type must be an input of the target station.
+func (s *Service) validateTaskOutInputs(idx int, entry taskOutDownstreamYAML, resolved *store.StationRevisionRecord) (json.RawMessage, error) {
+	if len(entry.Inputs) == 0 {
+		return nil, nil
+	}
+	declared := map[string]bool{}
+	if resolved.DeclaredInputs != "" {
+		var inputs []stations.InputDefinition
+		if err := json.Unmarshal([]byte(resolved.DeclaredInputs), &inputs); err != nil {
+			return nil, fmt.Errorf("parse declared inputs of task-out downstream %s: %w", entry.StationID, err)
+		}
+		for _, in := range inputs {
+			declared[in.FileType] = true
+		}
+	}
+	payload := make([]taskOutInputYAML, 0, len(entry.Inputs))
+	for ii, in := range entry.Inputs {
+		in.FileType = strings.TrimSpace(in.FileType)
+		if in.FileType == "" {
+			return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] missing file_type", idx, ii)
+		}
+		if !declared[in.FileType] {
+			return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] file_type %q is not declared as an input of station %s", idx, ii, in.FileType, entry.StationID)
+		}
+		if len(in.Files) == 0 {
+			return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] (%s) must list at least one file", idx, ii, in.FileType)
+		}
+		files := make([]string, 0, len(in.Files))
+		for fi, f := range in.Files {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] (%s) files[%d] must not be empty", idx, ii, in.FileType, fi)
+			}
+			info, err := os.Stat(f)
+			if err != nil {
+				return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] (%s) file %q: %w", idx, ii, in.FileType, f, err)
+			}
+			if info.IsDir() {
+				return nil, fmt.Errorf("task-out.yaml downstream[%d] inputs[%d] (%s) file %q must be a regular file", idx, ii, in.FileType, f)
+			}
+			files = append(files, f)
+		}
+		payload = append(payload, taskOutInputYAML{FileType: in.FileType, Files: files})
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func parseTaskOutTime(value string) (time.Time, error) {

@@ -27,9 +27,14 @@ type TaskRecord struct {
 	ClientMetadata      json.RawMessage
 	RoutingContent      json.RawMessage
 	RoutingContentHash  string
-	SubmissionOrigin    string // "client" | "backend"
-	State               string
-	FailureSummary      string
+	// DeclaredInputs is the upstream-declared input payload carried by tasks
+	// created from task-out.yaml `inputs:` entries: a JSON array of
+	// {file_type, files}. Consumed by manifest resolution for inputs declared
+	// `source: upstream`. Nil for regular tasks.
+	DeclaredInputs   json.RawMessage
+	SubmissionOrigin string // "client" | "backend"
+	State            string
+	FailureSummary   string
 	// LatestRetryIndex is the retry_index of the most recent run for this
 	// task; nil until a run has been prepared.
 	LatestRetryIndex sql.NullInt64
@@ -79,17 +84,18 @@ func (r *TaskRepo) Insert(ctx context.Context, t *TaskRecord) error {
 			parent_task_id, parent_run_retry_index, split_group_id,
 			priority, client_metadata,
 			routing_content, routing_content_hash,
+			declared_inputs,
 			submission_origin, state,
 			failure_summary, latest_retry_index, canonical_retry_index,
 			idempotency_record_id, created_at, completed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.TaskID, t.SchemaVersion,
 		t.DestinationStationID,
 		t.WindowStart.UTC(), t.WindowEnd.UTC(),
 		boolInt(t.Force),
 		nullStr(t.ParentTaskID), nullableInt(t.ParentRunRetryIndex), nullStr(t.SplitGroupID),
 		nullStr(t.Priority), nullJSON(t.ClientMetadata),
-		string(t.RoutingContent), t.RoutingContentHash,
+		string(t.RoutingContent), t.RoutingContentHash, nullJSON(t.DeclaredInputs),
 		t.SubmissionOrigin, t.State,
 		nullStr(t.FailureSummary), nullableInt(t.LatestRetryIndex), nullableInt(t.CanonicalRetryIndex),
 		nullStr(t.IdempotencyRecordID), t.CreatedAt.UTC(), nullTime(t.CompletedAt),
@@ -348,6 +354,7 @@ const taskSelectColumns = `SELECT
 	COALESCE(priority, ''),
 	COALESCE(client_metadata, ''),
 	routing_content, routing_content_hash,
+	COALESCE(declared_inputs, ''),
 	submission_origin, state,
 	COALESCE(failure_summary, ''),
 	latest_retry_index,
@@ -367,6 +374,7 @@ func scanTask(s rowScanner) (*TaskRecord, error) {
 		force    int
 		clientMd string
 		routing  string
+		declared string
 	)
 	if err := s.Scan(
 		&t.TaskID, &t.SchemaVersion,
@@ -376,6 +384,7 @@ func scanTask(s rowScanner) (*TaskRecord, error) {
 		&t.ParentTaskID, &t.ParentRunRetryIndex, &t.SplitGroupID,
 		&t.Priority, &clientMd,
 		&routing, &t.RoutingContentHash,
+		&declared,
 		&t.SubmissionOrigin, &t.State,
 		&t.FailureSummary, &t.LatestRetryIndex, &t.CanonicalRetryIndex,
 		&t.IdempotencyRecordID,
@@ -393,6 +402,9 @@ func scanTask(s rowScanner) (*TaskRecord, error) {
 	}
 	if routing != "" {
 		t.RoutingContent = json.RawMessage(routing)
+	}
+	if declared != "" {
+		t.DeclaredInputs = json.RawMessage(declared)
 	}
 	return &t, nil
 }

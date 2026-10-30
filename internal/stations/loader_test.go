@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gobobr/veriproc/internal/stations"
@@ -117,6 +118,29 @@ func TestLoader_NormalizesInputMandatoryToOptional(t *testing.T) {
 		if got := spec.Inputs[i].Optional; got != w {
 			t.Errorf("input %q: Optional = %v, want %v", spec.Inputs[i].FileType, got, w)
 		}
+	}
+}
+
+func TestLoader_UpstreamInputCategoryOptional(t *testing.T) {
+	def := stations.Definition{
+		StationID:   "STATION-A",
+		StationName: "SCE_2",
+		Execution:   stations.Execution{Executable: "./scripts/run.sh"},
+		Inputs: []stations.InputDefinition{
+			// upstream input without category: file list comes from the
+			// creating task, no folder scan => category is meaningless.
+			{FileType: "AX_LIST", Source: "upstream", ObjectKind: "regular_file"},
+		},
+	}
+	if _, err := stations.SpecFromDefinition(def); err != nil {
+		t.Fatalf("SpecFromDefinition (upstream, no category): %v", err)
+	}
+
+	// rolling input still requires a category.
+	roll := def
+	roll.Inputs = []stations.InputDefinition{{FileType: "AX_ROLL", Source: "rolling", ObjectKind: "regular_file"}}
+	if _, err := stations.SpecFromDefinition(roll); err == nil {
+		t.Fatal("expected error for rolling input without category")
 	}
 }
 
@@ -320,6 +344,58 @@ execution:
 	if exec.Container.Image == "" || exec.Container.User != "host" || len(exec.Container.Mounts) != 1 {
 		t.Fatalf("container = %+v", exec.Container)
 	}
+}
+
+func TestLoader_ContainerEntrypoint(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
+		root := t.TempDir()
+		writeStation(t, root, "s", `station_id: EP-OK
+station_name: Entrypoint OK
+execution:
+  mode: slurm-docker
+  executable: /work/run.sh
+  container:
+    image: registry.example.test/ipf:latest
+    entrypoint: /bin/sh
+`)
+		specs, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
+		if err != nil {
+			t.Fatalf("LoadDir: %v", err)
+		}
+		if got := specs[0].Execution.Container.Entrypoint; got != "/bin/sh" {
+			t.Fatalf("container.entrypoint = %q, want /bin/sh", got)
+		}
+	})
+	t.Run("empty rejected", func(t *testing.T) {
+		root := t.TempDir()
+		writeStation(t, root, "s", `station_id: EP-EMPTY
+station_name: Entrypoint Empty
+execution:
+  mode: slurm-docker
+  container:
+    image: registry.example.test/ipf:latest
+    entrypoint: ""
+`)
+		_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
+		if err != nil {
+			t.Fatalf("LoadDir: unexpected error for empty entrypoint (trimmed to unset): %v", err)
+		}
+	})
+	t.Run("multi-token rejected", func(t *testing.T) {
+		root := t.TempDir()
+		writeStation(t, root, "s", `station_id: EP-MULTI
+station_name: Entrypoint Multi
+execution:
+  mode: slurm-docker
+  container:
+    image: registry.example.test/ipf:latest
+    entrypoint: /bin/sh -c
+`)
+		_, err := stations.LoadDir(context.Background(), root, stations.NewRegistry(), nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "execution.container.entrypoint") {
+			t.Fatalf("err = %v, want entrypoint single-token validation error", err)
+		}
+	})
 }
 
 func TestLoader_SlurmDockerRequiresImage(t *testing.T) {

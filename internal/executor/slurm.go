@@ -219,6 +219,7 @@ func (e *SlurmExecutor) effective(desc JobDescription) (effectiveSlurm, error) {
 	slurm.ExtraArgs = append(slurm.ExtraArgs, desc.Slurm.ExtraArgs...)
 	container := ContainerConfig{Mounts: append([]string(nil), e.cfg.Docker.DefaultMounts...), User: e.cfg.Docker.User}
 	container.Image = desc.Container.Image
+	container.Entrypoint = desc.Container.Entrypoint
 	if len(desc.Container.Mounts) > 0 {
 		container.Mounts = append(container.Mounts, desc.Container.Mounts...)
 	}
@@ -349,6 +350,9 @@ func renderWrapper(desc JobDescription, effective effectiveSlurm) string {
 		}
 		for _, env := range runtimeEnv(desc) {
 			b.WriteString("  -e " + shellQuote(env[0]+"="+env[1]) + " \\\n")
+		}
+		if effective.Container.Entrypoint != "" {
+			b.WriteString("  --entrypoint " + shellQuote(effective.Container.Entrypoint) + " \\\n")
 		}
 		b.WriteString("  " + shellQuote(effective.Container.Image) + " \\\n")
 		b.WriteString("  " + shellQuote(desc.Executable) + " \"${ARGS[@]}\" >> \"$WORKDIR/logs/run_out.log\" 2>> \"$WORKDIR/logs/run_err.log\" &\n")
