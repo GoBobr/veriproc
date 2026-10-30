@@ -32,6 +32,7 @@ export interface InstancesResponse {
     card_min_width_px: number;
     card_max_width_px: number;
     station_runs_page_size: number;
+    page_title: string;
   };
 }
 

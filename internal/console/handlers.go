@@ -109,6 +109,7 @@ func (g *Gateway) handleListInstances(w http.ResponseWriter, r *http.Request) {
 			"card_min_width_px":       g.cfg.UI.CardMinWidth,
 			"card_max_width_px":       g.cfg.UI.CardMaxWidth,
 			"station_runs_page_size":  g.cfg.UI.StationRunsPageSize,
+			"page_title":              g.cfg.UI.PageTitle,
 		},
 	})
 }

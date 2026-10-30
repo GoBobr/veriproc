@@ -182,6 +182,7 @@ func newTestGateway(t *testing.T, fake *fakeUpstream) (*Gateway, *DB) {
 			UpstreamSummaryTimeout: 30 * time.Second,
 			PreviewMaxBytes:        1024,
 			StationRunsPageSize:    50,
+			PageTitle:              "VeriProc Operator Console",
 		},
 		Instances: []InstanceConfig{{
 			ID: "vp1", Title: "VP1", BaseURL: "http://upstream",
@@ -604,6 +605,33 @@ func TestRouter_StationRunsPageSizeInUIConfig(t *testing.T) {
 	}
 	if ps, _ := ui["station_runs_page_size"].(float64); ps != 50 {
 		t.Errorf("expected station_runs_page_size=50, got %v", ui["station_runs_page_size"])
+	}
+	if pt, _ := ui["page_title"].(string); pt != "VeriProc Operator Console" {
+		t.Errorf("expected default page_title, got %v", ui["page_title"])
+	}
+}
+
+// TestRouter_PageTitleInUIConfig — the effective ui.page_title (configured
+// or default) is served in the instances response's ui object.
+func TestRouter_PageTitleInUIConfig(t *testing.T) {
+	gw, _ := newTestGateway(t, &fakeUpstream{})
+	gw.cfg.UI.PageTitle = "ADPP Processing Console"
+	rt := gw.Router(nil)
+	rr := httptest.NewRecorder()
+	rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances", "viewertok", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("instances = %d", rr.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	ui, ok := resp["ui"].(map[string]any)
+	if !ok {
+		t.Fatal("missing ui in response")
+	}
+	if pt, _ := ui["page_title"].(string); pt != "ADPP Processing Console" {
+		t.Errorf("expected configured page_title, got %v", ui["page_title"])
 	}
 }
 

@@ -53,6 +53,7 @@ ui:
   upstream_summary_timeout: 30s   # timeout fetching an instance summary
   preview_max_bytes: 1048576      # max bytes served by file preview
   station_runs_page_size: 50      # default page size for station activity view
+  page_title: VeriProc Operator Console  # top-bar heading and browser tab title
 
 db:
   dsn: file:sandbox-console/console.db   # console-scoped SQLite (schema auto-created)
@@ -99,6 +100,7 @@ instances:
 | `ui` | `upstream_summary_timeout` | Per-instance summary fetch timeout. |
 | `ui` | `preview_max_bytes` | Maximum file-preview size. |
 | `ui` | `station_runs_page_size` | Default page size for the station activity view's run table (default: 50). |
+| `ui` | `page_title` | Console top-bar heading and browser tab title (default: `VeriProc Operator Console`). |
 | `db` | `dsn` | Console SQLite location (`file:<path>`). |
 | `auth.profile_path` | — | Shared access-profile file; when set it replaces `auth.tokens` as the credential source. |
 | `auth.allow_anonymous_browsing` | — | Admit credential-less reads of the console API as a read-only session. Independent of the daemons' `allow_unauthenticated_readers`. |

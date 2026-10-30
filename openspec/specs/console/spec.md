@@ -285,7 +285,8 @@ directory, session settings, and audit-retention settings.
 **Additional normative rules for this requirement:**
 
 - dashboard defaults MUST include visible slot count, completed-run visibility timeout, refresh interval,
-  and station activity page size
+  station activity page size, and the console page title (browser tab title and top-bar heading,
+  default `VeriProc Operator Console`, configurable via the `ui.page_title` key)
 
 ### Requirement: Console SQLite Data Model
 
@@ -1011,3 +1012,34 @@ entries, so that access management remains a local, out-of-band operation.
 - **GIVEN** an operator-authenticated request to any console mutating endpoint
 - **WHEN** the request completes
 - **THEN** the access profile file is unchanged on disk
+
+### Requirement: Console Page Title
+
+The console webapp SHALL display a configurable page title as its top-bar heading and browser tab
+title, sourced from the gateway configuration.
+
+#### Scenario: Configured page title
+
+- **GIVEN** gateway configuration with `ui.page_title` set
+- **WHEN** an authenticated or anonymous-browsing user opens the console
+- **THEN** the top-bar heading and the browser tab title render the configured value
+
+#### Scenario: Default page title
+
+- **GIVEN** gateway configuration without `ui.page_title`
+- **WHEN** the configuration is loaded
+- **THEN** the effective page title MUST be `VeriProc Operator Console`
+
+#### Scenario: Page title served with instance list
+
+- **GIVEN** the console gateway
+- **WHEN** the frontend requests `GET /api/console/instances`
+- **THEN** the response's `ui` object MUST include the effective `page_title` as a string
+
+#### Scenario: Fallback before load
+
+- **GIVEN** the webapp before the instance list has loaded or when the request is unavailable
+  (e.g. the login screen of a gateway without anonymous browsing)
+- **WHEN** the top bar and tab title are rendered
+- **THEN** they display the built-in default `VeriProc Operator Console` until a `page_title`
+  value is available

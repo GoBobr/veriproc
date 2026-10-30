@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { useAuth } from "./state/auth";
 import { useRoute } from "./state/router";
+import { useFetch } from "./state/poll";
 import { Login } from "./pages/Login";
 import { DashboardPage } from "./pages/DashboardPage";
 import { TaskPage } from "./pages/TaskPage";
@@ -22,7 +23,7 @@ function applyTheme(t: Theme) {
 }
 
 export function App() {
-  const { session, ready, logout } = useAuth();
+  const { session, ready, logout, client } = useAuth();
   const route = useRoute();
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [showInfo, setShowInfo] = useState(false);
@@ -50,6 +51,15 @@ export function App() {
   //    was closed; without it the console has nothing to show, so a
   //    "sign-in required" placeholder stands in for it.
   const [loginDismissed, setLoginDismissed] = useState(false);
+
+  // Console title from the gateway's ui config (falls back to the built-in
+  // default before the instance list loads, e.g. on the login screen).
+  const instancesQ = useFetch(() => client.instances(), [session?.token]);
+  const pageTitle = instancesQ.data?.ui?.page_title || "Veriproc Operator Console";
+
+  useEffect(() => {
+    document.title = pageTitle;
+  }, [pageTitle]);
   const blockingLoginOpen = showLoginScreen && !loginDismissed;
   const upgradeLoginOpen = showDashboard && !!session?.anonymous && showLogin;
   const loginOpen = blockingLoginOpen || upgradeLoginOpen;
@@ -67,7 +77,7 @@ export function App() {
       <header class="topbar">
         <h1>
           <a href="#/" style={{ color: "inherit", textDecoration: "none" }}>
-            Veriproc Operator Console
+            {pageTitle}
           </a>
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>

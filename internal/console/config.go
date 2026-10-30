@@ -90,6 +90,9 @@ type UIConfig struct {
 	// StationRunsPageSize is the default page size for the station activity
 	// view's run table. Defaults to 50 when not configured.
 	StationRunsPageSize int `yaml:"station_runs_page_size"`
+	// PageTitle is the browser tab title and the top-bar heading shown by
+	// the web console. Defaults to "VeriProc Operator Console".
+	PageTitle string `yaml:"page_title"`
 }
 
 // DBConfig is the console-local persistence handle.
@@ -207,6 +210,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.UI.StationRunsPageSize == 0 {
 		c.UI.StationRunsPageSize = 50
+	}
+	if c.UI.PageTitle == "" {
+		c.UI.PageTitle = "VeriProc Operator Console"
 	}
 }
 

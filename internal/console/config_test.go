@@ -42,6 +42,9 @@ instances:
 	if cfg.UI.CardMaxWidth != 520 {
 		t.Errorf("card_max_width_px default = %d, want 520", cfg.UI.CardMaxWidth)
 	}
+	if cfg.UI.PageTitle != "VeriProc Operator Console" {
+		t.Errorf("page_title default = %q, want %q", cfg.UI.PageTitle, "VeriProc Operator Console")
+	}
 	if len(cfg.Instances[0].AllowedRoots) != 1 {
 		t.Errorf("allowed_roots should default from working_root_base")
 	}
@@ -64,6 +67,29 @@ instances:
 	}
 	if _, err := LoadConfig(p); err != nil {
 		t.Errorf("expected no error with completed_visibility_timeout > upstream_summary_timeout, got: %v", err)
+	}
+}
+
+func TestLoadConfig_PageTitleOverride(t *testing.T) {
+	dir := t.TempDir()
+	body := `schema_version: veriproc.console/v1
+ui:
+  page_title: ADPP Processing Console
+instances:
+  - id: vp1
+    base_url: http://localhost:8080
+    working_root_base: ` + dir + `
+`
+	p := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UI.PageTitle != "ADPP Processing Console" {
+		t.Errorf("page_title = %q, want override", cfg.UI.PageTitle)
 	}
 }
 
