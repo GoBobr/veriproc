@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/gobobr/veriproc/internal/store"
@@ -49,12 +50,12 @@ type JoinCounter interface {
 
 // Spec describes one station the registry will serve.
 type Spec struct {
-	StationID     string
-	StationName   string
-	Description   string
-	ContentHash   string
-	SchemaVersion string
-	Execution     Execution
+	StationID      string
+	StationName    string
+	Description    string
+	ContentHash    string
+	SchemaVersion  string
+	Execution      Execution
 	JobOrder       JobOrderConfig
 	Inputs         []InputDefinition
 	Outputs        []OutputDefinition
@@ -164,6 +165,12 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 			if err := s.Stations().Upsert(ctx, rec); err != nil {
 				return fmt.Errorf("seed station %s: %w", sp.StationID, err)
 			}
+			// A live station folder (re)appearing on disk revives the
+			// station: clear any retirement marker left by a previous
+			// station remove so listings show it again.
+			if err := s.Stations().UnretireStation(ctx, sp.StationID); err != nil {
+				return fmt.Errorf("unretire station %s: %w", sp.StationID, err)
+			}
 		}
 		r.mu.Lock()
 		r.byID[sp.StationID] = rec
@@ -172,6 +179,20 @@ func (r *Registry) Seed(ctx context.Context, s *store.Store, specs ...Spec) erro
 		r.mu.Unlock()
 	}
 	return nil
+}
+
+// StationIDs returns the station_ids currently registered (i.e. loaded
+// from station config folders at startup). Used to detect store rows
+// without a config folder.
+func (r *Registry) StationIDs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.byID))
+	for id := range r.byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // Resolve implements Resolver.

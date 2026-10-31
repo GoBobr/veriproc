@@ -95,6 +95,7 @@ func (s *Store) PurgeRun(ctx context.Context, runID string, cascade bool) (*Purg
 //   - cascade=false: only the explicitly listed tasks are deleted; descendants
 //     are orphaned (parent_task_id NULL); nullable FK references are set to NULL;
 //     NOT NULL constrained rows are deleted.
+//
 // Idempotency records are kept with task_id left as the original value (task no
 // longer references them). Unknown task IDs are silently ignored.
 func (s *Store) PurgeTasks(ctx context.Context, taskIDs []string, cascade bool) (*PurgeResult, error) {
@@ -387,6 +388,26 @@ func (r *TaskRepo) IDsForCleanup(ctx context.Context, before, after time.Time, b
 	}
 	rows, err := r.q.QueryContext(ctx,
 		`SELECT task_id FROM tasks WHERE `+strings.Join(conds, " AND ")+` ORDER BY `+orderCol, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// TaskIDsForStation returns every task destined for stationID,
+// regardless of timestamps. Used by station retirement purge.
+func (r *TaskRepo) TaskIDsForStation(ctx context.Context, stationID string) ([]string, error) {
+	rows, err := r.q.QueryContext(ctx,
+		`SELECT task_id FROM tasks WHERE destination_station_id = ? ORDER BY created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}

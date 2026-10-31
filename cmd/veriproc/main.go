@@ -1602,11 +1602,92 @@ func (c *client) cmdStation(sub string, args []string) int {
 		c.renderResource(raw, m, []string{"station_id", "station_name", "paused", "running_count", "queued_count"})
 		return ExitOK
 
+	case "remove":
+		fs := flag.NewFlagSet("station remove", flag.ContinueOnError)
+		fs.SetOutput(c.stderr)
+		purge := fs.Bool("purge", false, "delete the station's tasks, runs, and working roots before retiring")
+		if err := fs.Parse(args); err != nil {
+			return ExitUsage
+		}
+		rest := fs.Args()
+		if len(rest) < 1 {
+			fmt.Fprintln(c.stderr, "veriproc station remove [--purge] STATION_ID")
+			return ExitUsage
+		}
+		path := "/api/v1/stations/" + rest[0]
+		if *purge {
+			path += "?purge=true"
+		}
+		m, raw, err := c.do(http.MethodDelete, path, nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		c.renderResource(raw, m, []string{"station_id", "retired"})
+		if purgeJSON, ok := m["purge"]; ok {
+			if buf, err := json.Marshal(purgeJSON); err == nil {
+				var rep cleanReport
+				if err := json.Unmarshal(buf, &rep); err == nil {
+					c.renderCleanReport(&rep, buf, false)
+				}
+			}
+		}
+		return ExitOK
+
+	case "prune":
+		fs := flag.NewFlagSet("station prune", flag.ContinueOnError)
+		fs.SetOutput(c.stderr)
+		purge := fs.Bool("purge", false, "delete the pruned stations' tasks, runs, and working roots before retiring")
+		yes := fs.Bool("yes", false, "retire without asking for confirmation")
+		if err := fs.Parse(args); err != nil {
+			return ExitUsage
+		}
+		m, _, err := c.do(http.MethodGet, "/api/v1/stations/missing", nil)
+		if err != nil {
+			return c.reportErr(err)
+		}
+		items, _ := m["items"].([]any)
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			if id, ok := it.(string); ok && id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) == 0 {
+			fmt.Fprintln(c.stdout, "no stations to prune")
+			return ExitOK
+		}
+		fmt.Fprintln(c.stdout, "stations without a config folder:")
+		for _, id := range ids {
+			fmt.Fprintln(c.stdout, "  "+id)
+		}
+		action := "retire"
+		if *purge {
+			action = "retire (with purge)"
+		}
+		if !*yes {
+			if !c.confirm(fmt.Sprintf("%s %d station(s)? [y/N]: ", action, len(ids))) {
+				fmt.Fprintln(c.stdout, "aborted, no changes made")
+				return ExitOK
+			}
+		}
+		for _, id := range ids {
+			path := "/api/v1/stations/" + id
+			if *purge {
+				path += "?purge=true"
+			}
+			m, raw, err := c.do(http.MethodDelete, path, nil)
+			if err != nil {
+				return c.reportErr(err)
+			}
+			c.renderResource(raw, m, []string{"station_id", "retired"})
+		}
+		return ExitOK
+
 	case "topology":
 		return c.cmdStationTopology(args)
 
 	default:
-		fmt.Fprintln(c.stderr, "veriproc station {list|summary|pause|unpause|topology}")
+		fmt.Fprintln(c.stderr, "veriproc station {list|summary|pause|unpause|remove|prune|topology}")
 		return ExitUsage
 	}
 }
@@ -2104,6 +2185,8 @@ Commands:
   station summary [STATION_ID] [--since RFC3339]
   station pause      STATION_ID
   station unpause    STATION_ID
+  station remove     [--purge] STATION_ID
+  station prune      [--purge] [--yes]
   station topology   [--format block|mermaid] [--by-input]
   clean         (--before TS | --after TS) [--by BASIS] [--station STATION_ID] [--dry-run] [--force] [--quiet] [--cascade]
   users list    [--profile PATH]
@@ -2128,6 +2211,14 @@ Delete/clean flags:
    --cascade   also delete descendant tasks and additional child rows (default:
                 only delete targeted objects, nullify nullable references,
                 preserve descendant tasks and their working roots)
+
+Station removal flags:
+  station remove retires a station whose config folder no longer exists
+                (e.g. after a rename); historical tasks and runs are kept.
+  station prune retires every such station at once, listing candidates first.
+  --purge     also delete the retired station's tasks, runs, and working
+                roots (same cascade as "task delete --cascade")
+  --yes       (prune only) retire without asking for confirmation
 
 Environment: VERIPROC_API_URL, VERIPROC_TOKEN, VERIPROC_OUTPUT, VERIPROC_TIMEOUT,
 VERIPROC_ACCESS_PROFILE (users subcommands).

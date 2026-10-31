@@ -51,6 +51,8 @@ operator console are both clients of this API. This page is the endpoint referen
 | GET | `/api/v1/stations/summary` | Health summary (all stations). |
 | GET | `/api/v1/stations/{station_id}/summary` | Health summary (one station). |
 | GET | `/api/v1/stations/{station_id}/config` | Resolved station configuration view (see below). |
+| DELETE | `/api/v1/stations/{station_id}` | Retire a station whose config folder is gone; `?purge=true` deletes its tasks/runs/working roots first. |
+| GET | `/api/v1/stations/missing` | Store-known, non-retired stations without a config folder (prune candidates). |
 | POST | `/api/v1/stations/{station_id}/pause` | Pause admission. |
 | POST | `/api/v1/stations/{station_id}/unpause` | Resume admission. |
 

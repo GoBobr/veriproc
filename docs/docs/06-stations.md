@@ -475,7 +475,27 @@ Rules and behaviour:
   there). A task carrying an `upstream` input without a matching payload fails run
   preparation with a clear `failure_reason`.
 
-## 6.7 Onboarding checklist
+## 6.7 Retiring and renaming stations
+
+Stations are loaded from `storage.station_config_root` once at daemon startup; adding or
+renaming a station is done by creating/renaming its folder and restarting the daemon.
+Because the store keeps every station it has ever seen, a renamed or deleted station
+would otherwise stay listed forever ("ghost station").
+
+- Retired ≠ gone: `veriproc station remove <id>` marks all of the station's revision
+  rows `retired_at`, hiding it from `station list`, the console, and the web console,
+  while all historical tasks and runs stay queryable. `--purge` deletes the station's
+  tasks, runs, and working roots first (same cascade as `task delete --cascade`).
+- Renaming station A → B is: rename the folder, restart the daemon (B is loaded), then
+  `veriproc station remove A`. No data migration of runs happens; old rows keep the old
+  station id.
+- The daemon logs a startup warning for every store-known, non-retired station whose
+  folder is missing, pointing at `veriproc station remove <id>` / `veriproc station prune`.
+  If the folder ever comes back, the next startup un-retires the station automatically.
+- `veriproc station prune [--purge] [--yes]` retires every missing-folder station in one
+  go, listing the candidates and asking for confirmation first.
+
+## 6.8 Onboarding checklist
 
 1. Create `storage.station_config_root/<station>/station.yaml`.
 2. Declare `inputs[]` against existing `product_categories`; confirm the categories and

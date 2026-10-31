@@ -45,6 +45,8 @@ veriproc station list
 | `station summary` | `GET /api/v1/stations/summary` |
 | `station pause <id>` | `POST /api/v1/stations/{id}/pause` |
 | `station unpause <id>` | `POST /api/v1/stations/{id}/unpause` |
+| `station remove <id>` | `DELETE /api/v1/stations/{id}` (retire; `--purge` also deletes its tasks/runs/working roots) |
+| `station prune` | `GET /api/v1/stations/missing` + `DELETE /api/v1/stations/{id}` per station (`--purge`, `--yes`) |
 | `clean` | `POST /api/v1/maintenance/clean` |
 | `users list` | local (access-profile file) |
 | `users add` | local (access-profile file) |
@@ -172,10 +174,24 @@ veriproc station list
 veriproc station summary
 veriproc station pause <station_id>
 veriproc station unpause <station_id>
+veriproc station remove [--purge] <station_id>
+veriproc station prune [--purge] [--yes]
 ```
 
 `summary` returns a per-station health overview. `pause`/`unpause` stop or resume admission
 of new work for a station.
+
+`remove` retires a station whose config folder no longer exists (e.g. after a rename or
+delete). Retirement hides the station from `station list`, the console, and the web
+console, while its historical tasks, runs, and revision rows stay intact and queryable.
+With `--purge` the station's tasks, runs, and on-disk working roots are deleted first
+(same cascade as `task delete --cascade`). Removing a station that still has a config
+folder on disk is refused — remove the folder and restart the daemon first.
+
+`prune` retires **all** stations that are registered in the store but have no config
+folder (the same set the daemon warns about at startup). It lists the candidates first
+and asks for confirmation unless `--yes` is given; `--purge` applies the purge semantics
+above to each retired station. Use it to clean up after renaming several stations.
 
 ## 8.10 `clean`
 

@@ -72,11 +72,11 @@ type Report struct {
 // cutoffs are compared against:
 //
 //   - BasisProcessingTime (default): created_at (wall-clock processing time)
-//     - Before: tasks whose created_at <= Before
-//     - After:  tasks whose created_at >= After
+//   - Before: tasks whose created_at <= Before
+//   - After:  tasks whose created_at >= After
 //   - BasisProcessingWindow: the data sensing window
-//     - Before: tasks whose window_end <= Before (entirely before the cutoff)
-//     - After:  tasks whose window_start >= After (entirely after the cutoff)
+//   - Before: tasks whose window_end <= Before (entirely before the cutoff)
+//   - After:  tasks whose window_start >= After (entirely after the cutoff)
 //
 // When StationID is non-empty, only tasks whose destination_station_id matches
 // are selected.
@@ -150,6 +150,29 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, dryRun, cascade
 			Int("runs", rep.Counts.Runs).
 			Int("working_roots_removed", rep.WorkingRootsRemoved).
 			Msg("cleaner: task deleted")
+	})
+}
+
+// PurgeStation removes every task destined for stationID, together with
+// their runs, dependent control-plane rows, and on-disk working roots.
+// It always cascades to descendant tasks. It does not touch station
+// revision rows — retiring the station itself is a separate step. Used by
+// the station retirement flow (station remove --purge).
+func (s *Service) PurgeStation(ctx context.Context, stationID string) (*Report, error) {
+	taskIDs, err := s.store.Tasks().TaskIDsForStation(ctx, stationID)
+	if err != nil {
+		return nil, err
+	}
+	if len(taskIDs) == 0 {
+		return &Report{}, nil
+	}
+	return s.purgeTasks(ctx, taskIDs, false, true, func(rep *Report) {
+		s.logger.Info().
+			Str("station_id", stationID).
+			Int("tasks", rep.Counts.Tasks).
+			Int("runs", rep.Counts.Runs).
+			Int("working_roots_removed", rep.WorkingRootsRemoved).
+			Msg("cleaner: station purged")
 	})
 }
 

@@ -114,6 +114,18 @@ func run(args []string) error {
 	} else if len(loadedDirOrder) > 0 {
 		stationSvc.SetStationOrder(loadedDirOrder)
 	}
+	// Startup drift warning: store-known, non-retired stations whose config
+	// folders are missing (e.g. after a station rename or delete). Read-only —
+	// the log points at the retirement command; no folders or rows are
+	// created, deleted, or modified here.
+	if missing, err := stationSvc.ListMissing(context.Background()); err != nil {
+		logger.Error().Err(err).Msg("detect stations without config folders")
+	} else {
+		for _, id := range missing {
+			logger.Warn().Str("station_id", id).
+				Msg("station registered in store but its config folder is missing; run `veriproc station remove " + id + "` (or `veriproc station prune`) to retire it")
+		}
+	}
 	archivePaths := map[string]string{}
 	for id, archive := range cfg.RollingArchives {
 		archivePaths[id] = archive.Path

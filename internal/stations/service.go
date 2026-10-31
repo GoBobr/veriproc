@@ -3,6 +3,7 @@ package stations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -56,7 +57,7 @@ type StationView struct {
 	Slots        []Slot        `json:"slots,omitempty"`
 	LastRefresh  time.Time     `json:"last_refresh,omitempty"`
 	// Downstream lists the station IDs that this station triggers automatically.
-	Downstream   []string      `json:"downstream,omitempty"`
+	Downstream []string `json:"downstream,omitempty"`
 	// DeclaredInputs are the input file_types declared by the station.
 	DeclaredInputs []string `json:"declared_inputs,omitempty"`
 	// DeclaredOutputs are the output file_types declared by the station.
@@ -180,6 +181,90 @@ func (s *Service) Pause(ctx context.Context, stationID string) (*StationView, er
 
 func (s *Service) Unpause(ctx context.Context, stationID string) (*StationView, error) {
 	return s.setPaused(ctx, stationID, false)
+}
+
+// ErrStationStillLoaded is returned when retirement is requested for a
+// station whose config folder is still present (loaded in the registry).
+// Retirement is only for stations whose folders were removed or renamed.
+var ErrStationStillLoaded = errors.New("stations: station still loaded from disk")
+
+// stationIDLister is implemented by the registry-backed config source and
+// exposes the set of stations loaded from station config folders.
+type stationIDLister interface {
+	StationIDs() []string
+}
+
+// GuardRetirable refuses retirement for stations that are still loaded from
+// disk or unknown to the store. A station must have had its config folder
+// removed and the daemon restarted before it can be retired.
+func (s *Service) GuardRetirable(ctx context.Context, stationID string) error {
+	if stationID == "" {
+		return fmt.Errorf("%w: empty station_id", ErrUnknownStation)
+	}
+	if s.configResolver != nil {
+		if _, err := s.configResolver.Resolve(ctx, stationID); err == nil {
+			return fmt.Errorf("%w: station_id=%s still has a config folder; remove it and restart the daemon first",
+				ErrStationStillLoaded, stationID)
+		} else if !errors.Is(err, ErrUnknownStation) {
+			return err
+		}
+	}
+	all, err := s.store.Stations().ListStationIDs(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, id := range all {
+		if id == stationID {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: station_id=%s", ErrUnknownStation, stationID)
+}
+
+// Retire marks all revisions of the station as retired so it disappears
+// from listings while historical runs stay intact. It reports whether any
+// rows changed (false when the station was already retired). The caller is
+// expected to run GuardRetirable first; Retire re-checks the guard for
+// safety when called directly.
+func (s *Service) Retire(ctx context.Context, stationID string) (bool, error) {
+	if err := s.GuardRetirable(ctx, stationID); err != nil {
+		if errors.Is(err, ErrStationStillLoaded) {
+			return false, err
+		}
+		// Already-retired stations pass the unknown-station store check with
+		// ListStationIDs(true); an unknown station must fail.
+		if errors.Is(err, ErrUnknownStation) {
+			return false, err
+		}
+		return false, err
+	}
+	return s.store.Stations().RetireStation(ctx, stationID)
+}
+
+// ListMissing returns the station_ids known to the store (not retired) that
+// have no station config folder loaded — i.e. ghost entries eligible for
+// retirement. Retired stations are excluded so they are not reported
+// forever.
+func (s *Service) ListMissing(ctx context.Context) ([]string, error) {
+	active, err := s.store.Stations().ListStationIDs(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	registered := map[string]struct{}{}
+	if s.configResolver != nil {
+		if lister, ok := s.configResolver.(stationIDLister); ok {
+			for _, id := range lister.StationIDs() {
+				registered[id] = struct{}{}
+			}
+		}
+	}
+	out := []string{}
+	for _, id := range active {
+		if _, ok := registered[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) setPaused(ctx context.Context, stationID string, paused bool) (*StationView, error) {

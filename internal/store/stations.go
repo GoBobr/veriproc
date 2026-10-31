@@ -137,14 +137,70 @@ func (r *StationRevisionRepo) Get(ctx context.Context, revisionID string) (*Stat
 	return &rec, nil
 }
 
-// ExistsStationID reports whether at least one revision exists for stationID.
+// ExistsStationID reports whether at least one non-retired revision exists
+// for stationID. Retired stations (config folder removed) do not count.
 func (r *StationRevisionRepo) ExistsStationID(ctx context.Context, stationID string) (bool, error) {
 	var n int
 	if err := r.q.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM station_revisions WHERE station_id = ?`, stationID).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM station_revisions WHERE station_id = ? AND retired_at IS NULL`, stationID).Scan(&n); err != nil {
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// RetireStation marks all revisions of the station as retired. Retired
+// stations are excluded from listings and lookups while their revision
+// rows (and therefore run foreign keys) stay intact. The operation is
+// idempotent: it reports false when the station was already retired or
+// unknown, without touching stored data.
+func (r *StationRevisionRepo) RetireStation(ctx context.Context, stationID string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE station_revisions SET retired_at = ? WHERE station_id = ? AND retired_at IS NULL`,
+		nowUTC(), stationID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// UnretireStation clears the retirement marker from all revisions of the
+// station. Called when a station folder reappears on disk and is seeded,
+// so the station shows up in listings again.
+func (r *StationRevisionRepo) UnretireStation(ctx context.Context, stationID string) error {
+	_, err := r.q.ExecContext(ctx,
+		`UPDATE station_revisions SET retired_at = NULL WHERE station_id = ?`, stationID)
+	return err
+}
+
+// ListStationIDs returns the distinct station_ids known to the store.
+// When includeRetired is false, stations whose revisions are all retired
+// are omitted. The daemon compares the result against the station config
+// folders on disk to detect drift (store rows without folders) and to
+// expose stations eligible for retirement.
+func (r *StationRevisionRepo) ListStationIDs(ctx context.Context, includeRetired bool) ([]string, error) {
+	q := `SELECT DISTINCT station_id FROM station_revisions`
+	if !includeRetired {
+		q += ` WHERE retired_at IS NULL`
+	}
+	q += ` ORDER BY station_id`
+	rows, err := r.q.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // StationIDsForRevisions resolves a batch of revision IDs to their station
@@ -187,10 +243,12 @@ func (r *StationRevisionRepo) ListCurrent(ctx context.Context) ([]*StationListRe
 		       COALESCE(sr.declared_inputs, ''),
 		       COALESCE(sr.declared_outputs, '')
 		FROM station_revisions sr
-		WHERE NOT EXISTS (
+		WHERE sr.retired_at IS NULL
+		  AND NOT EXISTS (
 			SELECT 1
 			FROM station_revisions newer
 			WHERE newer.station_id = sr.station_id
+			  AND newer.retired_at IS NULL
 			  AND (
 				newer.created_at > sr.created_at
 				OR (newer.created_at = sr.created_at AND newer.revision_id > sr.revision_id)

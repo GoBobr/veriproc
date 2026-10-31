@@ -6,12 +6,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gobobr/veriproc/internal/cleaner"
 	"github.com/gobobr/veriproc/internal/httpapi/apierr"
 	"github.com/gobobr/veriproc/internal/stations"
 )
 
 type stationHandler struct {
-	svc *stations.Service
+	svc     *stations.Service
+	cleaner *cleaner.Service
 }
 
 func (h *stationHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +75,68 @@ func parseStationSummarySince(w http.ResponseWriter, r *http.Request) (time.Time
 	return since, true
 }
 
+// remove retires a station whose config folder no longer exists (Station
+// Retirement Endpoint requirement). With ?purge=true the station's tasks,
+// runs, and working roots are deleted first via the cleaner cascade.
+// Mutating endpoint: only operator credentials pass the auth middleware.
+func (h *stationHandler) remove(w http.ResponseWriter, r *http.Request) {
+	stationID := r.PathValue("station_id")
+	// Guard first so nothing is purged for a live or unknown station.
+	if err := h.svc.GuardRetirable(r.Context(), stationID); err != nil {
+		writeRetireErr(w, r, err)
+		return
+	}
+	var purgeReport *cleaner.Report
+	if r.URL.Query().Get("purge") == "true" {
+		if h.cleaner == nil {
+			apierr.Write(w, r, http.StatusServiceUnavailable, apierr.CodeDependencyUnavailable, "cleaner service not configured")
+			return
+		}
+		rep, err := h.cleaner.PurgeStation(r.Context(), stationID)
+		if err != nil {
+			writeCleanerErr(w, r, err)
+			return
+		}
+		purgeReport = rep
+	}
+	changed, err := h.svc.Retire(r.Context(), stationID)
+	if err != nil {
+		writeRetireErr(w, r, err)
+		return
+	}
+	resp := map[string]any{
+		"station_id": stationID,
+		"retired":    changed,
+	}
+	if purgeReport != nil {
+		resp["purge"] = purgeReport
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// missing lists store-known, non-retired stations without a config folder
+// (prune discovery for the Station Prune CLI Command requirement).
+func (h *stationHandler) missing(w http.ResponseWriter, r *http.Request) {
+	ids, err := h.svc.ListMissing(r.Context())
+	if err != nil {
+		writeStationErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": ids})
+}
+
+// writeRetireErr maps retirement errors onto the API error envelope.
+func writeRetireErr(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, stations.ErrUnknownStation):
+		apierr.Write(w, r, http.StatusNotFound, apierr.CodeNotFound, err.Error())
+	case errors.Is(err, stations.ErrStationStillLoaded):
+		apierr.Write(w, r, http.StatusConflict, apierr.CodeInvalidStateTransition, err.Error())
+	default:
+		apierr.Write(w, r, http.StatusInternalServerError, apierr.CodeInternal, "internal server error")
+	}
+}
+
 func (h *stationHandler) pause(w http.ResponseWriter, r *http.Request) {
 	stationID := r.PathValue("station_id")
 	out, err := h.svc.Pause(r.Context(), stationID)
@@ -92,6 +156,7 @@ func (h *stationHandler) unpause(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
 // config serves the station's resolved configuration view (Station Config
 // Endpoint requirement). Read-only: readable with reader or operator
 // credentials via the method-based auth middleware.

@@ -85,13 +85,15 @@ func NewRouter(d Deps) http.Handler {
 	}
 
 	if d.Stations != nil {
-		sh := &stationHandler{svc: d.Stations}
+		sh := &stationHandler{svc: d.Stations, cleaner: d.Cleaner}
 		mux.HandleFunc("GET /api/v1/stations", sh.list)
 		mux.HandleFunc("GET /api/v1/stations/summary", sh.summary)
+		mux.HandleFunc("GET /api/v1/stations/missing", sh.missing)
 		mux.HandleFunc("GET /api/v1/stations/{station_id}/summary", sh.summaryOne)
 		mux.HandleFunc("GET /api/v1/stations/{station_id}/config", sh.config)
 		mux.HandleFunc("POST /api/v1/stations/{station_id}/pause", sh.pause)
 		mux.HandleFunc("POST /api/v1/stations/{station_id}/unpause", sh.unpause)
+		mux.HandleFunc("DELETE /api/v1/stations/{station_id}", sh.remove)
 	}
 
 	if d.Groups != nil {
