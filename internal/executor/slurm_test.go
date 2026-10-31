@@ -127,6 +127,44 @@ func TestSlurmExecutorDockerWrapper(t *testing.T) {
 	}
 }
 
+func TestSlurmExecutorDockerWrapperEntrypoint(t *testing.T) {
+	runner := &fakeRunner{fn: func(string, ...string) (string, string, error) { return "67891\n", "", nil }}
+	dir := t.TempDir()
+	e := NewSlurmExecutorWithRunner(SlurmConfig{
+		Type:          SlurmDocker,
+		SubmitCommand: "sbatch",
+		QueryCommand:  "sacct",
+	}, runner, nil)
+	_, err := e.Submit(context.Background(), JobDescription{
+		RunID:       "run-ep",
+		TaskID:      "task-ep",
+		RunRef:      "task-ep/r0",
+		StationID:   "station-ep",
+		WorkingRoot: dir,
+		Executable:  "/work/run.sh",
+		WindowStart: time.Unix(0, 0).UTC(),
+		WindowEnd:   time.Unix(1, 0).UTC(),
+		Container:   ContainerConfig{Image: "registry.example.test/ipf:latest", Entrypoint: "/bin/sh"},
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	wrapper, err := os.ReadFile(filepath.Join(dir, ".veriproc", "slurm-wrapper.sh"))
+	if err != nil {
+		t.Fatalf("read wrapper: %v", err)
+	}
+	content := string(wrapper)
+	if !strings.Contains(content, "--entrypoint '/bin/sh'") {
+		t.Fatalf("docker wrapper missing --entrypoint:\n%s", content)
+	}
+	// The entrypoint flag must precede the image ref on the docker run line.
+	epIdx := strings.Index(content, "--entrypoint")
+	imgIdx := strings.Index(content, "'registry.example.test/ipf:latest'")
+	if epIdx == -1 || imgIdx == -1 || epIdx > imgIdx {
+		t.Fatalf("expected --entrypoint before image ref in wrapper:\n%s", content)
+	}
+}
+
 func TestSlurmExecutorDockerRequiresImage(t *testing.T) {
 	e := NewSlurmExecutorWithRunner(SlurmConfig{Type: SlurmDocker}, &fakeRunner{}, nil)
 	_, err := e.Submit(context.Background(), JobDescription{RunID: "r", WorkingRoot: t.TempDir(), Executable: "/bin/true"})

@@ -48,6 +48,34 @@ command, and reads an exit-code marker for reconciliation.
 Like `slurm-native`, but the station executable runs **inside a Docker container** launched
 by the SLURM node wrapper. Adds container mount/user configuration.
 
+#### Overriding the image ENTRYPOINT (`execution.container.entrypoint`)
+
+Station images whose ENTRYPOINT is the processor binary itself (e.g.
+`co2m-ipf_adpp-l2:3.0rc5` with `ENTRYPOINT ["adpp-l2-ipf"]`) can never run a shell wrapper
+script: the image entrypoint consumes the executable path as its own argument. The station
+`execution.container.entrypoint` field overrides it:
+
+```yaml
+execution:
+  mode: slurm-docker
+  executable: /work/run.sh        # script baked into / mounted into the image
+  container:
+    image: ${ADPP_IMAGE}
+    entrypoint: /bin/sh           # single docker token, passed to docker run --entrypoint
+```
+
+Semantics are exactly those of `docker run --entrypoint`:
+
+- the value is a **single token** (the entrypoint binary); the station `executable` and
+  `args` become the command after the image ref,
+- multi-token values (e.g. `/bin/sh -c`) are rejected by the loader — compose them across
+  the existing fields instead (`entrypoint: /bin/sh` + `executable: -c`-style script),
+- when omitted, the image's own ENTRYPOINT is used (previous behaviour).
+
+The special case "executable-is-the-joborder" needs no new mode either:
+`entrypoint: adpp-l2-ipf` with `executable: <joborder path>` runs the processor directly
+on the generated job order.
+
 > The control-plane contract (task → run → job → job order → working root) is identical
 > across executors, so a station can move from `local` to SLURM without changing its
 > algorithm.

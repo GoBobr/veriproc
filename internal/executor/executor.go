@@ -103,9 +103,10 @@ type SlurmOverrides struct {
 
 // ContainerConfig captures runtime container settings for containerized executors.
 type ContainerConfig struct {
-	Image  string
-	Mounts []string
-	User   string
+	Image      string
+	Mounts     []string
+	User       string
+	Entrypoint string
 }
 
 // Submission is the result of a scheduler submission.

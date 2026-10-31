@@ -381,9 +381,10 @@ func (s *Service) Dispatch(ctx context.Context, runID string) (*store.RunRecord,
 			ExtraArgs: append([]string(nil), execCfg.Slurm.ExtraArgs...),
 		},
 		Container: executor.ContainerConfig{
-			Image:  execCfg.Container.Image,
-			Mounts: append([]string(nil), execCfg.Container.Mounts...),
-			User:   execCfg.Container.User,
+			Image:      execCfg.Container.Image,
+			Mounts:     append([]string(nil), execCfg.Container.Mounts...),
+			User:       execCfg.Container.User,
+			Entrypoint: execCfg.Container.Entrypoint,
 		},
 		Environment:      cloneStringMap(s.executionEnv),
 		SplitGroupID:     task.SplitGroupID,
@@ -690,6 +691,46 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 	resolvedWinnerComponents := make(map[string][]map[string]string)
 	seqCounter := 0
 	for inputIdx, input := range inputs {
+		if input.Source == "upstream" {
+			candidates, err := s.upstreamSelectCandidates(task, input)
+			if err != nil {
+				return nil, err
+			}
+			for winnerIdx, winner := range candidates {
+				entry := store.ManifestEntry{
+					EntryID:          fmt.Sprintf("ent-%s-%02d-%02d", sha12(runID+":"+input.FileType), inputIdx, winnerIdx),
+					ObjectSequence:   seqCounter,
+					FileType:         input.FileType,
+					Category:         input.Category,
+					Optional:         input.Optional,
+					ObjectKind:       winner.ObjectKind,
+					SelectionReason:  winner.Reason,
+					SourcePrecedence: winner.FolderPriority + 1,
+				}
+				seqCounter++
+				info, err := os.Stat(winner.Path)
+				if err != nil {
+					return nil, fmt.Errorf("upstream input %s: %w", input.FileType, err)
+				}
+				linkName := safeInputLinkName(seqCounter-1, input.FileType, filepath.Base(winner.Path))
+				linkPath := filepath.Join(workingRoot, "input", linkName)
+				_ = os.Remove(linkPath)
+				if err := os.Symlink(winner.Path, linkPath); err != nil {
+					return nil, fmt.Errorf("symlink upstream input %s: %w", input.FileType, err)
+				}
+				entry.Path = filepath.ToSlash(filepath.Join("input", linkName))
+				entry.Present = true
+				entry.Size = info.Size()
+				entry.MTime = nullTime(info.ModTime().UTC())
+				entry.Checksum, entry.ChecksumAlgo, entry.ChecksumSource = availableChecksum(winner.Path, s.integrity)
+				entry.VersionMetadata = versionMetadata(winner.Path)
+				manifest.Entries = append(manifest.Entries, entry)
+			}
+			if len(candidates) == 0 {
+				return nil, &missingMandatoryInputError{FileType: input.FileType, Category: input.Category, Reason: missingUpstreamInputReason(task, input.FileType)}
+			}
+			continue
+		}
 		effectivePattern := s.effectiveInputFilenamePattern(input)
 		windowMatch := defaultWindowMatch(effectivePattern, s.naming, input)
 		folders := s.productCategories[input.Category]
@@ -774,6 +815,51 @@ func (s *Service) resolveManifest(ctx context.Context, runID string, runRef stri
 	}
 	_ = ctx
 	return manifest, nil
+}
+
+// upstreamPayload is the persisted task-out `inputs:` declaration shape:
+// a JSON array of {file_type, files} (see taskOutInputYAML in finalize.go).
+type upstreamPayload struct {
+	FileType string   `json:"file_type"`
+	Files    []string `json:"files"`
+}
+
+// missingUpstreamInputReason explains why an upstream-sourced input found no
+// file list.
+func missingUpstreamInputReason(task *store.TaskRecord, fileType string) string {
+	if len(task.DeclaredInputs) == 0 {
+		return "task has no upstream-declared inputs payload (created without task-out inputs:)"
+	}
+	return "upstream-declared inputs payload does not list file_type " + fileType
+}
+
+// upstreamSelectCandidates returns the upstream-declared file list for the
+// input from the task's stored task-out payload. It requires no window
+// matching or folder scanning; staging is handled by the caller.
+func (s *Service) upstreamSelectCandidates(task *store.TaskRecord, input stations.InputDefinition) ([]selectedInputCandidate, error) {
+	if len(task.DeclaredInputs) == 0 {
+		return nil, nil
+	}
+	var payload []upstreamPayload
+	if err := json.Unmarshal(task.DeclaredInputs, &payload); err != nil {
+		return nil, fmt.Errorf("parse task declared inputs: %w", err)
+	}
+	for _, in := range payload {
+		if in.FileType != input.FileType {
+			continue
+		}
+		candidates := make([]selectedInputCandidate, 0, len(in.Files))
+		for _, f := range in.Files {
+			candidates = append(candidates, selectedInputCandidate{
+				Path:          f,
+				ObjectKind:    store.ObjectKindRegularFile,
+				Reason:        "upstream-declared (task-out inputs)",
+				Discriminator: filepath.Base(f),
+			})
+		}
+		return candidates, nil
+	}
+	return nil, nil
 }
 
 // selectedInputCandidate is one winner produced by the classical matcher.

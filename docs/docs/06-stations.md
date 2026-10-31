@@ -89,7 +89,7 @@ downstream:
 | `execution` | `mode` | Executor type to use (`local`, `stub`, `slurm-native`, `slurm-docker`). If omitted, `executor.default` is used. |
 | `execution` | `executable` | Program/script to run, relative to the station directory or absolute. |
 | `execution` | `args` | Optional argument list; context references are resolved per element. |
-| `execution` | `resources` / `slurm` / `container` | Optional per-station execution hints for SLURM/Docker. |
+| `execution` | `resources` / `slurm` / `container` | Optional per-station execution hints for SLURM/Docker. `container.entrypoint` (see below) overrides the image ENTRYPOINT. |
 | `joborder` | `format` | `none` (no file), `yaml`, `json`, or `toml`. |
 | `joborder` | `name` | Output filename for the job order in the working root. |
 | `joborder` | `include` | Station-provided fields placed at the **root** of the job order. |
@@ -99,6 +99,7 @@ downstream:
 | `inputs[]` | `file_type` | The product/aux file type to resolve. |
 | `inputs[]` | `category` | Which `product_categories` entry to search. |
 | `inputs[]` | `window_match` | Selection rule (see below). |
+| `inputs[]` | `source` | `rolling` (default — window matching over category folders) or `upstream` — the file list comes from the creating task's task-out `inputs:` payload (see §6.6). |
 | `inputs[]` | `margins` | `[before, after]` seconds widening the match window. |
 | `inputs[]` | `mandatory` | If true, the run fails when no match is found. |
 | `inputs[]` | `object_kind` | `file` (default) or `directory`. |
@@ -258,6 +259,9 @@ and output paths in the job order are relative to the working root or absolute.
   the station's declared inputs.
 - Each input entry may resolve to **one or many** filesystem objects of the same
   `file_type`, and an object may be a regular file or a directory.
+- `source: upstream` inputs appear here exactly like window-matched ones — the manifest
+  (and therefore the job order) lists the staged symlinks in `input/`, with no renderer
+  changes (see §6.6 for the `task-out.yaml` `inputs:` payload).
 
 ### Job-order preprocess script
 
@@ -418,6 +422,58 @@ When a run completes as **canonical**, the backend:
 4. optionally coordinates a split group for fan-in.
 
 Duplicate and forced runs do **not** route downstream.
+
+### Upstream-declared input file lists (`task-out.yaml` `inputs:`)
+
+Sometimes the upstream station — not the window matcher — must decide the concrete input
+file list of a downstream job order. The typical case is files whose names cannot be
+time-parsed by the naming grammar (e.g. VIIRS/NSIDC `VNP10A1.A2026298.h32v11....h5`),
+where window matching is powerless.
+
+The mechanism is the task-out descriptor's `inputs:` payload, combined with a
+`source: upstream` input declaration on the consuming station:
+
+```yaml
+# upstream station writes <working_root>/task-out.yaml:
+schema_version: veriproc.task-out/v1
+downstream:
+  - key: day-298
+    station_id: srfich
+    window:
+      start: "20261025T000000"
+      end: "20261025T235959"
+    inputs:
+      - file_type: VNP10A1_H5
+        files:
+          - /data/rolling/viirs/VNP10A1.A2026298.h32v11.001.h5
+          - /data/rolling/viirs/VNP10A1.A2026298.h32v12.001.h5
+```
+
+```yaml
+# downstream station declares the input as upstream-sourced:
+inputs:
+  - file_type: VNP10A1_H5
+    category: product
+    source: upstream
+    mandatory: true
+```
+
+Rules and behaviour:
+
+- The payload is **typed and validated** at parent finalization: every listed file must
+  exist at task-out read time, and each `file_type` must be declared as an input of the
+  target station. Violations fail the parent run with a clear `failure_reason`.
+- The validated payload is persisted with the created task (and participates in the
+  child task identity/dedupe). It never arrives via the submit API — only via task-out,
+  preserving the station-to-station trust boundary.
+- At run preparation, inputs with `source: upstream` take their file list from the task's
+  stored payload instead of scanning category folders, and each file is symlink-staged
+  into `<working_root>/input/` exactly like window-matched inputs — so manifests,
+  fingerprints, the joborder `inputs:` block, and reprocessing semantics are unchanged.
+- An `upstream` input must be `mandatory`, and must not declare `window_match`,
+  `pattern`, `filename_pattern`, or a `rolling_folders` override (they are meaningless
+  there). A task carrying an `upstream` input without a matching payload fails run
+  preparation with a clear `failure_reason`.
 
 ## 6.7 Onboarding checklist
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 )
 
@@ -41,6 +42,20 @@ func TestMigrate_FreshDB_7_3_2(t *testing.T) {
 	}
 }
 
+// appliedVersions lists the embedded migration file names (the set of
+// versions Migrate applies — one per file in migrations/).
+func appliedVersions() []string {
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		panic("list migrations: " + err.Error())
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
 // TestMigrate_Idempotent — re-running Migrate is a no-op.
 func TestMigrate_Idempotent(t *testing.T) {
 	s := newTestStore(t)
@@ -52,8 +67,8 @@ func TestMigrate_Idempotent(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if n != 3 {
-		t.Errorf("schema_migrations rows = %d, want 3", n)
+	if n != len(appliedVersions()) {
+		t.Errorf("schema_migrations rows = %d, want %d", n, len(appliedVersions()))
 	}
 }
 

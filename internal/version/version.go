@@ -10,7 +10,7 @@ package version
 
 var (
 	// Version is the semantic version of the build.
-	Version = "0.6.2"
+	Version = "0.6.4"
 	// Commit is the VCS commit hash for the build.
 	Commit = "unknown"
 	// BuildDate is the RFC3339 timestamp of the build.
