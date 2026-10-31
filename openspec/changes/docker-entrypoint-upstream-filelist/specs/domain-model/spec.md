@@ -28,17 +28,9 @@ persist the payload with the created task. Downstream entries without
 
 A station input declaration MAY set `source: upstream`, meaning its file list
 is supplied by the creating task's declared inputs payload rather than by
-window matching against category folders. Because upstream-declared inputs
-never scan category folders, a `category` MUST NOT be required for them
-(though it MAY be set); inputs resolved by window matching
-(`source: rolling` or unset) MUST continue to require a category. Run
-preparation for such an input
-MUST take the file list from the task's payload, stage the files into the
-working root input directory, and record them in the manifest using the same
-mechanism as window-matched inputs. A run whose `source: upstream` input has
-no payload on its task MUST fail during preparation with a clear failure
-reason. Inputs without `source` (or `source: rolling`) MUST behave exactly as
-today.
+window matching against category folders. Run preparation MUST stage the
+payload files into the working root and record them in the manifest as for
+window-matched inputs; a missing payload MUST fail preparation.
 
 #### Scenario: Upstream input resolves from payload
 - **GIVEN** station S declares an input with `source: upstream` and its task

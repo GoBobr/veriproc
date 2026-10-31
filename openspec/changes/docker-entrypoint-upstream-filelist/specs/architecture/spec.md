@@ -7,13 +7,10 @@
 A station with `execution.mode: slurm-docker` MAY declare
 `execution.container.entrypoint` as a non-empty string (a single entrypoint
 token, per the `docker run --entrypoint` contract). When set, the executor
-MUST pass it to the container runtime as the entrypoint override
-(`docker run --entrypoint ...`) so that the station `executable` and args are
-interpreted as the container command instead of being passed to the image's
-built-in ENTRYPOINT. A list form MUST NOT be accepted; multi-token
-entrypoints compose across the existing fields (`entrypoint` supplies the
-binary, `executable`/args the rest). When unset, behavior MUST remain exactly
-as today (image entrypoint applies).
+MUST pass it to the container runtime as the entrypoint override so that the
+station `executable` and args are interpreted as the container command
+instead of being passed to the image's built-in ENTRYPOINT. When unset,
+behavior MUST remain exactly as today (image entrypoint applies).
 
 #### Scenario: Wrapper script in a processor-entrypoint image
 - **GIVEN** a station image whose ENTRYPOINT is the processor binary and
