@@ -19,6 +19,7 @@ The system SHALL be organized into three layers: a control plane that accepts ta
 
 and an execution layer that translates a run into a concrete scheduler job and exposes sufficient status for the control plane to track completion.
 The database MUST be authoritative for control state, the shared filesystem for artifact bytes, the scheduler for job admission and runtime status, and the science algorithm only for files it writes inside the working root.
+
 ### Requirement: Control-plane background loop cadence
 The dispatcher loop MUST admit unprepared accepted tasks, dispatch ready runs, poll active runs, and finalize runs whose jobs reached a terminal state. A conforming implementation SHOULD use an adaptive cadence: the tick interval MAY back off when a pass finds no work and MUST return to the base cadence as soon as work is found. Station pause state SHOULD be resolved in batch per pass rather than per run.
 
@@ -53,6 +54,7 @@ The execution adapter MUST submit, query, and (when supported) cancel jobs throu
 Shared storage MUST hold working roots, logs, outputs, optional task-out descriptors, and symlinked input views.
 The station configuration store MUST provide versioned station revisions validated before use.
 Client frontends MUST interact only through the API and MUST NOT mutate backend state by writing directly into working roots.
+
 ### Requirement: Authoritative records
 
 The implementation MUST maintain the following records: task record (immutable routing request plus status summary), task relationship record (parent-child and provenance edges), run record (one execution attempt per task), job record (scheduler-facing, linked to one run), station revision record (frozen configuration identity), resolved input manifest (frozen input selection and metadata)
@@ -66,8 +68,8 @@ The implementation MUST maintain the following records: task record (immutable r
 
 job order (frozen execution descriptor when the station enables a joborder file), artifact record (logical and physical identity of produced filesystem objects), rolling archive definition (instance configuration), rolling archive publication record, split-group record, and deduplication record (canonical completed fingerprint ownership).
 
-
 The database MUST remain the system of record for query and recovery even where records are stored redundantly in the working root. The working-root copy of the resolved input manifest is a required audit export and MUST NOT replace the database records required for manifest query and recovery.
+
 ### Requirement: Versioning boundaries
 
 Every station configuration MUST resolve to a station revision.
@@ -82,6 +84,7 @@ Declared generator identities MUST be recorded as opaque implementation-identity
 **Additional normative rules for this requirement:**
 
 The API SHOULD expose an explicit API version, and database schema changes MUST follow an explicit migration policy.
+
 ### Requirement: Instance configuration pre-flight validation
 The top-level instance configuration is not a station definition; it defines deployment-specific roots and extension points. A conforming implementation MUST validate it before startup, including storage roots, naming and generated path policy, integrity policy, rolling archives, an executor registry of named adapter configurations, global definitions, and optional execution environment variables, and MUST expose its effective identity for audit.
 
@@ -103,6 +106,7 @@ Declared generator identities are opaque strings recorded under `veriproc_meta` 
 **Additional normative rules for this requirement:**
 
 A future module-loading contract, if defined, MUST provide custom generators only validated inputs (task, run identity, station revision, resolved manifest, resolved station context, and instance storage settings), MUST require deterministic results, and MUST forbid direct database mutation.
+
 ### Requirement: Definitions section semantics
 
 The optional top-level `definitions` section is an arbitrary nested YAML mapping of deployment-wide values injected at the root of the station configuration reference context.
@@ -124,6 +128,7 @@ Referenceable path segments MUST use ASCII letters, digits, and underscores, wit
 A reference to a missing key, to a path traversing through a non-mapping node, or to a reserved runtime context name that conflicts with `definitions` MUST fail station validation or run preparation before dispatch.
 A full-node reference MAY resolve to a scalar, sequence, or mapping and preserves the native YAML type; embedded references inside a larger string MUST resolve to scalar values rendered as strings.
 Effective resolved values used by a run MUST be frozen before processing fingerprint computation and dispatch.
+
 ### Requirement: Execution env section rules
 The optional top-level `execution_env` section is a flat YAML mapping of operator-defined environment variables exported to every station runner process. Variable names MUST be valid shell environment names, MUST NOT start with a digit, and MUST NOT use the reserved `VERIPROC_` prefix. Values are strings after YAML decoding. Execution environment variables MUST be injected alongside, but MUST NOT override, the VeriProc-defined runtime variables.
 
@@ -146,6 +151,7 @@ It MUST NOT create alternate durable identities.
 
 Generated path components and filename segments MUST be deterministic for the validated input context, MUST use only the configured allowed character set after normalization, and MUST apply the configured replacement rule for unsafe characters.
 Implementations SHOULD enforce a maximum segment length, with 128 characters recommended unless deployment policy requires otherwise.
+
 ### Requirement: Task id timestamp source
 The optional `naming.task_id_timestamp` setting controls the timestamp segment used by the preferred external task identifier grammar. Supported values are `creation` and `start`; if omitted, it MUST default to `creation`. `start` means the segment is derived from the task processing-window start time. The configured source affects only task identifier generation; the authoritative creation timestamp and processing window remain persisted task fields and API response fields.
 
@@ -174,8 +180,8 @@ The only defined placeholders are `{station}`, `{task}`, and `{run}`, expanding 
 The final path may be one or multiple components under `working_root_base`.
 The template MUST be relative, not absolute; after expansion and normalization the expanded path MUST NOT escape `working_root_base`, MUST NOT contain empty path components, and MUST NOT rely on `.` or `..` semantics.
 
-
 Implementation status: in the current implementation, an expanded path that is absolute or would escape the base is not rejected with a preparation failure; instead it is deterministically rewritten into a safe nested layout under `working_root_base` (tracked as a Known Issue with a proposal to fail preparation instead).
+
 ### Requirement: Working-root collision suffix
 
 If the expanded path would collide with an existing run path, `collision_suffix` MUST append an additional deterministic suffix to the final expanded path component only.
@@ -189,6 +195,7 @@ Collision disambiguation MUST NOT alter the ordering of readable components prod
 **Additional normative rules for this requirement:**
 
 The suffix MUST be deterministic for the same validated run context and MUST NOT be a fresh random value on each generation attempt; it MAY be derived from a stable per-run uniqueness component such as a short internal run key.
+
 ### Requirement: Structured filename pattern contract
 
 The top-level `naming.filenames.filename_pattern` defines the instance-wide structured filename contract; it is a parsing and rendering template, not only a glob.
@@ -210,8 +217,8 @@ The placeholder vocabulary MUST remain available to station-level overrides.
 The instance MUST define component rules for each supported placeholder under `naming.filenames.components`; these rules are global and define fixed semantics such as width, allowed character class, and timestamp format (for example `MISSION_ID` as `CDM?`, `FILE_TYPE` of 16 ASCII characters, and timestamp components of the fixed UTC shape `YYYYMMDDTHHmmSSZ`).
 Station-level definitions MAY override the overall `filename_pattern` but MUST NOT redefine the global component semantics.
 
-
 A station input or output `filename_pattern` overrides the instance-wide default for that declared file type. When an effective pattern contains `<FILE_TYPE>`, VeriProc MUST substitute it from the declared `file_type` and MUST NOT infer it from candidate discovery alone. During input selection and output validation the backend MUST parse candidate filenames according to the effective pattern and extract the declared structured components.
+
 ### Requirement: Fixed positional component extraction
 
 Structured-component extraction MUST use fixed positional extraction derived from the effective `filename_pattern` and the globally defined component rules, with externally visible behavior equivalent to fixed-width, position-based extraction rather than heuristic splitting.
@@ -227,6 +234,7 @@ The implementation MAY internally compile this into helper code, tables, or rege
 A `MISSION_ID` configured as `CDM?` MUST match four ASCII characters whose first three positions are `C`, `D`, `M` and fourth is any ASCII character.
 A `FILE_TYPE` configured with length 16 MUST consume exactly 16 ASCII characters at its declared position.
 Timestamp components configured as `YYYYMMDDTHHmmSSZ` MUST be parsed from exactly 16 characters and interpreted as UTC.
+
 ### Requirement: Compact timestamp formatting
 
 Timestamp segments generated by VeriProc MUST use compact UTC formatting without punctuation.
@@ -241,6 +249,7 @@ Runtime event timestamps such as run creation, preparation, dispatch observation
 **Additional normative rules for this requirement:**
 
 RFC 3339 timestamps MAY still be used in API payloads and persisted timestamp fields; compact formatting applies to generated path components, generated filenames, and CLI examples displaying those names.
+
 ### Requirement: Integrity checksum policy
 
 The top-level `integrity` policy governs checksum recording for input manifests, artifacts, and publication metadata.
@@ -257,6 +266,7 @@ A policy of `none` means checksums are neither required nor computed.
 A policy of `required` means checksums for regular files MUST exist or be computed according to deployment or station policy before the relevant validation step succeeds.
 Directory inputs and directory artifacts do not require checksum validation in the baseline, and VeriProc MUST NOT walk directory contents solely to compute a recursive digest.
 Manifest and artifact checksum fields remain optional unless policy explicitly requires them for the applicable object kind.
+
 ### Requirement: Executor registry
 
 The top-level `executor` section defines a registry of named execution adapters.
@@ -278,10 +288,10 @@ Supported type names are `slurm-native`, `slurm-docker`, `local`, and `stub`.
 
 Implementations MAY accept `plain-slurm` as an alias for `slurm-native` and `docker-slurm` as an alias for `slurm-docker`, but canonical names in persisted records and documentation SHOULD be `slurm-native` and `slurm-docker`; the current implementation accepts only the canonical names.
 
-
 For backward compatibility, the implementation also accepts a legacy single-executor form in which `executor:` directly contains one executor configuration instead of an `executors` map, and the `VERIPROC_EXECUTOR` environment variable may override the selected executor at daemon startup. The registry form is preferred for new deployments.
 
 If a station requests an executor type that is not registered in `executor.executors`, the backend MUST fail the run and task with a fatal, non-retriable dispatch error that clearly identifies the missing configuration.
+
 ### Requirement: Executor types
 
 The rules in this requirement are normative and MUST be satisfied by the implementation.
@@ -297,8 +307,8 @@ The `stub` executor simulates the job lifecycle without running any script and i
 
 For SLURM deployments, each entry MUST contain the connection method used to run scheduler commands (local execution on a submit host or SSH to a SLURM login node) and scheduler defaults such as account, partition, QoS, command paths, poll interval, default CPU, memory, and walltime limits, and the shared filesystem roots visible to the backend, submit host, compute nodes, and containers.
 
-
 Station-level configuration MAY override scheduler defaults only for that station (partition, QoS, account, CPUs per task, memory, walltime, extra `sbatch` arguments, and container image). Station overrides MUST be merged with the matching instance executor defaults deterministically and frozen into the run's execution context before dispatch. In `slurm-docker`, the container image is station-specific (declared in `station.yaml`); the instance entry MAY supply Docker defaults such as bind mounts, user mapping, network policy, and cleanup policy, but MUST NOT silently substitute a different algorithm image once the station revision has been selected.
+
 ### Requirement: Station configuration model
 
 Stations are declared in YAML and MUST define enough information for scheduling, input resolution, output validation, and downstream routing.
@@ -313,6 +323,7 @@ Stations are declared in YAML and MUST define enough information for scheduling,
 At minimum a station revision MUST include: `station_id`; `station_name`; execution image and mode; structured execution command; resource requirements; joborder renderer configuration; category-folder overrides when overriding top-level category defaults; input definitions including declared `file_type`, category, and any `filename_pattern` override or interval-matching policy
 output definitions including declared `file_type`, any `filename_pattern` override, and whether multiple matching filesystem objects may be validated; per-output publication configuration when outputs are published to a rolling archive; default downstream routing; split-group policy when default routing can create grouped fan-out/fan-in work; and any station-specific validation hooks or runtime parameters.
 The backend MUST validate station configurations before accepting them for dispatch; invalid station revisions MUST NOT be used to create runs.
+
 ### Requirement: Station context references
 Station configuration MAY contain context references in scalar string values using syntax `<name>` or `<name.path>` with dot-separated mapping traversal. Referenceable path segments MUST use ASCII letters, digits, and underscores with the first character of the first segment lowercase or `_`. Scalar fields with their own angle-bracket grammar, such as `filename_pattern`, MUST NOT be processed by the station context resolver.
 
@@ -325,7 +336,6 @@ Station configuration MAY contain context references in scalar string values usi
 - **GIVEN** instance `definitions` defining a top-level key `task_id`
 - **WHEN** configuration is validated
 - **THEN** validation fails because `task_id` is a reserved run-preparation key
-
 
 **Additional normative rules for this requirement:**
 
@@ -345,6 +355,7 @@ If a station revision can create a split group through default downstream routin
 **Additional normative rules for this requirement:**
 
 If split-group metadata is emitted dynamically through `task-out.yaml`, the station configuration MUST define whether dynamic split declarations are allowed and which fallback or merge behavior applies when both `task-out.yaml` and default downstream routing are present.
+
 ### Requirement: Downstream routing modes
 
 Default downstream routing MUST support the modes `normal`, `task_out`, `fan_in`, and `join`.
@@ -361,6 +372,7 @@ Default downstream routing MUST support the modes `normal`, `task_out`, `fan_in`
 
 `join` is for independent upstream stations that all contribute mandatory inputs to the same downstream station: a join route MUST declare `join_id`, and all upstream routes participating in the same barrier MUST use the same `join_id`, target station, and processing window.
 The backend MUST derive a deterministic downstream task identity from those values, record provenance from every contributing run, and park the task in `waiting_inputs` until the target station's mandatory input declarations can all resolve.
+
 ### Requirement: Station execution mode binding
 
 Station `execution.mode` names one of the executor types registered in the instance `executor.executors` map.
@@ -375,6 +387,7 @@ If a station omits `execution.mode`, the instance `executor.default` MUST be use
 
 A station using `slurm-native` runs `execution.executable` and resolved `execution.args` directly in the SLURM job wrapper; `slurm-docker` runs them inside the declared Docker image from the same wrapper; `local` runs the executable as a direct OS process on the backend host.
 Station resource declarations are algorithm requirements; effective SLURM submission parameters are obtained by overlaying station resources and station `slurm` overrides on the matching instance executor defaults.
+
 ### Requirement: Task/run/job/joborder cardinality
 
 The rules in this requirement are normative and MUST be satisfied by the implementation.
@@ -389,6 +402,7 @@ A task is an immutable request to process a destination station over a time wind
 
 The cardinality rules are: one task may have zero or more runs; one run MUST reference exactly one task; one run may have zero or one active scheduler jobs at a time; one job MUST reference exactly one run; and one run MUST reference zero or one generated job order, referencing none only when the station explicitly declares `joborder.format: none`.
 Retries MUST create new runs, not mutate the identity of an existing run.
+
 ### Requirement: Run identity is task-scoped
 
 The rules in this requirement are normative and MUST be satisfied by the implementation.
@@ -402,6 +416,7 @@ The canonical run key is `(task_id, retry_index)`, where `retry_index` starts at
 **Additional normative rules for this requirement:**
 
 Run identity is intentionally task-scoped: implementations MAY use an internal unique run key for physical storage, but the task-scoped composite remains the conceptual and API-level run identity.
+
 ### Requirement: Task model and submission
 
 A task MUST contain at minimum: a task identifier; destination station identity through `station_id`; `start` and `end` timestamps; routing history; and provenance links to its parent task or parent run when applicable.
@@ -426,6 +441,7 @@ The `station_id` prefix in a task identifier MUST match the task's destination `
 Re-submitting the same client request with the same idempotency key MUST return the same logical result.
 Downstream tasks created by the framework are new domain objects, not mutable copies of the parent, and parent-child relationships MUST be persisted explicitly even if the task carries a readable history list.
 For aggregation tasks created from a split group, the readable history list SHOULD include the ancestral routing chain, the fan-out parent run, and the contributing split-group member runs selected or excluded by the readiness policy; this history is an operator-facing projection, and membership and provenance links remain the authoritative machine-queryable representation.
+
 ### Requirement: Input resolution determinism
 Input resolution MUST be deterministic and auditable. The baseline input searcher is the classical matching algorithm, which applies the same decision path to every declared input regardless of input category or object kind: it scans all configured source folders, parses candidate entry names through the effective structured filename contract, filters candidates by the declared input and window policy, groups candidates by logical interval, and selects one deterministic winner per group.
 
@@ -451,7 +467,6 @@ The backend MUST resolve inputs according to the following rules:
 - **GIVEN** a candidate that satisfies the window policy in a lower-priority folder
 - **WHEN** selection completes
 - **THEN** every configured folder was scanned and folder priority affected only tie-breaking, not early exit
-
 
 **Additional normative rules for this requirement:**
 
@@ -490,6 +505,7 @@ A candidate whose end timestamp equals the window start (or whose start equals t
 
 The canonical semantics are: `overlaps` matches candidates with `candidate_end > window_start AND candidate_start < window_end`; `within_window` matches candidates with `candidate_start >= window_start AND candidate_end <= window_end`; `covers_window` matches candidates with `candidate_start <= window_start AND candidate_end >= window_end`.
 Interval policies are input-level policy choices, not category-specific algorithms.
+
 ### Requirement: Input filter rules
 A station input MAY declare a `filter` list of named filter rules. Filter rules MUST be applied after window-match filtering and before interval grouping and winner selection. Each filter rule MUST reduce or preserve the surviving candidate set and MUST NOT introduce new candidates. Rules are applied in declaration order and a candidate MUST pass all declared rules to survive.
 
@@ -502,7 +518,6 @@ A station input MAY declare a `filter` list of named filter rules. Filter rules 
 - **GIVEN** a mandatory input whose entire candidate set is eliminated by a filter rule
 - **WHEN** input resolution completes
 - **THEN** the input resolves to no winners with a selection reason identifying the filter rule, and run preparation fails
-
 
 **Additional normative rules for this requirement:**
 
@@ -524,8 +539,8 @@ For each resolved or missing input, the manifest MUST record: file type; categor
 applied `window_match` policy; parsed mission identifier when resolved; parsed start, end, and generation timestamps when resolved; parsed file type when the effective pattern contains `<FILE_TYPE>`; parsed post-generation discriminator or suffix when used by the effective pattern; logical interval identity or equivalent grouping metadata when structured filename matching is used; candidate source folder priority when resolved
 any version or revision metadata derived from filename or sidecar metadata; and the selection reason or tie-break outcome including the winner comparison keys that determined the selected candidate when multiple candidates were considered.
 
-
 The working-root copy of the manifest MUST preserve the same selection metadata persisted in the database and MUST be sufficient for an operator to understand why each selected object won without re-running directory scans.
+
 ### Requirement: Frozen execution context
 The manifest MUST be frozen before dispatch. Once the run reaches the `ready` state, the resolved input set MUST NOT change for that run.
 
@@ -548,6 +563,7 @@ For formats other than `none`, the backend MUST generate a job order only after 
 **Additional normative rules for this requirement:**
 
 If job order generation fails, no scheduler job may be submitted.
+
 ### Requirement: Job order formats
 
 The system-default joborder renderer MUST support exactly these station-declared formats: `yaml` (YAML document), `toml` (TOML document with equivalent structured content), `json` (JSON document with equivalent structured content), and `none` (no joborder file and no joborder artifact).
@@ -568,6 +584,7 @@ If `joborder.format` is omitted, it MUST default to `yaml`.
 If `joborder.name` is omitted and the format is not `none`, the default filename MUST be `joborder.yaml`, `joborder.toml`, or `joborder.json` according to the format.
 `joborder.name` MUST be a relative filename or relative path inside the working root, MUST NOT be absolute, and MUST NOT escape the working root after normalization.
 If `joborder.format` is `none`, `joborder.name` and `joborder.include` MUST be absent or empty, `VERIPROC_JOBORDER_PATH` MUST NOT be injected, and station execution arguments MUST NOT reference `<joborder>` or `<joborder.path>`; `none` is an explicit station contract that no serialized joborder is presented to the algorithm, while the resolved manifest, station revision, run record, and command arguments still form a frozen auditable execution context.
+
 ### Requirement: Job order renderers
 
 The rules in this requirement are normative and MUST be satisfied by the implementation.
@@ -591,6 +608,7 @@ Template rendering supports `joborder.params`, an arbitrary mapping resolved thr
 The template context exposes run, task, station, order-window, input, output, manifest, working-root, and parameter values, and the renderer provides helper functions including `input "FILE_TYPE"` (exactly one resolved input path), `inputs "FILE_TYPE"` (all resolved paths for a file type), `param "name"`, the quoting functions `yamlq`, `tomlq`, and `jsonq`, and the path functions `joinPath`, `basename`, and `dirname`.
 Rendered template output MUST parse as the declared `joborder.format`; generation MUST fail before dispatch if template execution or format validation fails.
 `joborder.include` is only valid with the default renderer; template renderer stations MUST use `joborder.params` instead.
+
 ### Requirement: Default renderer document content
 
 The default renderer's generated job order MUST include, directly or by reference: `veriproc_meta` unless the station explicitly declares `joborder.meta: false` — containing job order schema version, task identity, retry index, run reference, station identity, station revision identity, generator identity, and manifest reference when present; the processing window; a facility block when declared through `joborder.include` or generator policy
@@ -605,10 +623,10 @@ The default renderer's generated job order MUST include, directly or by referenc
 root-level `log_level` when declared through `joborder.include` or generator policy; root-level `dyn_params` containing algorithm-facing variable parameters when declared through `joborder.include` or generator policy; resolved input references pointing into the working-root input namespace (one entry may reference one or several filesystem objects for the same `file_type`); expected output declarations
 and an optional reference to the persisted input manifest.
 
-
 `joborder.meta: false` is valid only for the default renderer and omits the `veriproc_meta` mapping for processors that reject unknown top-level groups; it MUST NOT remove the internal audit records, manifest export, joborder artifact record, run record, or station revision reference maintained by VeriProc.
 
 A `generators.joborder` entry in the instance configuration records a generator identity label only (external generator-module execution is not implemented); the recorded identity MUST still appear in run metadata when audit-relevant or fingerprint-relevant.
+
 ### Requirement: Joborder include merging and reserved names
 
 The station `joborder.include` field is an arbitrary YAML subtree resolved through the station context-reference system before rendering and then merged into the generated joborder document.
@@ -630,6 +648,7 @@ Legacy top-level VeriProc metadata names are also reserved to prevent reintroduc
 If `joborder.include` contains any reserved top-level key or attempts to override a reserved nested generated field, preparation MUST fail.
 Non-reserved mappings are deep-merged deterministically; non-reserved scalar and sequence values are inserted as provided after context resolution.
 The fields `facility`, `dyn_params`, `temporary_folder`, `config_files`, `log_level`, and station-specific algorithm fields are intended to be supplied through `joborder.include` when needed.
+
 ### Requirement: Flat joborder inputs list
 The default job-order model MUST keep `inputs` as one flat list keyed by unique `file_type` values; inputs MUST NOT be split by category unless a station-specific schema explicitly requires it. Within that list, each input entry represents one declared station input and may bind to one or several filesystem objects. The default schema MUST use a `files` field for each entry even when only one object is present; the field name does not restrict entries to regular files.
 
@@ -656,6 +675,7 @@ The working root MUST contain: the configured joborder file when `joborder.forma
 
 and an optional `task-out.yaml` at the working-root root, with `output/task-out.yaml` additionally accepted as an alternate location.
 The backend MUST treat the working root as write-once control context plus mutable run outputs; if partial setup fails, the run MUST be recoverable or safely failed according to the recovery rules.
+
 ### Requirement: Working-root path is not run identity
 
 The working-root path is not the run identity; the canonical run key is `(task_id, retry_index)`.
@@ -670,6 +690,7 @@ Human-readable path components are operational presentation values derived from 
 
 The working-root generator MAY use station ID, task start and end times, retry index, run creation or preparation timestamp, and another deterministic per-run uniqueness component, and MUST NOT require the preferred display form `task_id/rN` to be visible in the path.
 Instance-level `generators.working_root` entries record an identity label only; external generator-module execution is not implemented.
+
 ### Requirement: Runtime environment contract
 
 The execution adapter MUST inject a predefined runtime environment into the job process, including at least `VERIPROC_WORKING_ROOT`, `VERIPROC_STATION_ID`, `VERIPROC_TASK_ID`, `VERIPROC_RETRY_INDEX`, `VERIPROC_RUN_REF`, `VERIPROC_WINDOW_START`, and `VERIPROC_WINDOW_END`; when a joborder file is generated, `VERIPROC_JOBORDER_PATH` MUST also be included.
@@ -691,8 +712,8 @@ When the implementation has a VeriProc job record identifier before launch, it M
 Additional deployment-specific variables may be provided but MUST NOT replace the job order as the primary execution contract when a joborder file is enabled.
 These variables are not serialized into the job order by default and correspond to station context references such as `<working_root>`, `<station_id>`, `<task_id>`, `<retry_index>`, `<run_ref>`, `<start>`, `<end>`, and `<joborder>` when applicable.
 
-
 Station execution SHOULD declare command-line arguments through `execution.executable` and `execution.args`, where each argument is resolved before launch without shell interpretation and passed as strings after context resolution. Implementations MAY offer an explicitly documented shell mode, but the normative execution model avoids shell parsing and therefore shell quoting ambiguity.
+
 ### Requirement: Run lifecycle states
 
 The implementation MUST define an internal run state machine with the states `pending` (task accepted, run not yet materialized for dispatch), `preparing` (working root, manifests, and job order being created), `ready` (preparation finished, queued for scheduler submission), `dispatched` (scheduler accepted the job, waiting for runtime start), `running` (job executing), `finalizing` (scheduler finished, backend validating outputs and routing)
@@ -714,8 +735,8 @@ The states are normative unless an implementation documents an equivalent model 
 `pending`, `preparing`, `ready`, `dispatched`, `running`, and `finalizing` MUST be idempotent to re-enter; `complete`, `failed`, and `cancelled` are stable terminal states, with `failed` terminable only by an operator-triggered retry creating a new run.
 The API MAY expose a simplified subset, but the backend MUST preserve enough internal distinction to recover correctly.
 
-
 Implementation status: there is no separate `dispatching` or `orphaned` state in the current implementation; submission uncertainty between scheduler acceptance and job-record persistence is covered by stale-observation reconciliation for `dispatched`/`running` runs, not by a dedicated run state.
+
 ### Requirement: Asynchronous recovery expectations
 
 The rules in this requirement are normative and MUST be satisfied by the implementation.
@@ -729,6 +750,7 @@ The rules in this requirement are normative and MUST be satisfied by the impleme
 
 The backend recovery rules per non-terminal state are: `pending` resumes setup or marks the run failed if prerequisites are missing; `preparing` reconciles filesystem and database and continues or fails deterministically; `ready` runs are resubmitted by the dispatcher (subject to the known submission-uncertainty limitation); `dispatched` and `running` runs are polled and advanced when runtime evidence appears, preserving logs and status
 and `finalizing` runs re-run validation and downstream reconciliation safely.
+
 ### Requirement: Scheduler adapter operations
 The scheduler adapter MUST support at least: submit job; query job by scheduler identifier; list or reconcile jobs associated with a run when possible; and cancel job when supported. The backend MUST NOT treat submission as complete until it persists the scheduler identifier.
 
@@ -736,7 +758,6 @@ The scheduler adapter MUST support at least: submit job; query job by scheduler 
 - **GIVEN** a scheduler submission that was accepted
 - **WHEN** the scheduler identifier has not yet been persisted
 - **THEN** the submission is not treated as complete
-
 
 **Additional normative rules for this requirement:**
 
@@ -757,8 +778,8 @@ Two distributed SLURM modes are defined: `slurm-native` submits a wrapper with `
 `slurm-docker` submits a wrapper with `sbatch` and on the compute node runs `docker run --rm` with the configured image, bind mounts, user mapping, and runtime environment, then executes the resolved station executable and arguments inside the container.
 The names `plain-slurm` and `docker-slurm` are understandable operator language, but `slurm-native` and `slurm-docker` are preferred.
 
-
 An implementation MAY initially support single-run SLURM submissions only; array submissions and node-packed `srun` batching are optimizations and MUST NOT be required for correctness. If array or packed submissions are added, each VeriProc run MUST still have an independent job record or an unambiguous scheduler-step reference, independent working-root logs, independent exit-code evidence, and independent cancellation/reconciliation behavior.
+
 ### Requirement: SLURM submission construction
 
 The SLURM adapter MUST build submissions from the frozen run context, effective station execution configuration, and merged executor settings.
@@ -781,6 +802,7 @@ Unsupported or unsafe `sbatch` options MUST be rejected during configuration val
 SLURM submission MUST use `sbatch --parsable` or an equivalent machine-readable form so the scheduler identifier can be persisted immediately after admission.
 The job record's executor type MUST be the canonical adapter mode (such as `slurm-native` or `slurm-docker`), and the scheduler identifier MUST be the SLURM job ID or documented job-step identifier returned by the scheduler.
 Submission uncertainty MUST be recorded before any retry decision.
+
 ### Requirement: SLURM wrapper contract
 
 The SLURM wrapper MUST create or verify the working-root subdirectories it owns, including `logs/` and `output/`, without deleting prepared inputs, manifests, joborders, or user-visible audit files.
@@ -801,8 +823,8 @@ It MUST redirect the station process stdout to `logs/run_out.log` and stderr to 
 The wrapper MUST write the station process exit code to an exit-code marker under the working root (for example `.exit_code`) even when the process fails.
 Signal handlers SHOULD translate scheduler termination signals into conventional process exit codes such as `143` for SIGTERM and `130` for SIGINT when the underlying process does not provide a clearer code.
 
-
 For `slurm-docker`, the wrapper MUST generate a stable container name from the run or scheduler identity, pass the same VeriProc runtime environment into the container, bind every required shared root, run as the configured user mapping when provided, and stop the container on SIGTERM or SIGINT when Docker is still running. Docker image, mounts, and user mapping are configuration, not station command arguments, and MUST be recorded or reconstructible from the frozen station revision and effective executor settings.
+
 ### Requirement: SLURM polling state mapping
 
 Polling SHOULD use `sacct`, `squeue`, or equivalent SLURM commands through the configured connection.
@@ -823,6 +845,7 @@ The adapter MUST map scheduler states to executor states without treating schedu
 Typical mappings are: `PENDING`, `CONFIGURING`, and equivalent states to queued; `RUNNING` and completing states to running; `COMPLETED` with exit code `0:0` to succeeded; `FAILED`, non-zero exit code, `TIMEOUT`, `NODE_FAIL`, and other terminal failure states to failed; and `CANCELLED` to cancelled.
 Native scheduler state, elapsed time, node list, and exit-code fields SHOULD be retained as diagnostic metadata when available.
 If scheduler accounting is stale or unavailable, the wrapper exit-code marker MAY be used as reconciliation evidence, but it MUST NOT override an authoritative SLURM terminal failure such as timeout, cancellation, or node failure.
+
 ### Requirement: SLURM cancellation
 Cancellation is supported only when the adapter is configured with a usable `scancel` command and policy permits it. A cancellation request MUST call `scancel` for the scheduler identifier when the job is cancellable, persist cancellation-request state, and rely on polling or reconciliation to observe terminal cancellation. If `scancel` is unavailable, the adapter MUST report cancellation unsupported rather than marking the run cancelled locally.
 
@@ -838,7 +861,6 @@ Scheduler success alone MUST NOT transition a run to `complete`. Completion requ
 - **GIVEN** a run whose scheduler job completed successfully but whose mandatory outputs are missing
 - **WHEN** finalization runs
 - **THEN** validation fails and the run does not transition to `complete`
-
 
 **Additional normative rules for this requirement:**
 
@@ -858,6 +880,7 @@ Under the default `available_only` checksum policy, run completion MUST remain v
 
 Directory output validation in the baseline is object-level validation: existence, expected object kind, effective name or naming-rule compliance, and any explicit station policy.
 Baseline completion MUST NOT depend on recursively inspecting every child entry in a directory output or computing a recursive directory checksum.
+
 ### Requirement: Rolling archive publication declaration
 After mandatory output validation succeeds, the backend MAY publish selected outputs from `working_root/output/` into one or more configured rolling archives according to per-output publication configuration. Each output definition that declares a `publish` block is published independently; outputs without a `publish` block are not published. Publication MUST run after validation and before downstream tasks are created if downstream input discovery depends on the rolling archive location.
 
@@ -887,6 +910,7 @@ By default the publication target path MUST place the published filesystem objec
 If a deployment requires a directory below the archive root, it MUST be declared explicitly through `target_subpath`, which MUST be relative, normalized, and validated not to escape the selected archive root.
 The publication `mode` MUST be explicit — for example `copy`, `move`, `hardlink`, or `symlink` — and MUST be allowed by deployment policy; when absent it defaults to `copy`.
 Directory artifacts MAY be copied or moved as opaque directory trees, or symlinked at the directory root when policy allows; the baseline does not require recursive hardlink behavior for directories.
+
 ### Requirement: Multi-object output publication
 If an output definition is declared as multi-object (`multiple: true`), every validated filesystem object matching the effective filename pattern or glob MUST be recorded as a separate output artifact and published independently. A single output definition MUST NOT collapse a fan-out set to only the newest or lexicographically last matching object.
 
@@ -915,8 +939,8 @@ The backend MUST record publication metadata including source artifact, target r
 Directory publication MUST NOT require per-child checksum verification before copy, move, or symlink publication succeeds.
 Retention cleanup in a rolling archive MUST NOT delete the artifact record or the original working-root output unless a separate retention policy explicitly allows working-root cleanup.
 
-
 Implementation status: the implementation contains two publication paths — a synchronous path inside run finalization that publishes validated outputs directly and records state `published`, and an asynchronous pending-publication worker for records not published synchronously. The asynchronous worker currently resolves every pending record against a single configured archive base rather than per-record archive identity; records whose `ArchiveID` names a different archive are at risk of mispublication (tracked as a Known Issue).
+
 ### Requirement: Publication is not grouping authority
 
 For grouped fan-in workflows, publication of sub-window or sub-granule outputs to a rolling archive is an operational storage concern, not the authoritative grouping mechanism.
@@ -930,6 +954,7 @@ If child outputs are published, the backend MUST still derive aggregation member
 **Additional normative rules for this requirement:**
 
 A deployment MAY define a dedicated rolling archive for sub-window or sub-granule products when separate retention, visibility, or reuse policy is needed; mixing such outputs into a general-purpose archive is permitted only if archive scanning is not the sole mechanism for aggregation membership selection.
+
 ### Requirement: Task-out routing and validation
 
 Downstream routing MAY be driven by an algorithm-produced `task-out.yaml` or by the station revision's default `downstream` list.
@@ -943,6 +968,7 @@ Before creating downstream tasks, the backend MUST validate `task-out.yaml` for:
 **Additional normative rules for this requirement:**
 
 Malformed `task-out.yaml` MUST NOT produce partial downstream creation; the run SHOULD move to `failed` unless station policy explicitly permits fallback routing.
+
 ### Requirement: Split-group representation
 Fractional processing MUST be coordinated by an explicit split group (or equivalent concept). A split group MUST represent: the parent task or parent run; the parent processing window; the intended downstream station or stage; the expected child set or the rule by which completion of the child set is determined; and closure, readiness, and grouped-evaluation state.
 
@@ -955,7 +981,6 @@ Fractional processing MUST be coordinated by an explicit split group (or equival
 - **GIVEN** a split group whose readiness policy has not evaluated true
 - **WHEN** downstream processing is considered
 - **THEN** no aggregation run is triggered
-
 
 **Additional normative rules for this requirement:**
 
@@ -976,7 +1001,6 @@ The station or system policy MUST define: whether all child tasks are known up f
 - **WHEN** the final member becomes terminal
 - **THEN** the group is marked `failed`
 
-
 **Additional normative rules for this requirement:**
 
 The default bounded partial-aggregation policy is: wait until the expected child count has registered; wait until all registered members are terminal; mark the group `complete` and create the aggregation task when at least one member has a canonical completed run; and mark the group `failed` only when all terminal members failed to produce a canonical contribution. Terminal failed members MUST still trigger readiness re-evaluation so the group cannot remain stuck after the final failure.
@@ -996,8 +1020,8 @@ The aggregation task MUST reference exactly one split group.
 
 Its processing window MUST default to the parent window of that split group unless station policy defines another grouped-evaluation window, which MUST be recorded on the split group as a grouped-evaluation window override.
 
-
 The backend MUST determine the aggregation input set from the split-group membership and the canonical completed result of each contributing child task, excluding failed or missing children only when the readiness policy permits partial aggregation. It MUST then materialize that input set into the aggregation run's working root using the same mechanism as any other run: resolved input manifest entries, job-order input references, and symlinks under `working_root/input/`. If validated output publication to a rolling archive is required before downstream consumption, the aggregation input set MUST be derived from the canonical published artifacts selected for that split group; archive location MUST NOT replace split-group membership as the authoritative routing mechanism.
+
 ### Requirement: Processing fingerprint composition
 
 Deduplication MUST be based on a processing fingerprint, not only on station and time window.
@@ -1018,8 +1042,8 @@ The fingerprint MUST include all context that can materially affect scientific o
 rolling archive source identities when archive choice can affect reproducibility; and job order schema version when schema meaning affects execution.
 An implementation MAY include additional fields such as checksums, external calibration versions, or deployment profile identifiers.
 
-
 Implementation status: the current implementation additionally includes the task's `force` flag in the processing fingerprint, so a forced rerun of otherwise-identical context always produces a distinct fingerprint and never collides with the canonical owner; this weakens the fingerprint-as-scientific-context invariant and is tracked as a Known Issue.
+
 ### Requirement: Canonical and non-canonical runs
 If a completed run already owns the same processing fingerprint, the backend MUST NOT dispatch a new canonical run unless explicitly overridden. A request with `force=true` MAY create a new run, but that run MUST be recorded as a non-canonical rerun unless an explicit promotion or replacement action occurs. Forced reruns MUST NOT silently overwrite the previous canonical record. The API MUST let users distinguish canonical completion from superseded or forced reruns.
 
@@ -1050,7 +1074,6 @@ The backend MUST define recovery behavior for failure gaps between every externa
 - **GIVEN** a crash after working root creation but before run record commit
 - **WHEN** the backend restarts
 - **THEN** the current implementation leaves the unowned working root in place and the cleaner only purges DB-recorded entities (Known Issue; deterministic classification or reclamation is not implemented)
-
 
 **Additional normative rules for this requirement:**
 
@@ -1090,3 +1113,25 @@ The architecture assumes explicit operational policy for: working-root retention
 **Additional normative rules for this requirement:**
 
 These policies MAY be deployment-specific, but the control plane SHOULD expose enough metadata to implement them consistently.
+
+### Requirement: Docker container entrypoint override
+
+A station with `execution.mode: slurm-docker` MAY declare
+`execution.container.entrypoint` as a non-empty string (a single entrypoint
+token, per the `docker run --entrypoint` contract). When set, the executor
+MUST pass it to the container runtime as the entrypoint override so that the
+station `executable` and args are interpreted as the container command
+instead of being passed to the image's built-in ENTRYPOINT. When unset,
+behavior MUST remain exactly as today (image entrypoint applies).
+
+#### Scenario: Wrapper script in a processor-entrypoint image
+- **GIVEN** a station image whose ENTRYPOINT is the processor binary and
+  `execution.container.entrypoint` set to a shell
+- **WHEN** the run is dispatched
+- **THEN** the station executable script executes inside the container instead
+  of being passed as an argument to the processor binary
+
+#### Scenario: Default unchanged
+- **GIVEN** a station without `entrypoint`
+- **WHEN** the run is dispatched
+- **THEN** the generated container command is identical to the current output
