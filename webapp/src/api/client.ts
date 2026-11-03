@@ -68,9 +68,16 @@ export class ConsoleClient {
   systemInfo = (): Promise<SystemInfo> =>
     this.send("GET", "/api/console/info");
 
-  dashboard = (instanceID: string, since?: Date): Promise<DashboardInstance> => {
-    const q = since ? `?since=${encodeURIComponent(since.toISOString())}` : "";
-    return this.send("GET", `/api/console/instances/${encodeURIComponent(instanceID)}/dashboard${q}`);
+  dashboard = (
+    instanceID: string,
+    since?: Date,
+    completedInterval?: boolean
+  ): Promise<DashboardInstance> => {
+    const params = new URLSearchParams();
+    if (since) params.set("since", since.toISOString());
+    if (completedInterval) params.set("completed", "1");
+    const qs = params.toString();
+    return this.send("GET", `/api/console/instances/${encodeURIComponent(instanceID)}/dashboard${qs ? "?" + qs : ""}`);
   };
 
   listStationRuns = (

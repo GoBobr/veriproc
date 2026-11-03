@@ -63,6 +63,7 @@ export function DashboardPage() {
               key={inst.id}
               instance={inst}
               refreshIntervalMs={data.ui.refresh_interval_ms}
+              completedVisibilityMs={data.ui.completed_visibility_ms}
             />
           ))}
         </div>

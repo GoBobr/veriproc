@@ -7,6 +7,9 @@ import type { InstanceInfo } from "../api/types";
 interface Props {
   instance: InstanceInfo;
   refreshIntervalMs: number;
+  /** Configured completed_visibility_timeout in ms; 0 means no age pruning
+   *  at all, which disables the toggle (nothing to switch on). */
+  completedVisibilityMs: number;
 }
 
 interface Preset {
@@ -32,39 +35,41 @@ function toLocalInput(d: Date): string {
 interface SinceStore {
   presetMs: number | null;  // non-null → relative preset is active
   customTs: number | null;  // epoch ms, only used when presetMs is null
+  completed: boolean;       // completed-interval toggle state
 }
 
 function sinceKey(instanceId: string) {
   return `veriproc.console.since.${instanceId}`;
 }
 
-function loadSince(instanceId: string): { presetMs: number | null; sinceDate: Date } {
+function loadSince(instanceId: string): { presetMs: number | null; sinceDate: Date; completed: boolean } {
   try {
     const raw = localStorage.getItem(sinceKey(instanceId));
     if (raw) {
       const s = JSON.parse(raw) as SinceStore;
       if (s.presetMs !== null && s.presetMs > 0) {
-        return { presetMs: s.presetMs, sinceDate: new Date(Date.now() - s.presetMs) };
+        return { presetMs: s.presetMs, sinceDate: new Date(Date.now() - s.presetMs), completed: !!s.completed };
       }
       if (s.customTs !== null && !isNaN(s.customTs)) {
-        return { presetMs: null, sinceDate: new Date(s.customTs) };
+        return { presetMs: null, sinceDate: new Date(s.customTs), completed: !!s.completed };
       }
     }
   } catch { /* ignore corrupt storage */ }
-  return { presetMs: DEFAULT_PRESET_MS, sinceDate: new Date(Date.now() - DEFAULT_PRESET_MS) };
+  return { presetMs: DEFAULT_PRESET_MS, sinceDate: new Date(Date.now() - DEFAULT_PRESET_MS), completed: false };
 }
 
-function saveSince(instanceId: string, presetMs: number | null, sinceDate: Date) {
+function saveSince(instanceId: string, presetMs: number | null, sinceDate: Date, completed: boolean) {
   try {
     const s: SinceStore = {
       presetMs,
       customTs: presetMs === null ? sinceDate.getTime() : null,
+      completed,
     };
     localStorage.setItem(sinceKey(instanceId), JSON.stringify(s));
   } catch { /* ignore quota errors */ }
 }
 
-export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
+export function InstanceBlock({ instance, refreshIntervalMs, completedVisibilityMs }: Props) {
   const { client, session } = useAuth();
 
   // activePresetMs tracks which preset button should appear highlighted.
@@ -75,18 +80,25 @@ export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
   const [sinceDate, setSinceDate] = useState<Date>(
     () => loadSince(instance.id).sinceDate
   );
+  // Completed-in-interval toggle. Persisted with the since selection. When
+  // completed_visibility_timeout is 0 the gateway never age-prunes, so the
+  // toggle has nothing to enable and renders disabled.
+  const [showCompleted, setShowCompleted] = useState<boolean>(
+    () => loadSince(instance.id).completed && completedVisibilityMs !== 0
+  );
+  const completedToggleDisabled = completedVisibilityMs === 0;
 
   // Persist whenever the selection changes.
   useEffect(() => {
-    saveSince(instance.id, activePresetMs, sinceDate);
-  }, [instance.id, activePresetMs, sinceDate]);
+    saveSince(instance.id, activePresetMs, sinceDate, showCompleted);
+  }, [instance.id, activePresetMs, sinceDate, showCompleted]);
 
   const { data, error, loading, refresh } = usePoll(
-    () => client.dashboard(instance.id, sinceDate),
+    () => client.dashboard(instance.id, sinceDate, showCompleted ? true : undefined),
     refreshIntervalMs,
     // Re-fetch on login/logout: the relayed upstream credential changes with
     // the session, so an access-denied pane must be re-evaluated immediately.
-    [instance.id, sinceDate, session?.token]
+    [instance.id, sinceDate, showCompleted, session?.token]
   );
 
   const onPreset = (ms: number) => {
@@ -136,6 +148,22 @@ export function InstanceBlock({ instance, refreshIntervalMs }: Props) {
           onInput={(e) => onPickerChange((e.target as HTMLInputElement).value)}
           title="Set a custom since date/time"
         />
+        <label
+          class="completed-toggle"
+          title={
+            completedToggleDisabled
+              ? "disabled in config — completed_visibility_timeout is 0"
+              : "Show completed runs within the selected interval (ignores the visibility timeout)"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={showCompleted && !completedToggleDisabled}
+            disabled={completedToggleDisabled}
+            onChange={() => setShowCompleted(!showCompleted)}
+          />
+          completed
+        </label>
         {data?.last_refresh && (
           <span class="last-refresh">
             @ {new Date(data.last_refresh).toLocaleTimeString()}

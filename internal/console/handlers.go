@@ -126,6 +126,19 @@ func (g *Gateway) parseSince(r *http.Request) time.Time {
 	return g.now().Add(-g.cfg.UI.DefaultStatsSince).UTC()
 }
 
+// parseCompletedFlag reads the optional completed=... query parameter on
+// the dashboard endpoint. When truthy ("1", "true", "yes"), completed
+// slots are pruned by the request's since window instead of the configured
+// visibility timeout. Absent or false keeps the default behavior.
+func parseCompletedFlag(r *http.Request) bool {
+	v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("completed")))
+	switch v {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
 func (g *Gateway) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	instanceID := r.PathValue("instance_id")
 	if _, ok := g.instance(instanceID); !ok {
@@ -133,7 +146,7 @@ func (g *Gateway) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since := g.parseSince(r)
-	view := g.BuildInstanceDashboard(r.Context(), instanceID, since)
+	view := g.BuildInstanceDashboard(r.Context(), instanceID, since, parseCompletedFlag(r))
 	writeJSON(w, http.StatusOK, view)
 }
 

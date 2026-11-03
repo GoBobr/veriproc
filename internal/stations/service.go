@@ -11,16 +11,10 @@ import (
 	"github.com/gobobr/veriproc/internal/store"
 )
 
-// defaultCompletedVisibilityTimeout is 0, meaning no cutoff: the upstream
-// returns all completed slots and lets the console gateway decide what to
-// display based on its own completed_visibility_timeout setting.
-const defaultCompletedVisibilityTimeout = time.Duration(0)
-
 // Service provides operator-facing station status and control operations.
 type Service struct {
-	store                      *store.Store
-	clock                      func() time.Time
-	completedVisibilityTimeout time.Duration
+	store *store.Store
+	clock func() time.Time
 	// stationOrder is the display ordering applied by List/Summary. When nil
 	// the DB default (station_id alphabetical) is used.
 	stationOrder []string
@@ -68,18 +62,7 @@ func NewService(st *store.Store, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{store: st, clock: now, completedVisibilityTimeout: defaultCompletedVisibilityTimeout}
-}
-
-// SetCompletedVisibilityTimeout overrides the completed-slot age cutoff
-// applied when building the station summary. A value of 0 (the default)
-// means no cutoff: all completed runs within the slot list limit are returned.
-// Negative values are treated as 0 (no cutoff).
-func (s *Service) SetCompletedVisibilityTimeout(d time.Duration) {
-	if d < 0 {
-		d = 0
-	}
-	s.completedVisibilityTimeout = d
+	return &Service{store: st, clock: now}
 }
 
 // SetStationOrder configures the display order for List and Summary.
@@ -336,12 +319,8 @@ func (s *Service) summaryForStation(ctx context.Context, base StationView, since
 		return base, err
 	}
 
-	// When completedVisibilityTimeout is 0 there is no cutoff: all completed
-	// runs within the fetched page are eligible. When > 0, apply the cutoff.
-	var cutoff time.Time
-	if s.completedVisibilityTimeout > 0 {
-		cutoff = now.Add(-s.completedVisibilityTimeout)
-	}
+	// Completed slots are never excluded by age: visibility pruning for
+	// display is owned by the console gateway.
 	queuedAcceptedNoRun := 0
 	for _, t := range acceptedPage.Items {
 		if !t.LatestRetryIndex.Valid {
@@ -360,13 +339,6 @@ func (s *Service) summaryForStation(ctx context.Context, base StationView, since
 		case "ready", "dispatched":
 			queued = append(queued, r)
 		case "complete":
-			if !cutoff.IsZero() && r.TerminalAt.Valid && r.TerminalAt.Time.UTC().Before(cutoff) {
-				// Aged-out per the configured cutoff; exclude from slot list.
-				if r.TerminalAt.Valid && !r.TerminalAt.Time.UTC().Before(since) {
-					base.Counts.Success++
-				}
-				continue
-			}
 			completed = append(completed, r)
 			if r.TerminalAt.Valid && !r.TerminalAt.Time.UTC().Before(since) {
 				base.Counts.Success++
