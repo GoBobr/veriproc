@@ -80,7 +80,8 @@ without losing core controls.
 - **WHEN** an instance block is displayed
 - **THEN** it MUST contain an instance title and health indicator, a last-refresh timestamp, a date-time
   picker selecting the beginning of the statistics interval, optional quick presets (e.g. last 6h/24h/3d/7d),
-  and a scrollable list of station rows
+  a completed-runs toggle as specified by the Completed Interval Toggle requirement, and a scrollable list of
+  station rows
 - **AND** the selected interval MUST mean from the selected timestamp until current backend time
 - **AND** counters in that instance block MUST be computed against that interval
 
@@ -99,7 +100,9 @@ visible execution slots (default 12), and per-interval success and failure count
 - **AND** failed runs and failed tasks with no run ever created MUST remain visible in red until an operator
   explicitly hides them
 - **AND** completed runs MUST remain visible for a configurable visibility timeout (30s recommended) and MUST
-  disappear automatically after the backend observes successful terminal completion and the timeout expires
+  disappear automatically after the backend observes successful terminal completion and the timeout expires,
+  except while the completed-runs toggle is active, in which case they MUST remain visible until their
+  terminal timestamp falls outside the selected interval
 
 #### Scenario: Deterministic slot ordering
 
@@ -126,6 +129,40 @@ visible execution slots (default 12), and per-interval success and failure count
   `cnt_fail` MUST count runs or tasks reaching failed or cancelled terminal state during the interval
 - **AND** the implementation MUST document whether counters are task-based or run-based, with run-based
   counting preferred
+
+### Requirement: Completed Interval Toggle
+
+Each dashboard instance block SHALL offer a completed-runs toggle next to the since date-time picker. When active, completed runs whose terminal timestamp falls within the selected since interval SHALL be shown in the slot rows, ignoring the configured completed-run visibility timeout; when inactive, the timeout applies unchanged.
+
+#### Scenario: Toggle active shows interval completions
+
+- **GIVEN** a station with completed runs whose terminal timestamps are older than the visibility timeout but within the selected since interval
+- **WHEN** the completed-runs toggle is active
+- **THEN** those completed runs appear in the station slot rows
+
+#### Scenario: Toggle inactive keeps timeout pruning
+
+- **GIVEN** the same station and interval
+- **WHEN** the completed-runs toggle is inactive
+- **THEN** completed runs older than the visibility timeout do not appear in the slot rows
+
+#### Scenario: Dashboard request carries the completed mode
+
+- **GIVEN** the completed-runs toggle is active
+- **WHEN** the instance dashboard is requested
+- **THEN** the request carries a completed flag and the gateway prunes completed slots only when their terminal timestamp precedes the request since time, instead of applying the visibility timeout
+
+#### Scenario: Zero timeout disables the toggle
+
+- **GIVEN** `ui.completed_visibility_timeout` is configured as a zero duration
+- **WHEN** an instance block is rendered
+- **THEN** the completed-runs toggle is disabled and shows a tooltip indicating it is disabled by configuration
+
+#### Scenario: Hidden completions stay hidden
+
+- **GIVEN** a completed run the operator has acknowledged and hidden
+- **WHEN** the completed-runs toggle is active and the run's terminal timestamp is within the selected interval
+- **THEN** the run still does not appear in the slot rows
 
 ### Requirement: Hide Failure Acknowledgment
 
@@ -375,7 +412,8 @@ many upstream calls. The minimum endpoints are:
 **Additional normative rules for this requirement:**
 
 - `GET /api/console/instances`
-- `GET /api/console/instances/{instance_id}/dashboard?since=...`
+- `GET /api/console/instances/{instance_id}/dashboard?since=...&completed=...` (the `completed` flag is
+  optional and additive; omitting it keeps the visibility-timeout behavior)
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/pause`
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/unpause`
 - `POST /api/console/instances/{instance_id}/stations/{station_id}/submissions`
@@ -441,7 +479,9 @@ caller-supplied interval, and a last-authoritative-refresh timestamp.
 - **GIVEN** an upstream station summary
 - **WHEN** the gateway builds the dashboard response
 - **THEN** it MUST merge the summary with its own hidden-run acknowledgment table before returning it
-- **AND** completed runs MUST remain visible only until the configured completed-run visibility timeout expires
+- **AND** completed runs MUST remain visible only until the configured completed-run visibility timeout
+  expires, or, while the completed-runs toggle is active, until their terminal timestamp precedes the
+  request since window
 - **AND** failed or cancelled runs MUST remain visible until hidden through the console acknowledgment action
 - **AND** console-local hiding MUST never call an upstream deletion operation and never mutate upstream run,
   task, artifact, log, or working-root state
@@ -465,12 +505,10 @@ caller-supplied interval, and a last-authoritative-refresh timestamp.
 
 #### Scenario: Visibility timeout alignment
 
-- **GIVEN** the reference upstream summary uses a visible slot limit of 12 and a 30s completed-run visibility
-  timeout
-- **WHEN** the gateway configures its own timeout
-- **THEN** it MAY apply a shorter presentation timeout locally
-- **AND** if it exposes a longer timeout it MUST supplement the summary from task/run queries or reject that
-  configuration, because the upstream summary may already have omitted aged-out completed runs
+- **GIVEN** an upstream station summary
+- **WHEN** completed runs age past any timeout configured on the gateway
+- **THEN** the upstream MUST NOT exclude them from the summary slot list by age; all completed-slot pruning
+  by visibility timeout or since window is a presentation responsibility owned solely by the console gateway
 
 #### Scenario: Pause semantics
 
@@ -513,7 +551,8 @@ The upstream `veriprocd` capabilities required by the console SHALL be covered b
 The upstream test suite MUST verify at minimum:
 
 - station listing and paused-state reporting
-- station-summary aggregation for running, queued, completed-with-timeout, failed, and cancelled runs
+- station-summary aggregation for running, queued, completed, failed, and cancelled runs, with completed runs
+  never excluded by age
 - retry eligibility and retry endpoint behavior
 - pause and unpause endpoint behavior and authorization enforcement
 - run-list retrieval for a task with deterministic ordering

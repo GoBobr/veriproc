@@ -22,7 +22,7 @@ func TestExpandStationRow_OrderingAndPadding(t *testing.T) {
 		QueuedCount:  1,
 		Counts:       SummaryCounts{Success: 10, Failure: 1},
 	}
-	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now)
+	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now, false, now.Add(-time.Hour))
 	if len(row.Slots) != 12 {
 		t.Fatalf("expected 12 slots, got %d", len(row.Slots))
 	}
@@ -48,7 +48,7 @@ func TestExpandStationRow_CompletedAgesOut(t *testing.T) {
 			{Kind: "completed", TaskID: "t2", TerminalAt: ptrTime(now.Add(-1 * time.Second))},
 		},
 	}
-	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now)
+	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now, false, now.Add(-time.Hour))
 	completed := 0
 	for _, s := range row.Slots {
 		if s.Kind == SlotCompleted {
@@ -75,7 +75,7 @@ func TestExpandStationRow_HiddenFailedSuppressed(t *testing.T) {
 	hidden := map[HiddenRunKey]struct{}{
 		{InstanceID: "vp1", StationID: "STA", TaskID: "t1", RetryIndex: 0}: {},
 	}
-	row := ExpandStationRow(summary, hidden, "vp1", 12, 30*time.Second, now)
+	row := ExpandStationRow(summary, hidden, "vp1", 12, 30*time.Second, now, false, now.Add(-time.Hour))
 	failed := 0
 	for _, s := range row.Slots {
 		if s.Kind == SlotFailed {
@@ -96,7 +96,7 @@ func TestExpandStationRow_Overflow(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		slots = append(slots, SummarySlot{Kind: "running", TaskID: "t", RetryIndex: i, State: "running"})
 	}
-	row := ExpandStationRow(StationSummary{StationID: "STA", Slots: slots}, nil, "vp1", 12, 30*time.Second, now)
+	row := ExpandStationRow(StationSummary{StationID: "STA", Slots: slots}, nil, "vp1", 12, 30*time.Second, now, false, now.Add(-time.Hour))
 	if row.Overflow != 3 {
 		t.Errorf("overflow = %d, want 3", row.Overflow)
 	}
@@ -116,7 +116,7 @@ func TestExpandStationRow_MixedKinds(t *testing.T) {
 			{Kind: "failed", TaskID: "f1", TerminalAt: ptrTime(now.Add(-time.Second))},
 		},
 	}
-	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now)
+	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now, false, now.Add(-time.Hour))
 	if row.Slots[0].Kind != SlotRunning {
 		t.Errorf("first slot must be running")
 	}
@@ -128,5 +128,95 @@ func TestExpandStationRow_MixedKinds(t *testing.T) {
 	}
 	if row.Slots[3].Kind != SlotFailed {
 		t.Errorf("fourth slot must be failed")
+	}
+}
+
+// TestExpandStationRow_CompletedIntervalToggle — with the toggle on, the
+// visibility timeout is ignored: completed runs whose terminal time is
+// inside the since window stay visible even when far older than the
+// timeout, and those before since are pruned instead.
+func TestExpandStationRow_CompletedIntervalToggle(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	since := now.Add(-24 * time.Hour)
+	summary := StationSummary{
+		StationID: "STA",
+		Slots: []SummarySlot{
+			// Terminal 2h ago: outside the 30s timeout, inside since.
+			{Kind: "completed", TaskID: "in-window", RetryIndex: 0, TerminalAt: ptrTime(now.Add(-2 * time.Hour))},
+			// Terminal 3 days ago: outside both timeout and since.
+			{Kind: "completed", TaskID: "before-window", RetryIndex: 0, TerminalAt: ptrTime(now.Add(-72 * time.Hour))},
+		},
+	}
+	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now, true, since)
+	for _, s := range row.Slots {
+		if s.Kind != SlotCompleted {
+			continue
+		}
+		if s.TaskID == "before-window" {
+			t.Errorf("completed slot before since window must be pruned in interval mode")
+		}
+	}
+	seen := false
+	for _, s := range row.Slots {
+		if s.Kind == SlotCompleted && s.TaskID == "in-window" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Errorf("completed slot inside since window (aged past timeout) must be visible in interval mode")
+	}
+}
+
+// TestExpandStationRow_CompletedIntervalToggleHiddenStillSuppressed —
+// operator-acknowledged hidden completed runs stay hidden when the toggle
+// is active; the toggle overrides only age-based pruning.
+func TestExpandStationRow_CompletedIntervalToggleHiddenStillSuppressed(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	since := now.Add(-24 * time.Hour)
+	summary := StationSummary{
+		StationID: "STA",
+		Slots: []SummarySlot{
+			{Kind: "completed", TaskID: "ack", RetryIndex: 0, TerminalAt: ptrTime(now.Add(-2 * time.Hour))},
+			{Kind: "completed", TaskID: "live", RetryIndex: 0, TerminalAt: ptrTime(now.Add(-2 * time.Hour))},
+		},
+	}
+	hidden := map[HiddenRunKey]struct{}{
+		{InstanceID: "vp1", StationID: "STA", TaskID: "ack", RetryIndex: 0}: {},
+	}
+	row := ExpandStationRow(summary, hidden, "vp1", 12, 30*time.Second, now, true, since)
+	completed := 0
+	for _, s := range row.Slots {
+		if s.Kind != SlotCompleted {
+			continue
+		}
+		completed++
+		if s.TaskID == "ack" {
+			t.Errorf("hidden completed run must stay suppressed in interval mode")
+		}
+	}
+	if completed != 1 {
+		t.Errorf("expected exactly one completed slot, got %d", completed)
+	}
+}
+
+// TestExpandStationRow_CompletedIntervalToggleNoTerminalAt — completed
+// slots without a terminal time are kept in interval mode.
+func TestExpandStationRow_CompletedIntervalToggleNoTerminalAt(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	summary := StationSummary{
+		StationID: "STA",
+		Slots: []SummarySlot{
+			{Kind: "completed", TaskID: "no-terminal", RetryIndex: 0},
+		},
+	}
+	row := ExpandStationRow(summary, nil, "vp1", 12, 30*time.Second, now, true, now.Add(-time.Hour))
+	seen := false
+	for _, s := range row.Slots {
+		if s.Kind == SlotCompleted && s.TaskID == "no-terminal" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Errorf("completed slot without terminal_at must be kept in interval mode")
 	}
 }

@@ -252,6 +252,59 @@ func TestRouter_DashboardForViewer(t *testing.T) {
 	}
 }
 
+// TestRouter_DashboardCompletedFlag — the dashboard endpoint's completed=1
+// query parameter switches completed-slot pruning from the visibility
+// timeout to the since window: with the flag, a completion older than the
+// 30s timeout but within since stays visible; without the flag it is aged
+// out; an absent parameter behaves like flag off.
+func TestRouter_DashboardCompletedFlag(t *testing.T) {
+	now := nowForTest()
+	old := now.Add(-2 * time.Hour)
+	fake := &fakeUpstream{
+		summary: StationsSummary{
+			Items: []StationSummary{{
+				StationID: "STA", Paused: false,
+				Slots: []SummarySlot{{Kind: "completed", TaskID: "t-old", RetryIndex: 0, State: "complete", TerminalAt: &old}},
+			}},
+		},
+	}
+	gw, _ := newTestGateway(t, fake)
+	rt := gw.Router(nil)
+
+	completedVisible := func(q string) bool {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		rt.ServeHTTP(rr, authedRequest("GET", "/api/console/instances/vp1/dashboard"+q, "viewertok", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+		}
+		var view DashboardInstance
+		if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range view.Stations[0].Slots {
+			if s.Kind == SlotCompleted && s.TaskID == "t-old" {
+				return true
+			}
+		}
+		return false
+	}
+
+	since := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	if visible := completedVisible("?since=" + since + "&completed=1"); !visible {
+		t.Errorf("completed=1: aged-out completion inside since window should be visible")
+	}
+	if visible := completedVisible("?since=" + since + "&completed=true"); !visible {
+		t.Errorf("completed=true: aged-out completion inside since window should be visible")
+	}
+	if visible := completedVisible("?since=" + since); visible {
+		t.Errorf("no flag: aged-out completion should not be visible")
+	}
+	if visible := completedVisible("?since=" + since + "&completed=0"); visible {
+		t.Errorf("completed=0: aged-out completion should not be visible")
+	}
+}
+
 func TestRouter_PauseRequiresOperator(t *testing.T) {
 	fake := &fakeUpstream{}
 	gw, _ := newTestGateway(t, fake)

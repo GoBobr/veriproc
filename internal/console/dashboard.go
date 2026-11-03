@@ -71,6 +71,10 @@ type DashboardInstance struct {
 //
 // completedVisibility prunes completed slots whose terminal time is older
 // than now-completedVisibility.
+//
+// When showCompletedInInterval is true, the pruning rule changes: completed
+// slots are kept whenever their terminal time is not before since, ignoring
+// completedVisibility. This backs the dashboard "completed" toggle.
 func ExpandStationRow(
 	summary StationSummary,
 	hidden map[HiddenRunKey]struct{},
@@ -78,6 +82,8 @@ func ExpandStationRow(
 	visibleSlotCount int,
 	completedVisibility time.Duration,
 	now time.Time,
+	showCompletedInInterval bool,
+	since time.Time,
 ) DashboardStationRow {
 	row := DashboardStationRow{
 		StationID:    summary.StationID,
@@ -109,7 +115,14 @@ func ExpandStationRow(
 		case "running":
 			running = append(running, slot)
 		case "completed":
-			if completedVisibility > 0 && s.TerminalAt != nil && now.Sub(*s.TerminalAt) > completedVisibility {
+			if showCompletedInInterval {
+				// Interval mode: keep completed slots whose terminal time is
+				// within the since window, ignoring the visibility timeout.
+				// Slots without a terminal time are kept.
+				if s.TerminalAt != nil && s.TerminalAt.Before(since) {
+					continue
+				}
+			} else if completedVisibility > 0 && s.TerminalAt != nil && now.Sub(*s.TerminalAt) > completedVisibility {
 				// Aged-out; skip.
 				continue
 			}
@@ -161,7 +174,7 @@ func ExpandStationRow(
 // hop was refused, which the frontend renders as a permission notice instead
 // of a raw error blob. Stations is always non-nil so the JSON never carries
 // "stations": null.
-func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string, since time.Time) DashboardInstance {
+func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string, since time.Time, showCompletedInInterval bool) DashboardInstance {
 	inst, ok := g.instance(instanceID)
 	now := g.now()
 	view := DashboardInstance{
@@ -201,7 +214,7 @@ func (g *Gateway) BuildInstanceDashboard(ctx context.Context, instanceID string,
 		// Augment the summary with tasks that failed immediately (no run was
 		// ever created for them) so the operator has visibility.
 		augmented := g.injectRunlessFailed(ctx, inst, s, since)
-		row := ExpandStationRow(augmented, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility.D, now)
+		row := ExpandStationRow(augmented, hidden, instanceID, g.cfg.UI.VisibleSlotCount, g.cfg.UI.CompletedVisibility.D, now, showCompletedInInterval, since)
 		rows = append(rows, row)
 	}
 	view.Stations = rows

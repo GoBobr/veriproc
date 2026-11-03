@@ -15,6 +15,9 @@ flowchart LR
 ## 10.1 What it provides
 
 - A dashboard aggregating tasks, runs, and station health across configured instances.
+- Per-instance interval filters (`since` presets plus a custom date-time picker) and a
+  "completed" toggle that shows every job finished inside the selected interval
+  regardless of the completed-visibility timeout.
 - Browsing of run trees and file previews within allow-listed filesystem roots.
 - Its own authentication (`viewer`/`operator` tokens), independent of upstream daemons.
 - A small SQLite database for console tokens, audit, and UI state.
@@ -95,7 +98,7 @@ instances:
 | `http` | `bind_addr` | Address the console UI/API listens on. |
 | `ui` | `refresh_interval` | How often the dashboard refreshes. |
 | `ui` | `visible_slot_count` | Number of live processing slots displayed. |
-| `ui` | `completed_visibility_timeout` | How long completed items stay visible. |
+| `ui` | `completed_visibility_timeout` | How long completed items stay visible. `0` disables age-based pruning: completed jobs then always remain in the rows and the dashboard "completed" toggle is disabled. |
 | `ui` | `default_stats_since` | Default statistics lookback window. |
 | `ui` | `upstream_summary_timeout` | Per-instance summary fetch timeout. |
 | `ui` | `preview_max_bytes` | Maximum file-preview size. |
@@ -183,6 +186,25 @@ instance listing, and per-instance proxy endpoints) under `/api/console`. The br
 consumes these; you normally do not call them directly. Upstream calls honor each
 instance's `upstream_timeout_ms`, so a slow or down instance degrades gracefully rather
 than blocking the whole dashboard.
+
+### Dashboard endpoint
+
+```
+GET /api/console/instances/{instance_id}/dashboard?since=...&completed=...
+```
+
+Returns the pre-shaped dashboard view (station rows, slot occupants, interval counters).
+Supports the following query parameters:
+
+| Param | Meaning |
+|-------|---------|
+| `since` | RFC3339 start of the statistics interval. Defaults to now minus `ui.default_stats_since`. |
+| `completed` | Optional. When truthy (`1`, `true`, `yes`), completed slots are pruned by the `since` window instead of `ui.completed_visibility_timeout`: a job that finished inside the interval stays visible however long ago it completed. This backs the dashboard "completed" checkbox. |
+
+Two bounds worth knowing when the toggle is on with a wide interval: the upstream station
+summary lists the 200 most recent runs per station, so much older completions may be
+absent from the slot rows entirely (their count is still reflected in the interval
+counters), and operator-acknowledged (hidden) completed runs remain hidden.
 
 ### Station activity endpoint
 
