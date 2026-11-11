@@ -100,10 +100,15 @@ config normalization. Warnings are returned to `main.go` (callback or
 returned slice) since the loader has no logger; simplest: `LoadDirs`
 returns `(specs, warnings []string, err)` and main logs them.
 
-### D5: `station_order` stays global (user decision #4)
+### D5: `station_order` stays global; default is global alphabetical (revised)
 
-`main.go` builds `loadedDirOrder` from the concatenated spec order
-returned by `LoadDirs`. `SetStationOrder` unchanged.
+`storage.station_order`, when set, orders loaded stations globally across
+roots. When unset, the daemon no longer applies a load-order fallback:
+listings fall back to the store's default `ORDER BY station_id` — global
+station_id-alphabetical, independent of root count — instead of the
+per-root-concatenated load order. (Revision of the initial per-root
+fallback after operator feedback: display order should not depend on
+which root a station came from.)
 
 ### D6: env-driven include lists
 

@@ -166,9 +166,12 @@ func TestLoadDirs_LoadDirWrapperUnfiltered(t *testing.T) {
 	}
 }
 
-// Scenario: Fallback order is root order then lexical — the order of specs
-// from LoadDirs feeds the daemon's loadedDirOrder fallback. Two roots with
-// reversed lexical content must not interleave.
+// LoadDirs returns specs in deterministic per-root lexical order (root
+// order, then folder order within each root). Display ordering is a
+// service concern and defaults to global station_id-alphabetical when no
+// station_order is set — see load_dirs_retirement_test.go and the store's
+// ORDER BY station_id. This test pins the loader's own deterministic
+// ordering only.
 func TestLoadDirs_FallbackOrderRootThenLexical(t *testing.T) {
 	// root A listed first contains a station that would sort LAST lexically.
 	rootA := t.TempDir()
@@ -177,7 +180,7 @@ func TestLoadDirs_FallbackOrderRootThenLexical(t *testing.T) {
 	writeStation(t, rootB, "a-alpha", "station_id: ALPHA\nstation_name: A\n")
 	got := loadIDs(t, []stations.RootSpec{{Dir: rootA}, {Dir: rootB}})
 	if strings.Join(got, ",") != "ZETA,ALPHA" {
-		t.Fatalf("fallback order = %v, want root order then lexical: ZETA,ALPHA", got)
+		t.Fatalf("loader spec order = %v, want root order then lexical: ZETA,ALPHA", got)
 	}
 }
 

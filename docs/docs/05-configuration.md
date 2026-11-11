@@ -244,8 +244,8 @@ Rules:
 - A configured root directory that does not exist is skipped with a startup
   warning; roots whose path expands to an empty string (env var unset) are
   dropped silently.
-- `station_order` stays global; without it the fallback display order is
-  per-root directory-alphabetical, concatenated in root configuration order.
+- `station_order` stays global; without it, station listings default to
+global station_id-alphabetical order regardless of the number of roots.
 
 This replaces the earlier docker-compose bind-mount-overlay pattern for
 per-instance station subsets: ghost stations can live in their own directory

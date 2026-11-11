@@ -120,9 +120,9 @@ whose path expands to an empty string SHALL be dropped silently.
 ### Requirement: Station order remains global
 
 The `storage.station_order` setting SHALL order loaded stations globally
-across all roots. When it is not set, the directory-alphabetical fallback
-SHALL be computed per root in configuration order, concatenated in root
-order, remaining deterministic across restarts.
+across all roots. When it is not set, station listings SHALL default to
+global station_id-alphabetical order, independent of how many roots the
+stations were loaded from.
 
 #### Scenario: Explicit order spans roots
 
@@ -131,10 +131,10 @@ order, remaining deterministic across restarts.
 - **WHEN** station listings are produced
 - **THEN** `beta` appears before `alpha`
 
-#### Scenario: Fallback order is root order then lexical
+#### Scenario: Fallback order is global alphabetical
 
-- **GIVEN** root A (listed first) contains station `zeta` and root B
-  contains station `alpha`, and no `storage.station_order` is set
+- **GIVEN** root A contains station `zeta` and root B contains station
+  `alpha`, and no `storage.station_order` is set
 - **WHEN** station listings are produced
-- **THEN** `zeta` from root A precedes `alpha` from root B in the fallback
-  display order
+- **THEN** `alpha` precedes `zeta` regardless of which root each station
+  was loaded from
