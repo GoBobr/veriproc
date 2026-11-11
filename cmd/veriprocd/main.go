@@ -82,6 +82,7 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
+	var loadedDirOrder []string // station IDs in global folder-name order (fallback display order)
 	if len(cfg.Storage.StationConfigRoots) > 0 {
 		roots := make([]stations.RootSpec, 0, len(cfg.Storage.StationConfigRoots))
 		for _, r := range cfg.Storage.StationConfigRoots {
@@ -102,6 +103,10 @@ func run(args []string) error {
 			logger.Warn().Str("warning", w).Msg("station loading")
 		}
 		logger.Info().Int("roots", len(roots)).Int("count", len(specs)).Msg("loaded stations")
+		loadedDirOrder = make([]string, len(specs))
+		for i, sp := range specs {
+			loadedDirOrder[i] = sp.StationID
+		}
 	}
 	taskSvc := tasks.NewService(st, registry, nil, nil)
 	taskSvc.SetNaming(cfg.Naming)
@@ -116,11 +121,18 @@ func run(args []string) error {
 	// Wire the config view to the startup-loaded registry, instance
 	// definitions, and startup env snapshot (secret redaction).
 	stationSvc.SetConfigSource(registry, registry, cfg.Definitions, env)
-	// Display order: explicit station_order wins; otherwise listings default
-	// to global station_id-alphabetical from the store — independent of how
-	// many station config roots the stations were loaded from.
-	if len(cfg.Storage.StationOrder) > 0 {
+	// Display order: explicit station_order wins (fixed list, unlisted
+	// stations appended alphabetically). Otherwise the station_sort mode
+	// picks the fallback: folder_name (default) = global config-folder-name
+	// order across all roots; station_id = global station_id-alphabetical
+	// (the store default).
+	switch {
+	case len(cfg.Storage.StationOrder) > 0:
 		stationSvc.SetStationOrder(cfg.Storage.StationOrder)
+	case cfg.Storage.StationSort == "station_id":
+		// no SetStationOrder: listings keep the store's ORDER BY station_id
+	case len(loadedDirOrder) > 0:
+		stationSvc.SetStationOrder(loadedDirOrder)
 	}
 	// Startup drift warning: store-known, non-retired stations whose config
 	// folders are missing (e.g. after a station rename or delete, or a

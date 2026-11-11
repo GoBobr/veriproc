@@ -261,10 +261,10 @@ func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Sto
 
 // LoadDirs scans every root for */station.yaml, applies each root's include
 // filter by station ID, computes revision hashes, and seeds the supplied
-// registry/store from the union of loaded stations. Within each root, files
-// are processed in lexical path order and roots are processed in the order
-// given, so duplicate detection and the fallback display order are
-// deterministic (per-root lexical, concatenated in root order).
+// registry/store from the union of loaded stations. The returned specs are
+// in GLOBAL station-folder-name order (merged across roots, tie-break
+// station_id), which the daemon uses as fallback display order; duplicate
+// detection within each root uses lexical path order and stays deterministic.
 //
 // A root whose directory does not exist is skipped with a warning string
 // returned to the caller (the loader has no logger); all other read errors
@@ -280,6 +280,7 @@ func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Sto
 func LoadDirs(ctx context.Context, roots []RootSpec, registry *Registry, st *store.Store, env map[string]string) ([]Spec, []string, error) {
 	var warnings []string
 	specs := make([]Spec, 0)
+	dirNames := make([]string, 0) // station folder name per spec (parallel)
 	seen := map[string]string{}
 	for _, root := range roots {
 		paths, err := stationFiles(root.Dir)
@@ -327,12 +328,33 @@ func LoadDirs(ctx context.Context, roots []RootSpec, registry *Registry, st *sto
 			}
 			seen[spec.StationID] = path
 			specs = append(specs, spec)
+			dirNames = append(dirNames, filepath.Base(filepath.Dir(path)))
 		}
 	}
-	if err := registry.Seed(ctx, st, specs...); err != nil {
+	// Order the returned specs by GLOBAL station-folder name, merged across
+	// all roots (tie-break station_id). The load order above is per-root, but
+	// the returned slice doubles as the daemon's fallback display order,
+	// which must disregard which root a station came from — e.g. a station
+	// in config/tds-gen-gaps/02-clim-l2-reformat sorts next to
+	// config/tds-gen/02-clim-l2, as its folder name dictates.
+	idx := make([]int, len(specs))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		if da, db := dirNames[idx[a]], dirNames[idx[b]]; da != db {
+			return da < db
+		}
+		return specs[idx[a]].StationID < specs[idx[b]].StationID
+	})
+	ordered := make([]Spec, len(specs))
+	for i, j := range idx {
+		ordered[i] = specs[j]
+	}
+	if err := registry.Seed(ctx, st, ordered...); err != nil {
 		return nil, warnings, err
 	}
-	return specs, warnings, nil
+	return ordered, warnings, nil
 }
 
 func stationFiles(root string) ([]string, error) {
@@ -340,7 +362,7 @@ func stationFiles(root string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stations: read dir %q: %w", root, err)
 	}
-	var paths []string
+	paths := []string{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

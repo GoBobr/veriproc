@@ -185,3 +185,33 @@ storage:
 		t.Fatalf("roots = %v, want env override to win", rootIDs(cfg))
 	}
 }
+
+// storage.station_sort: default folder_name, accepted values, defaulting of
+// empty, and rejection of unknown values (Requirement: Station order remains
+// global).
+func TestConfig_StationSort(t *testing.T) {
+	valid := map[string]string{
+		"":            "folder_name", // unset -> default
+		"folder_name": "folder_name",
+		"station_id":  "station_id",
+	}
+	for in, want := range valid {
+		body := "instance_id: t\nstorage:\n  working_root_base: /tmp/wr\n"
+		if in != "" {
+			body += "  station_sort: " + in + "\n"
+		}
+		cfgPath := writeCfg(t, body)
+		cfg, err := Load([]string{"--config", cfgPath}, nil)
+		if err != nil {
+			t.Fatalf("station_sort %q: %v", in, err)
+		}
+		if cfg.Storage.StationSort != want {
+			t.Errorf("station_sort %q = %q, want %q", in, cfg.Storage.StationSort, want)
+		}
+	}
+
+	cfgPath := writeCfg(t, "instance_id: t\nstorage:\n  station_sort: bogus\n")
+	if _, err := Load([]string{"--config", cfgPath}, nil); err == nil {
+		t.Fatal("bogus station_sort must be rejected")
+	}
+}

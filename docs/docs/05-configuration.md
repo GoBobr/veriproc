@@ -201,9 +201,9 @@ In Docker, point the path at a writable volume, e.g. `sqlite:///data/veriproc.db
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `working_root_base` | path | — | Base directory under which per-run working roots are created. |
-| `station_config_root` | path | — | Directory scanned for station YAML files at startup (legacy singular form; see `station_config_roots`). |
 | `station_config_roots` | list | — | List of station config roots with optional per-root include filters (see below). |
-| `station_order` | list | (alphabetical) | Optional display order of station IDs. Unlisted stations are appended alphabetically. |
+| `station_order` | list | (sort mode) | Optional explicit display order of station IDs; overrides `station_sort`. Unlisted stations are appended alphabetically. |
+| `station_sort` | enum | `folder_name` | Fallback display order when `station_order` is unset: `folder_name` (global station-folder-name order across all roots) or `station_id` (global station_id-alphabetical). |
 
 ```yaml
 storage:
@@ -244,8 +244,10 @@ Rules:
 - A configured root directory that does not exist is skipped with a startup
   warning; roots whose path expands to an empty string (env var unset) are
   dropped silently.
-- `station_order` stays global; without it, station listings default to
-global station_id-alphabetical order regardless of the number of roots.
+- `station_order` stays global and overrides `station_sort`; without it,
+  `station_sort: folder_name` (default) ranks by station folder name merged
+  across all roots, `station_sort: station_id` ranks by station_id — in
+  both cases root membership does not affect ranking.
 
 This replaces the earlier docker-compose bind-mount-overlay pattern for
 per-instance station subsets: ghost stations can live in their own directory

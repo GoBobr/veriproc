@@ -51,12 +51,14 @@ func writeTwoStationRoot(t *testing.T, idA, idB string) string {
 	return root
 }
 
-// Scenario: Stations from two roots are all loaded
+// Scenario: Stations from two roots are all loaded (specs come back in
+// global folder-name order — both roots use the same folder names here,
+// tie-broken by station_id).
 func TestLoadDirs_TwoRootsAllLoaded(t *testing.T) {
 	rootA := writeTwoStationRoot(t, "GAP-A", "OTHER-A")
 	rootB := writeTwoStationRoot(t, "GAP-B", "OTHER-B")
 	got := loadIDs(t, []stations.RootSpec{{Dir: rootA}, {Dir: rootB}})
-	want := []string{"GAP-A", "OTHER-A", "GAP-B", "OTHER-B"}
+	want := []string{"GAP-A", "GAP-B", "OTHER-A", "OTHER-B"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("loaded %v, want %v", got, want)
 	}
@@ -166,21 +168,28 @@ func TestLoadDirs_LoadDirWrapperUnfiltered(t *testing.T) {
 	}
 }
 
-// LoadDirs returns specs in deterministic per-root lexical order (root
-// order, then folder order within each root). Display ordering is a
-// service concern and defaults to global station_id-alphabetical when no
-// station_order is set — see load_dirs_retirement_test.go and the store's
-// ORDER BY station_id. This test pins the loader's own deterministic
-// ordering only.
-func TestLoadDirs_FallbackOrderRootThenLexical(t *testing.T) {
-	// root A listed first contains a station that would sort LAST lexically.
+// LoadDirs returns specs in global station-folder-name order across all
+// roots (the daemon's fallback display order). Root membership must not
+// matter: root A is listed first, but its zeta-first folder still sorts
+// after root B's a-alpha folder.
+func TestLoadDirs_FallbackOrderGlobalByFolderName(t *testing.T) {
 	rootA := t.TempDir()
 	writeStation(t, rootA, "zeta-first", "station_id: ZETA\nstation_name: Z\n")
 	rootB := t.TempDir()
 	writeStation(t, rootB, "a-alpha", "station_id: ALPHA\nstation_name: A\n")
 	got := loadIDs(t, []stations.RootSpec{{Dir: rootA}, {Dir: rootB}})
-	if strings.Join(got, ",") != "ZETA,ALPHA" {
-		t.Fatalf("loader spec order = %v, want root order then lexical: ZETA,ALPHA", got)
+	if strings.Join(got, ",") != "ALPHA,ZETA" {
+		t.Fatalf("spec order = %v, want global folder-name order: ALPHA,ZETA", got)
+	}
+
+	// Tie-break on station_id when folder names collide across roots.
+	rootC := t.TempDir()
+	writeStation(t, rootC, "same-dir", "station_id: AAA\nstation_name: C1\n")
+	rootD := t.TempDir()
+	writeStation(t, rootD, "same-dir", "station_id: BBB\nstation_name: D1\n")
+	got = loadIDs(t, []stations.RootSpec{{Dir: rootC}, {Dir: rootD}})
+	if strings.Join(got, ",") != "AAA,BBB" {
+		t.Fatalf("tie-break = %v, want AAA,BBB by station_id", got)
 	}
 }
 

@@ -192,9 +192,15 @@ type PathsConfig struct {
 	StationConfigRoot string              `yaml:"station_config_root"`
 	StationConfigRoots []StationConfigRoot `yaml:"station_config_roots"`
 	// StationOrder lists station IDs in the desired display order. When set it
-	// overrides the default directory-alphabetical order. Station IDs not
-	// listed here are appended after the listed ones, sorted alphabetically.
+	// overrides any station_sort mode; station IDs not listed here are
+	// appended after the listed ones, sorted alphabetically.
 	StationOrder []string `yaml:"station_order"`
+	// StationSort selects the fallback display order for listings when
+	// StationOrder is unset: "folder_name" (default) ranks stations by their
+	// config folder name merged across all station_config_roots; "station_id"
+	// ranks them globally by station_id. Only applies to stations loaded at
+	// startup; stores default to station_id order with no stations loaded.
+	StationSort string `yaml:"station_sort"`
 }
 
 // StationConfigRoot is one entry of storage.station_config_roots: a station
@@ -503,6 +509,16 @@ func (c *Config) Validate() error {
 	case "json", "console":
 	default:
 		return fmt.Errorf("config: log.format %q invalid", c.Log.Format)
+	}
+	// storage.station_sort: default folder_name; explicit empty stays
+	// folder_name too (unset = default). Only unknown values are errors.
+	switch c.Storage.StationSort {
+	case "":
+		c.Storage.StationSort = "folder_name"
+	case "folder_name", "station_id":
+	default:
+		return fmt.Errorf("config: storage.station_sort %q invalid; supported values are %q and %q",
+			c.Storage.StationSort, "folder_name", "station_id")
 	}
 	if err := c.validateExecutor(); err != nil {
 		return err

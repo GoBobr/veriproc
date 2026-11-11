@@ -120,9 +120,8 @@ whose path expands to an empty string SHALL be dropped silently.
 ### Requirement: Station order remains global
 
 The `storage.station_order` setting SHALL order loaded stations globally
-across all roots. When it is not set, station listings SHALL default to
-global station_id-alphabetical order, independent of how many roots the
-stations were loaded from.
+across all roots; when set it overrides any sort mode. Unlisted stations
+SHALL be appended after the listed ones in station_id-alphabetical order.
 
 #### Scenario: Explicit order spans roots
 
@@ -131,10 +130,42 @@ stations were loaded from.
 - **WHEN** station listings are produced
 - **THEN** `beta` appears before `alpha`
 
-#### Scenario: Fallback order is global alphabetical
+### Requirement: Station sort mode
 
-- **GIVEN** root A contains station `zeta` and root B contains station
-  `alpha`, and no `storage.station_order` is set
+When `storage.station_order` is not set, the fallback display order for
+station listings SHALL be selected by `storage.station_sort`:
+`folder_name` (the default) ranks stations by their config folder name
+merged across all roots, with root membership never affecting ranking and
+ties broken by station ID; `station_id` ranks stations globally by
+station_id. An invalid value SHALL be a configuration error naming the
+supported values.
+#### Scenario: Fallback order is global folder-name order
+- **GIVEN** root A (listed first) contains station `zeta` in folder
+  `zeta-first` and root B contains station `alpha` in folder `a-alpha`,
+  and no `storage.station_order` or `storage.station_sort` is set
 - **WHEN** station listings are produced
-- **THEN** `alpha` precedes `zeta` regardless of which root each station
-  was loaded from
+- **THEN** `alpha` from root B precedes `zeta` from root A, because the
+  default fallback ranks by station folder name regardless of which root
+  the station was loaded from
+
+#### Scenario: station_id sort mode
+
+- **GIVEN** stations loaded from multiple roots and
+  `storage.station_sort: station_id` with no `storage.station_order`
+- **WHEN** station listings are produced
+- **THEN** stations are ordered globally by station_id, independent of
+  folder names and roots
+
+#### Scenario: Invalid station_sort value is rejected
+
+- **GIVEN** an instance configuration with `storage.station_sort: bogus`
+- **WHEN** the configuration is loaded
+- **THEN** loading fails with an error naming the invalid value and the
+  supported values
+
+#### Scenario: station_order overrides station_sort
+
+- **GIVEN** both `storage.station_order` listing `beta` before `alpha` and
+  `storage.station_sort: station_id`
+- **WHEN** station listings are produced
+- **THEN** `beta` precedes `alpha`, per the explicit order
