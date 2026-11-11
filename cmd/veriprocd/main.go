@@ -82,13 +82,27 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
-	var loadedDirOrder []string // station IDs in directory-alphabetical order
-	if cfg.Storage.StationConfigRoot != "" {
-			specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st, env)
+	var loadedDirOrder []string // station IDs in root-order + directory-alphabetical order
+	if len(cfg.Storage.StationConfigRoots) > 0 {
+		roots := make([]stations.RootSpec, 0, len(cfg.Storage.StationConfigRoots))
+		for _, r := range cfg.Storage.StationConfigRoots {
+			spec := stations.RootSpec{Dir: r.Root}
+			if len(r.Include) > 0 {
+				spec.Include = make(map[string]bool, len(r.Include))
+				for _, id := range r.Include {
+					spec.Include[id] = true
+				}
+			}
+			roots = append(roots, spec)
+		}
+		specs, warnings, err := stations.LoadDirs(context.Background(), roots, registry, st, env)
 		if err != nil {
 			return fmt.Errorf("load stations: %w", err)
 		}
-		logger.Info().Str("dir", cfg.Storage.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
+		for _, w := range warnings {
+			logger.Warn().Str("warning", w).Msg("station loading")
+		}
+		logger.Info().Int("roots", len(roots)).Int("count", len(specs)).Msg("loaded stations")
 		loadedDirOrder = make([]string, len(specs))
 		for i, sp := range specs {
 			loadedDirOrder[i] = sp.StationID
@@ -108,14 +122,15 @@ func run(args []string) error {
 	// definitions, and startup env snapshot (secret redaction).
 	stationSvc.SetConfigSource(registry, registry, cfg.Definitions, env)
 	// Apply station display order: explicit config wins; fall back to
-	// directory-alphabetical order from LoadDir.
+	// root-order + directory-alphabetical order from LoadDirs.
 	if len(cfg.Storage.StationOrder) > 0 {
 		stationSvc.SetStationOrder(cfg.Storage.StationOrder)
 	} else if len(loadedDirOrder) > 0 {
 		stationSvc.SetStationOrder(loadedDirOrder)
 	}
 	// Startup drift warning: store-known, non-retired stations whose config
-	// folders are missing (e.g. after a station rename or delete). Read-only —
+	// folders are missing (e.g. after a station rename or delete, or a
+	// station filtered out of every station_config_roots include list). Read-only — the
 	// the log points at the retirement command; no folders or rows are
 	// created, deleted, or modified here.
 	if missing, err := stationSvc.ListMissing(context.Background()); err != nil {
