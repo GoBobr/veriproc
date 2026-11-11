@@ -1,7 +1,8 @@
 # 6. Stations & Job Orders
 
 A **station** is a configured processing algorithm. You onboard one by writing a YAML file
-under `storage.station_config_root`; the daemon loads all station files at startup and
+under `storage.station_config_root` (or any entry of `storage.station_config_roots`);
+the daemon loads all station files at startup and
 tracks each as an immutable **revision** keyed by a content hash. This page documents the
 station schema, context references, input resolution, and job-order rendering.
 
@@ -477,10 +478,19 @@ Rules and behaviour:
 
 ## 6.7 Retiring and renaming stations
 
-Stations are loaded from `storage.station_config_root` once at daemon startup; adding or
+Stations are loaded once at daemon startup — from `storage.station_config_root`
+or from every entry of `storage.station_config_roots` (see the multi-root docs
+in section 5.7); adding or
 renaming a station is done by creating/renaming its folder and restarting the daemon.
 Because the store keeps every station it has ever seen, a renamed or deleted station
 would otherwise stay listed forever ("ghost station").
+
+A station excluded by its root's `include` filter is in the same position as a
+renamed one: it never registers, so the startup drift warning below fires for it
+if it has store rows from earlier runs, and it can be retired explicitly with
+`veriproc station remove <id>`. If the filter is later widened to include it
+again, the next startup un-retires it automatically — the same lifecycle as a
+folder that comes back.
 
 - Retired ≠ gone: `veriproc station remove <id>` marks all of the station's revision
   rows `retired_at`, hiding it from `station list`, the console, and the web console,

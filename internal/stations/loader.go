@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -241,54 +242,119 @@ type DownstreamTarget struct {
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
-// LoadDir scans root for */station.yaml, computes revision hashes, and seeds
-// the supplied registry/store. Files are processed in lexical path order so
-// duplicate detection is deterministic.
+// RootSpec is one station config root for LoadDirs: a directory plus an
+// optional include filter by station ID. Empty Include loads every station
+// in Dir; non-empty Include loads only stations whose station_id appears in
+// the set — everything else in that root is invisible to the loader (no
+// registry entry, no duplicate detection, no error or warning).
+type RootSpec struct {
+	Dir     string
+	Include map[string]bool
+}
+
+// LoadDir scans a single root for */station.yaml with no filtering. It is a
+// compatibility wrapper over LoadDirs; see LoadDirs for the full semantics.
+func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Store, env map[string]string) ([]Spec, error) {
+	specs, _, err := LoadDirs(ctx, []RootSpec{{Dir: root}}, registry, st, env)
+	return specs, err
+}
+
+// LoadDirs scans every root for */station.yaml, applies each root's include
+// filter by station ID, computes revision hashes, and seeds the supplied
+// registry/store from the union of loaded stations. The returned specs are
+// in GLOBAL station-folder-name order (merged across roots, tie-break
+// station_id), which the daemon uses as fallback display order; duplicate
+// detection within each root uses lexical path order and stays deterministic.
+//
+// A root whose directory does not exist is skipped with a warning string
+// returned to the caller (the loader has no logger); all other read errors
+// are hard errors. Filtered-out stations never reach the registry, duplicate
+// detection, or any spec list: they behave exactly as if their config
+// folders did not exist.
 //
 // env is the process environment map used for ${VAR} expansion inside each
 // station.yaml (and its associated joborder template file, if any). Pass nil
 // to skip expansion; any ${VAR} reference in YAML would then be a literal
 // string, which is almost certainly wrong — prefer passing config.EnvSnapshot()
 // from the daemon entry point.
-func LoadDir(ctx context.Context, root string, registry *Registry, st *store.Store, env map[string]string) ([]Spec, error) {
-	paths, err := stationFiles(root)
-	if err != nil {
-		return nil, err
-	}
-	specs := make([]Spec, 0, len(paths))
+func LoadDirs(ctx context.Context, roots []RootSpec, registry *Registry, st *store.Store, env map[string]string) ([]Spec, []string, error) {
+	var warnings []string
+	specs := make([]Spec, 0)
+	dirNames := make([]string, 0) // station folder name per spec (parallel)
 	seen := map[string]string{}
-	for _, path := range paths {
-		def, err := ReadDefinition(path, env)
+	for _, root := range roots {
+		paths, err := stationFiles(root.Dir)
 		if err != nil {
-			return nil, err
-		}
-		spec, err := SpecFromDefinition(def)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		// Resolve executable path to absolute using the station directory so the
-		// executor can invoke it without knowing the station config root.
-		// The spec's ContentHash is computed from the relative path (deterministic);
-		// we update spec.Execution.Executable separately so the executor and DB
-		// get the runtime-resolved absolute path.
-		if def.Execution.Executable != "" && !filepath.IsAbs(def.Execution.Executable) {
-			stationDir := filepath.Dir(path)
-			absStationDir, err := filepath.Abs(stationDir)
-			if err != nil {
-				return nil, fmt.Errorf("stations: resolve %q: %w", stationDir, err)
+			// A configured root that does not exist is skipped with a
+			// warning (typical for optional ghost-station roots whose env
+			// var is unset); anything else is a real error.
+			if errors.Is(err, fs.ErrNotExist) {
+				warnings = append(warnings, fmt.Sprintf("station config root %q does not exist, skipping", root.Dir))
+				continue
 			}
-			spec.Execution.Executable = filepath.Join(absStationDir, def.Execution.Executable)
+			return nil, warnings, err
 		}
-		if prev, ok := seen[spec.StationID]; ok {
-			return nil, fmt.Errorf("%w: station_id=%s in %s and %s", ErrDuplicateStation, spec.StationID, prev, path)
+		for _, path := range paths {
+			def, err := ReadDefinition(path, env)
+			if err != nil {
+				return nil, warnings, err
+			}
+			spec, err := SpecFromDefinition(def)
+			if err != nil {
+				return nil, warnings, fmt.Errorf("%s: %w", path, err)
+			}
+			// Per-root include filter by station ID, applied before
+			// duplicate detection and before seeding: a filtered-out
+			// station is invisible — exactly as if its folder did not
+			// exist.
+			if len(root.Include) > 0 && !root.Include[spec.StationID] {
+				continue
+			}
+			// Resolve executable path to absolute using the station directory so the
+			// executor can invoke it without knowing the station config root.
+			// The spec's ContentHash is computed from the relative path (deterministic);
+			// we update spec.Execution.Executable separately so the executor and DB
+			// get the runtime-resolved absolute path.
+			if def.Execution.Executable != "" && !filepath.IsAbs(def.Execution.Executable) {
+				stationDir := filepath.Dir(path)
+				absStationDir, err := filepath.Abs(stationDir)
+				if err != nil {
+					return nil, warnings, fmt.Errorf("stations: resolve %q: %w", stationDir, err)
+				}
+				spec.Execution.Executable = filepath.Join(absStationDir, def.Execution.Executable)
+			}
+			if prev, ok := seen[spec.StationID]; ok {
+				return nil, warnings, fmt.Errorf("%w: station_id=%s in %s and %s", ErrDuplicateStation, spec.StationID, prev, path)
+			}
+			seen[spec.StationID] = path
+			specs = append(specs, spec)
+			dirNames = append(dirNames, filepath.Base(filepath.Dir(path)))
 		}
-		seen[spec.StationID] = path
-		specs = append(specs, spec)
 	}
-	if err := registry.Seed(ctx, st, specs...); err != nil {
-		return nil, err
+	// Order the returned specs by GLOBAL station-folder name, merged across
+	// all roots (tie-break station_id). The load order above is per-root, but
+	// the returned slice doubles as the daemon's fallback display order,
+	// which must disregard which root a station came from — e.g. a station
+	// in config/tds-gen-gaps/02-clim-l2-reformat sorts next to
+	// config/tds-gen/02-clim-l2, as its folder name dictates.
+	idx := make([]int, len(specs))
+	for i := range idx {
+		idx[i] = i
 	}
-	return specs, nil
+	sort.SliceStable(idx, func(a, b int) bool {
+		if da, db := dirNames[idx[a]], dirNames[idx[b]]; da != db {
+			return da < db
+		}
+		return specs[idx[a]].StationID < specs[idx[b]].StationID
+	})
+	ordered := make([]Spec, len(specs))
+	for i, j := range idx {
+		ordered[i] = specs[j]
+	}
+	if err := registry.Seed(ctx, st, ordered...); err != nil {
+		return nil, warnings, err
+	}
+	return ordered, warnings, nil
 }
 
 func stationFiles(root string) ([]string, error) {
@@ -296,7 +362,7 @@ func stationFiles(root string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stations: read dir %q: %w", root, err)
 	}
-	var paths []string
+	paths := []string{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

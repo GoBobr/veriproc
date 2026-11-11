@@ -201,8 +201,9 @@ In Docker, point the path at a writable volume, e.g. `sqlite:///data/veriproc.db
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `working_root_base` | path | — | Base directory under which per-run working roots are created. |
-| `station_config_root` | path | — | Directory scanned for station YAML files at startup. |
-| `station_order` | list | (alphabetical) | Optional display order of station IDs. Unlisted stations are appended alphabetically. |
+| `station_config_roots` | list | — | List of station config roots with optional per-root include filters (see below). |
+| `station_order` | list | (sort mode) | Optional explicit display order of station IDs; overrides `station_sort`. Unlisted stations are appended alphabetically. |
+| `station_sort` | enum | `folder_name` | Fallback display order when `station_order` is unset: `folder_name` (global station-folder-name order across all roots) or `station_id` (global station_id-alphabetical). |
 
 ```yaml
 storage:
@@ -211,8 +212,49 @@ storage:
   station_order: [scen-clim, clim-l2, scene-l2]
 ```
 
-## 5.8 `naming` — identity & path policy
+### Multiple station config roots
 
+`storage.station_config_roots` accepts a list of entries, each with a `root`
+path and an optional `include` filter by station ID. At startup the daemon
+scans every root and registers the union of the loaded stations. The legacy
+singular `station_config_root` remains equivalent to a one-entry list with
+no filter; when both are set, the singular key is appended as an extra
+unfiltered root (identical paths are deduplicated, clearing the filter).
+
+```yaml
+storage:
+  station_config_roots:
+    - root: <env:MY_STATION_CONFIG_ROOT>          # shared station set
+    - root: <env:MY_STATION_GHOST_ROOT>            # per-instance ghost stations
+      include: <env:MY_STATION_GHOST_INCLUDE>      # comma-separated station IDs
+```
+
+Rules:
+
+- `include` accepts a YAML list or a scalar; scalars are split on commas with
+  whitespace trimmed, so `<env:VAR>` expansion of a comma-separated
+  environment variable works. An absent, empty, or whitespace-only `include`
+  loads **all** stations of that root (a misconfigured variable never
+  silently disables a whole root).
+- A non-empty `include` loads only stations whose `station_id` appears in the
+  list; everything else in that root behaves exactly as if its folder did not
+  exist: no registry entry, no duplicate-station errors, no log noise.
+- The same `station_id` loaded from two roots after filtering is a fatal
+  startup error naming the station and both paths.
+- A configured root directory that does not exist is skipped with a startup
+  warning; roots whose path expands to an empty string (env var unset) are
+  dropped silently.
+- `station_order` stays global and overrides `station_sort`; without it,
+  `station_sort: folder_name` (default) ranks by station folder name merged
+  across all roots, `station_sort: station_id` ranks by station_id — in
+  both cases root membership does not affect ranking.
+
+This replaces the earlier docker-compose bind-mount-overlay pattern for
+per-instance station subsets: ghost stations can live in their own directory
+(mounted once via the shared filesystem, not per-service volume blocks) and
+keep relative `executable` paths, since the daemon now reads them at their
+real path — which the slurm-docker executor can also resolve on compute
+nodes.
 Controls how task IDs, working-root paths, and filenames are generated.
 
 ### `naming.task_id_timestamp`

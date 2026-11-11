@@ -188,12 +188,98 @@ type AuthConfig struct {
 
 // PathsConfig configures filesystem roots referenced by later milestones.
 type PathsConfig struct {
-	WorkingRootBase   string `yaml:"working_root_base"`
-	StationConfigRoot string `yaml:"station_config_root"`
+	WorkingRootBase   string              `yaml:"working_root_base"`
+	StationConfigRoot string              `yaml:"station_config_root"`
+	StationConfigRoots []StationConfigRoot `yaml:"station_config_roots"`
 	// StationOrder lists station IDs in the desired display order. When set it
-	// overrides the default directory-alphabetical order. Station IDs not
-	// listed here are appended after the listed ones, sorted alphabetically.
+	// overrides any station_sort mode; station IDs not listed here are
+	// appended after the listed ones, sorted alphabetically.
 	StationOrder []string `yaml:"station_order"`
+	// StationSort selects the fallback display order for listings when
+	// StationOrder is unset: "folder_name" (default) ranks stations by their
+	// config folder name merged across all station_config_roots; "station_id"
+	// ranks them globally by station_id. Only applies to stations loaded at
+	// startup; stores default to station_id order with no stations loaded.
+	StationSort string `yaml:"station_sort"`
+}
+
+// StationConfigRoot is one entry of storage.station_config_roots: a station
+// config directory plus an optional include filter by station ID. When
+// Include is non-empty, only stations whose station_id appears in the list
+// are loaded from Root; empty/absent Include loads everything in Root.
+//
+// Include accepts either a YAML list or a scalar; scalars are split on
+// commas (with whitespace trimmed), so <env:VAR> expansion of a
+// comma-separated environment variable works. A scalar that expands to
+// only commas/whitespace is the empty filter (load all), not "include
+// nothing" — a misconfigured variable must not silently disable a root.
+type StationConfigRoot struct {
+	Root    string   `yaml:"root"`
+	Include []string `yaml:"include"`
+}
+
+// UnmarshalYAML implements list-or-scalar parsing for Include.
+func (r *StationConfigRoot) UnmarshalYAML(node *yaml.Node) error {
+	type raw StationConfigRoot
+	var tmp raw
+	// Root and Include parse normally except for the Include scalar case.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		val := node.Content[i+1]
+		switch key {
+		case "root":
+			tmp.Root = val.Value
+		case "include":
+			switch val.Kind {
+			case yaml.SequenceNode:
+				for _, item := range val.Content {
+					if s := strings.TrimSpace(item.Value); s != "" {
+						tmp.Include = append(tmp.Include, s)
+					}
+				}
+			case yaml.ScalarNode:
+				for _, part := range strings.Split(val.Value, ",") {
+					if s := strings.TrimSpace(part); s != "" {
+						tmp.Include = append(tmp.Include, s)
+					}
+				}
+			default:
+				return fmt.Errorf("config: station_config_roots.include must be a list or scalar")
+			}
+		}
+	}
+	*r = StationConfigRoot(tmp)
+	return nil
+}
+
+// resolvedStationRoots returns the effective list of station config roots:
+// the entries of StationConfigRoots (entries with an empty Root dropped) plus
+// the legacy singular StationConfigRoot appended as an extra unfiltered
+// entry when set and not already listed (identical paths are deduplicated,
+// with include filters unioned).
+func (c *Config) resolvedStationRoots() []StationConfigRoot {
+	resolved := make([]StationConfigRoot, 0, len(c.Storage.StationConfigRoots)+1)
+	for _, r := range c.Storage.StationConfigRoots {
+		if strings.TrimSpace(r.Root) == "" {
+			continue
+		}
+		resolved = append(resolved, r)
+	}
+	if c.Storage.StationConfigRoot == "" {
+		return resolved
+	}
+	for i := range resolved {
+		if resolved[i].Root == c.Storage.StationConfigRoot {
+			// Merge legacy (unfiltered) into the existing entry: the legacy
+			// singular key never narrows an explicit list entry's filter, and
+			// since the legacy key is unfiltered, the union is all stations in
+			// that root — clear the filter.
+			resolved[i].Include = nil
+			return resolved
+		}
+	}
+	resolved = append(resolved, StationConfigRoot{Root: c.Storage.StationConfigRoot})
+	return resolved
 }
 
 // Defaults returns a Config populated with built-in defaults.
@@ -259,6 +345,10 @@ func Load(args []string, env map[string]string) (*Config, error) {
 
 	// Step 3: env overlay.
 	applyEnv(&cfg, env)
+
+	// Normalize station config roots (legacy singular + list merge, empty
+	// roots dropped) after all overlays are applied.
+	cfg.Storage.StationConfigRoots = cfg.resolvedStationRoots()
 
 	// Step 4: flag overlay (only if non-empty).
 	if bindAddr != "" {
@@ -419,6 +509,16 @@ func (c *Config) Validate() error {
 	case "json", "console":
 	default:
 		return fmt.Errorf("config: log.format %q invalid", c.Log.Format)
+	}
+	// storage.station_sort: default folder_name; explicit empty stays
+	// folder_name too (unset = default). Only unknown values are errors.
+	switch c.Storage.StationSort {
+	case "":
+		c.Storage.StationSort = "folder_name"
+	case "folder_name", "station_id":
+	default:
+		return fmt.Errorf("config: storage.station_sort %q invalid; supported values are %q and %q",
+			c.Storage.StationSort, "folder_name", "station_id")
 	}
 	if err := c.validateExecutor(); err != nil {
 		return err

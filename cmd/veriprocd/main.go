@@ -82,13 +82,27 @@ func run(args []string) error {
 	}
 
 	registry := stations.NewRegistry()
-	var loadedDirOrder []string // station IDs in directory-alphabetical order
-	if cfg.Storage.StationConfigRoot != "" {
-			specs, err := stations.LoadDir(context.Background(), cfg.Storage.StationConfigRoot, registry, st, env)
+	var loadedDirOrder []string // station IDs in global folder-name order (fallback display order)
+	if len(cfg.Storage.StationConfigRoots) > 0 {
+		roots := make([]stations.RootSpec, 0, len(cfg.Storage.StationConfigRoots))
+		for _, r := range cfg.Storage.StationConfigRoots {
+			spec := stations.RootSpec{Dir: r.Root}
+			if len(r.Include) > 0 {
+				spec.Include = make(map[string]bool, len(r.Include))
+				for _, id := range r.Include {
+					spec.Include[id] = true
+				}
+			}
+			roots = append(roots, spec)
+		}
+		specs, warnings, err := stations.LoadDirs(context.Background(), roots, registry, st, env)
 		if err != nil {
 			return fmt.Errorf("load stations: %w", err)
 		}
-		logger.Info().Str("dir", cfg.Storage.StationConfigRoot).Int("count", len(specs)).Msg("loaded stations")
+		for _, w := range warnings {
+			logger.Warn().Str("warning", w).Msg("station loading")
+		}
+		logger.Info().Int("roots", len(roots)).Int("count", len(specs)).Msg("loaded stations")
 		loadedDirOrder = make([]string, len(specs))
 		for i, sp := range specs {
 			loadedDirOrder[i] = sp.StationID
@@ -107,17 +121,24 @@ func run(args []string) error {
 	// Wire the config view to the startup-loaded registry, instance
 	// definitions, and startup env snapshot (secret redaction).
 	stationSvc.SetConfigSource(registry, registry, cfg.Definitions, env)
-	// Apply station display order: explicit config wins; fall back to
-	// directory-alphabetical order from LoadDir.
-	if len(cfg.Storage.StationOrder) > 0 {
+	// Display order: explicit station_order wins (fixed list, unlisted
+	// stations appended alphabetically). Otherwise the station_sort mode
+	// picks the fallback: folder_name (default) = global config-folder-name
+	// order across all roots; station_id = global station_id-alphabetical
+	// (the store default).
+	switch {
+	case len(cfg.Storage.StationOrder) > 0:
 		stationSvc.SetStationOrder(cfg.Storage.StationOrder)
-	} else if len(loadedDirOrder) > 0 {
+	case cfg.Storage.StationSort == "station_id":
+		// no SetStationOrder: listings keep the store's ORDER BY station_id
+	case len(loadedDirOrder) > 0:
 		stationSvc.SetStationOrder(loadedDirOrder)
 	}
 	// Startup drift warning: store-known, non-retired stations whose config
-	// folders are missing (e.g. after a station rename or delete). Read-only —
-	// the log points at the retirement command; no folders or rows are
-	// created, deleted, or modified here.
+	// folders are missing (e.g. after a station rename or delete, or a
+	// station filtered out of every station_config_roots include list).
+	// Read-only — the log points at the retirement command; no folders or
+	// rows are created, deleted, or modified here.
 	if missing, err := stationSvc.ListMissing(context.Background()); err != nil {
 		logger.Error().Err(err).Msg("detect stations without config folders")
 	} else {
