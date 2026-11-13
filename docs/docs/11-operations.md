@@ -22,6 +22,16 @@ resolved by:
 Earlier folders win, so place authoritative archives ahead of fallbacks. The selected set
 is frozen into the run's **manifest** and symlinked under the working root's `input/`.
 
+Folder scanning is name-first: entries whose names fail the input's effective
+`filename_pattern` (or glob) are excluded **without any filesystem inspection**, so an
+unrelated broken symlink or unreadable file in a shared archive cannot fail a run for
+other stations. Winner selection itself depends only on filename metadata and folder
+priority; after a winner is picked, its readability is validated: if the *selected*
+candidate cannot be read (dangling symlink, permissions), preparation fails with a fatal
+error naming the offending path and file type — repair or remove that file and resubmit
+the task. Unreadable non-winning candidates are ignored and never staged, so a
+concurrently-populated archive does not block runs whose winner resolves elsewhere.
+
 **Tip:** if a mandatory input does not resolve, the run fails early in `preparing`. Check
 that the file type, category folders, and filename pattern actually match the files on
 disk. If the input declares a `filter`, also verify that the referenced `source_file_type`

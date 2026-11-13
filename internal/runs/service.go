@@ -927,6 +927,7 @@ type classicalCandidate struct {
 	IsSentinel       bool   // true when GenTimeStr cannot be parsed as a real timestamp
 	Discriminator    string // captured suffix from post-generation wildcard
 	IntervalGroupKey string // file_type|start_time|end_time, or just file_type when unstructured
+	UnreadableErr    error  // non-nil: entry could not be inspected; excluded from selection
 }
 
 // classicalSelectCandidates implements the classical input matching algorithm.
@@ -984,7 +985,7 @@ func (s *Service) classicalSelectCandidates(
 			Str("folder", folder).
 			Str("archive_id", archiveID).
 			Msg("matcher: scanning folder")
-		rawCandidates, err := s.inputCandidatesInFolder(folder, input, effectivePattern)
+		rawCandidates, err := s.inputCandidatesInFolder(folder, input, effectivePattern, runRef)
 		if err != nil {
 			return nil, "", err
 		}
@@ -996,16 +997,23 @@ func (s *Service) classicalSelectCandidates(
 				FolderPriority:   priority,
 				EffectivePattern: effectivePattern,
 				WindowMatch:      windowMatch,
+				UnreadableErr:    raw.UnreadableErr,
 			}
 			if effectivePattern != "" {
-				components, err := policy.ParseFilename(filepath.Base(raw.Path), effectivePattern, s.naming.Filenames.Components)
-				if err != nil {
-					s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
-						Str("input_key", input.FileType).
-						Str("path", raw.Path).
-						Str("parse_error", err.Error()).
-						Msg("matcher: candidate parse failure")
-					continue
+				// Components were parsed during discovery, after the name filter
+				// and before any filesystem inspection of the entry.
+				components := raw.Components
+				if components == nil {
+					var perr error
+					components, perr = policy.ParseFilename(filepath.Base(raw.Path), effectivePattern, s.naming.Filenames.Components)
+					if perr != nil {
+						s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+							Str("input_key", input.FileType).
+							Str("path", raw.Path).
+							Str("parse_error", perr.Error()).
+							Msg("matcher: candidate parse failure")
+						continue
+					}
 				}
 				if patternHasFileType {
 					components["file_type"] = input.FileType
@@ -1110,6 +1118,15 @@ func (s *Service) classicalSelectCandidates(
 			return ci.Path < cj.Path
 		})
 		winner := groupCandidates[0]
+
+		// Winner readability validation: selection depends only on parsed
+		// filename metadata and folder priority (determinism contract), so a
+		// momentarily unreadable non-selected candidate never influences the
+		// outcome or fails the task. Only the selected winner must be
+		// inspectable — it is the object that will be manifested and staged.
+		if winner.UnreadableErr != nil {
+			return nil, "", fmt.Errorf("input %s candidate %s: %w", input.FileType, winner.Path, winner.UnreadableErr)
+		}
 
 		winnerMeta := map[string]any{
 			"generation_time": winner.GenTimeStr,
@@ -1318,9 +1335,28 @@ func (s *Service) inputPatternHasFileType(input stations.InputDefinition) bool {
 type inputCandidate struct {
 	Path       string
 	ObjectKind string
+	// Components holds the structured filename components parsed from the entry
+	// name during discovery (structured-pattern branch). Carrying them back
+	// avoids re-parsing the same name in classicalSelectCandidates.
+	Components map[string]string
+	// UnreadableErr is non-nil when the entry's name satisfies the input's
+	// name contract but its filesystem object could not be inspected (dangling
+	// symlink, permission error). Such candidates are excluded from selection:
+	// they lose to any readable candidate and can never be manifested or
+	// staged; they only fail preparation when they are the winner of their
+	// logical interval group.
+	UnreadableErr error
 }
 
-func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDefinition, effectivePattern string) ([]inputCandidate, error) {
+// inputCandidatesInFolder scans one folder for candidates of the declared input.
+//
+// Entries are filtered by the input's name contract (the effective filename
+// pattern, or the glob/declared pattern in the unstructured branch) BEFORE any
+// filesystem inspection: an entry whose name cannot belong to this input is
+// never stat'ed, so an unrelated broken symlink in a shared folder cannot fail
+// the task. A name-matching entry that cannot be inspected is returned with
+// UnreadableErr set so winner selection can exclude it (see classicalSelectCandidates).
+func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDefinition, effectivePattern, runRef string) ([]inputCandidate, error) {
 	if effectivePattern == "" {
 		pattern := input.Pattern
 		if pattern == "" {
@@ -1335,13 +1371,22 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 			if strings.HasSuffix(match, ".sha256") {
 				continue
 			}
-			if info, err := os.Stat(match); err == nil && filenameMatchesInput(filepath.Base(match), input) {
-				kind := objectKindFromInfo(info)
-				if input.ObjectKind != "" && input.ObjectKind != kind {
-					continue
-				}
-				candidates = append(candidates, inputCandidate{Path: match, ObjectKind: kind})
+			// The glob is the name contract here: filter by the declared file
+			// type before inspecting the entry.
+			if !filenameMatchesInput(filepath.Base(match), input) {
+				continue
 			}
+			info, err := os.Stat(match)
+			if err != nil {
+				s.logUnreadableCandidate(runRef, input.FileType, match, err)
+				candidates = append(candidates, inputCandidate{Path: match, UnreadableErr: err})
+				continue
+			}
+			kind := objectKindFromInfo(info)
+			if input.ObjectKind != "" && input.ObjectKind != kind {
+				continue
+			}
+			candidates = append(candidates, inputCandidate{Path: match, ObjectKind: kind})
 		}
 		return candidates, nil
 	}
@@ -1355,21 +1400,47 @@ func (s *Service) inputCandidatesInFolder(folder string, input stations.InputDef
 		if strings.HasSuffix(name, ".sha256") {
 			continue
 		}
+		// Parse the name against the effective pattern first: entries failing
+		// the name contract are skipped without touching the filesystem.
+		components, err := policy.ParseFilename(name, effectivePattern, s.naming.Filenames.Components)
+		if err != nil {
+			s.logger.Trace().Str("run_ref", runRef).Str("component", "matcher").
+				Str("input_key", input.FileType).
+				Str("path", filepath.Join(folder, name)).
+				Str("parse_error", err.Error()).
+				Msg("matcher: candidate parse failure")
+			continue
+		}
 		path := filepath.Join(folder, name)
 		// Use os.Stat (which follows symlinks) so that a symlink to a directory
 		// is classified as a directory, matching the behaviour of the
-		// unstructured-pattern branch above.
+		// unstructured-pattern branch above. An entry that cannot be inspected
+		// is kept as an unreadable candidate: it loses to any readable one and
+		// only fails preparation if it ends up being the winner.
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, err
+			s.logUnreadableCandidate(runRef, input.FileType, path, err)
+			candidates = append(candidates, inputCandidate{Path: path, Components: components, UnreadableErr: err})
+			continue
 		}
 		kind := objectKindFromInfo(info)
 		if input.ObjectKind != "" && input.ObjectKind != kind {
 			continue
 		}
-		candidates = append(candidates, inputCandidate{Path: path, ObjectKind: kind})
+		candidates = append(candidates, inputCandidate{Path: path, ObjectKind: kind, Components: components})
 	}
 	return candidates, nil
+}
+
+// logUnreadableCandidate records a name-matching entry whose filesystem object
+// could not be inspected. The entry is excluded from selection; if it ends up
+// being the only candidate, preparation fails with this path in the error.
+func (s *Service) logUnreadableCandidate(runRef, fileType, path string, err error) {
+	s.logger.Warn().Str("run_ref", runRef).Str("component", "matcher").
+		Str("input_key", fileType).
+		Str("path", path).
+		Err(err).
+		Msg("matcher: candidate unreadable — excluded from selection")
 }
 
 func (s *Service) workingRootPath(rev *store.StationRevisionRecord, task *store.TaskRecord, runID string, retryIndex int, created time.Time) string {

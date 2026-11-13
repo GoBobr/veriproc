@@ -170,7 +170,7 @@ flowchart TD
   F --> G
   G --> H[Resolve effective filename_pattern and substitute FILE_TYPE when present]
   H --> I[Scan every configured folder in user-priority order]
-  I --> J[Parse candidate entry names under filename_pattern]
+  I --> J[Parse candidate entry names under filename_pattern before filesystem inspection]
   J --> K[Filter by object kind, declared input, window_match, and margins]
   K --> L{Any valid candidates?}
   L -- No --> M{Input mandatory?}
